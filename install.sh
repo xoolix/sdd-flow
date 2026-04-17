@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: curl -fsSL https://raw.githubusercontent.com/wellbin/sdd-flow/main/install.sh | bash
 
 SDD_DIR="$HOME/.sdd"
-REPO_URL="https://github.com/wellbin/sdd-flow.git"
+REPO_URL="https://github.com/xoolix/sdd-flow.git"
 
 # ─── helpers ──────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ if [ -d "$SDD_DIR" ]; then
   ok "Updated to latest version"
 else
   log "Cloning SDD to $SDD_DIR..."
-  git clone "$REPO_URL" "$SDD_DIR"
+  GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$REPO_URL" "$SDD_DIR"
   ok "Cloned successfully"
 fi
 

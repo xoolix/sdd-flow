@@ -12,15 +12,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/wellbin/sdd-flow.git"
+    "url": "git+https://github.com/xoolix/sdd-flow.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/wellbin/sdd-flow/issues"
+    "url": "https://github.com/xoolix/sdd-flow/issues"
   },
-  "homepage": "https://github.com/wellbin/sdd-flow#readme",
+  "homepage": "https://github.com/xoolix/sdd-flow#readme",
   "dependencies": {
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0"
