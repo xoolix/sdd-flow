@@ -5,25 +5,10 @@ set -euo pipefail
 # Initializes any project with the SDD workflow for Claude Code.
 
 SDD_HOME="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")/.." && pwd)"
-VERSION="1.0.0"
+VERSION="2.0.0"
 
-usage() {
-  cat <<EOF
-sdd — Spec Driven Development CLI (v${VERSION})
-
-Usage:
-  sdd init [--copy]    Initialize SDD in the current directory
-  sdd update           Re-sync symlinked skills and templates
-  sdd doctor           Verify SDD setup is healthy
-  sdd help             Show this help
-
-Options for 'init':
-  --copy    Copy files instead of symlinking (standalone, no auto-updates)
-
-After 'sdd init', start Claude Code and run /init-project to auto-generate
-architecture docs and detect project conventions.
-EOF
-}
+# ─── Core SDD skills (these go to global ~/.claude/skills/) ──────
+CORE_SKILLS="new-feature plan-feature implement-task review-feature archive-feature research-spike sdd-new sdd-continue sdd-ff init-project build-registry _shared"
 
 # ─── helpers ───────────────────────────────────────────────────────
 
@@ -31,6 +16,14 @@ log()  { printf "\033[0;34m▸\033[0m %s\n" "$*"; }
 ok()   { printf "\033[0;32m✔\033[0m %s\n" "$*"; }
 warn() { printf "\033[0;33m⚠\033[0m %s\n" "$*"; }
 err()  { printf "\033[0;31m✖\033[0m %s\n" "$*" >&2; }
+
+is_core_skill() {
+  local name="$1"
+  for core in $CORE_SKILLS; do
+    [ "$name" = "$core" ] && return 0
+  done
+  return 1
+}
 
 link_or_copy() {
   local src="$1" dst="$2" mode="${3:-link}"
@@ -42,11 +35,81 @@ link_or_copy() {
   fi
 }
 
-# ─── init ──────────────────────────────────────────────────────────
+usage() {
+  cat <<EOF
+sdd — Spec Driven Development CLI (v${VERSION})
+
+Usage:
+  sdd init [--copy]       Initialize SDD in the current directory
+  sdd init --global       Install core SDD skills to ~/.claude/skills/ (one time)
+  sdd update              Re-sync symlinked skills and templates
+  sdd doctor              Verify SDD setup is healthy
+  sdd help                Show this help
+
+Options for 'init':
+  --copy     Copy files instead of symlinking (standalone, no auto-updates)
+  --global   Install core SDD skills globally to ~/.claude/skills/
+
+Layers:
+  ~/.claude/skills/        Core SDD skills (shared across all projects)
+  .claude/skills/          Project-specific skills (React, Go, etc.)
+  .claude/rules/           Project conventions (stack, testing, git)
+  .claude/CLAUDE.md        Orchestrator config + model overrides
+
+After 'sdd init', start Claude Code and run /init-project to auto-generate
+architecture docs and detect project conventions.
+EOF
+}
+
+# ─── init --global ────────────────────────────────────────────────
+
+cmd_init_global() {
+  local mode="${1:-link}"
+
+  log "Installing core SDD skills to ~/.claude/skills/ (mode: $mode)"
+
+  mkdir -p "$HOME/.claude/skills"
+
+  # Install core skills
+  for skill in $CORE_SKILLS; do
+    local src="$SDD_HOME/.claude/skills/$skill"
+    if [ -d "$src" ] || [ -f "$src" ]; then
+      link_or_copy "$src" "$HOME/.claude/skills/$skill" "$mode"
+      ok "Core skill: $skill"
+    else
+      warn "Core skill not found in repo: $skill"
+    fi
+  done
+
+  # Install templates globally
+  mkdir -p "$HOME/.specify"
+  link_or_copy "$SDD_HOME/.specify/templates" "$HOME/.specify/templates" "$mode"
+  ok "Templates installed to ~/.specify/templates/"
+
+  echo ""
+  ok "Global SDD core installed!"
+  echo ""
+  log "Now run 'sdd init' inside each project to set up project-specific files."
+}
+
+# ─── init (project) ──────────────────────────────────────────────
 
 cmd_init() {
   local mode="link"
-  [[ "${1:-}" == "--copy" ]] && mode="copy"
+  local global=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --copy) mode="copy"; shift ;;
+      --global) global=true; shift ;;
+      *) err "Unknown option: $1"; exit 1 ;;
+    esac
+  done
+
+  if $global; then
+    cmd_init_global "$mode"
+    return
+  fi
 
   local target
   target="$(pwd)"
@@ -56,25 +119,44 @@ cmd_init() {
     exit 1
   fi
 
-  log "Initializing SDD in $target (mode: $mode)"
+  # Check if global core is installed
+  if [ ! -d "$HOME/.claude/skills/sdd-continue" ] && [ ! -L "$HOME/.claude/skills/sdd-continue" ]; then
+    warn "Core SDD skills not found in ~/.claude/skills/"
+    log "Installing globally first..."
+    cmd_init_global "$mode"
+    echo ""
+  fi
 
-  # ── Skills (shared — symlink preferred) ──
+  log "Initializing SDD project in $target"
+
+  # ── Project-specific skills directory ──
   mkdir -p "$target/.claude/skills"
-  for skill_dir in "$SDD_HOME/.claude/skills"/*/; do
-    local skill_name
-    skill_name="$(basename "$skill_dir")"
-    link_or_copy "$skill_dir" "$target/.claude/skills/$skill_name" "$mode"
-  done
-  ok "Skills installed ($(ls -1 "$SDD_HOME/.claude/skills" | wc -l | tr -d ' ') skills)"
 
-  # ── Templates (shared — symlink preferred) ──
+  # Install architecture-map (project-specific — each repo has its own)
+  local arch_src="$SDD_HOME/.claude/skills/architecture-map"
+  if [ -d "$arch_src" ]; then
+    if [ ! -d "$target/.claude/skills/architecture-map" ] && [ ! -L "$target/.claude/skills/architecture-map" ]; then
+      cp -R "$arch_src" "$target/.claude/skills/architecture-map"
+      ok "Created .claude/skills/architecture-map/ (project-specific)"
+    else
+      warn "Skipped architecture-map (already exists)"
+    fi
+  fi
+
+  # ── Templates (symlink to global if available, else from SDD_HOME) ──
   mkdir -p "$target/.specify"
-  link_or_copy "$SDD_HOME/.specify/templates" "$target/.specify/templates" "$mode"
+  if [ -d "$HOME/.specify/templates" ] || [ -L "$HOME/.specify/templates" ]; then
+    link_or_copy "$HOME/.specify/templates" "$target/.specify/templates" "$mode"
+  else
+    link_or_copy "$SDD_HOME/.specify/templates" "$target/.specify/templates" "$mode"
+  fi
   ok "Templates installed"
 
   # ── Scripts (shared) ──
-  link_or_copy "$SDD_HOME/.specify/scripts" "$target/.specify/scripts" "$mode"
-  ok "Scripts installed"
+  if [ -d "$SDD_HOME/.specify/scripts" ]; then
+    link_or_copy "$SDD_HOME/.specify/scripts" "$target/.specify/scripts" "$mode"
+    ok "Scripts installed"
+  fi
 
   # ── Rules (project-specific — always copy, never overwrite existing) ──
   mkdir -p "$target/.claude/rules"
@@ -101,8 +183,10 @@ cmd_init() {
   if [ -f "$target/.claude/settings.local.json" ]; then
     warn "Skipped .claude/settings.local.json (already exists)"
   else
-    cp "$SDD_HOME/.claude/settings.local.json" "$target/.claude/settings.local.json"
-    ok "Created .claude/settings.local.json"
+    if [ -f "$SDD_HOME/.claude/settings.local.json" ]; then
+      cp "$SDD_HOME/.claude/settings.local.json" "$target/.claude/settings.local.json"
+      ok "Created .claude/settings.local.json"
+    fi
   fi
 
   # ── Directory structure ──
@@ -110,18 +194,21 @@ cmd_init() {
   ok "Created specs/, research/, docs/adr/, docs/architecture/"
 
   echo ""
-  ok "SDD initialized!"
+  ok "SDD project initialized!"
+  echo ""
+  log "Structure:"
+  echo "  ~/.claude/skills/         ← Core SDD skills (global, shared)"
+  echo "  .claude/skills/           ← Project skills (add React, Go, etc. here)"
+  echo "  .claude/rules/            ← Project conventions"
+  echo "  .claude/CLAUDE.md         ← Orchestrator config"
   echo ""
   log "Next steps:"
   echo "  1. Open Claude Code in $target"
   echo "  2. Run /init-project to auto-detect architecture and conventions"
-  echo "  3. Customize .claude/rules/ for your project"
-  echo "  4. Start working: /new-feature \"your idea\""
+  echo "  3. Add project skills to .claude/skills/ (React, Python, etc.)"
+  echo "  4. Run /build-registry to generate compact rules from your skills"
+  echo "  5. Start working: /sdd-new \"your idea\""
   echo ""
-  if [ "$mode" = "link" ]; then
-    log "Skills and templates are symlinked to $SDD_HOME"
-    log "Run 'sdd update' after pulling new versions of the SDD repo"
-  fi
 }
 
 # ─── update ────────────────────────────────────────────────────────
@@ -130,35 +217,37 @@ cmd_update() {
   local target
   target="$(pwd)"
 
-  if [ ! -d "$target/.claude/skills" ]; then
-    err "No SDD setup found in $target. Run 'sdd init' first."
-    exit 1
+  log "Updating SDD"
+
+  # Update global core skills
+  if [ -d "$HOME/.claude/skills/sdd-continue" ] || [ -L "$HOME/.claude/skills/sdd-continue" ]; then
+    log "Updating global core skills..."
+    for skill in $CORE_SKILLS; do
+      local global_skill="$HOME/.claude/skills/$skill"
+      if [ -L "$global_skill" ]; then
+        ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
+        ok "Updated global: $skill"
+      elif [ -d "$global_skill" ]; then
+        warn "Skipped global $skill (not a symlink — was copied with --copy)"
+      else
+        ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
+        ok "Added global: $skill"
+      fi
+    done
   fi
 
-  log "Updating SDD in $target"
-
-  # Re-sync skills
-  for skill_dir in "$SDD_HOME/.claude/skills"/*/; do
-    local skill_name
-    skill_name="$(basename "$skill_dir")"
-    local target_skill="$target/.claude/skills/$skill_name"
-    if [ -L "$target_skill" ]; then
-      ln -sfn "$skill_dir" "$target_skill"
-      ok "Updated skill: $skill_name"
-    elif [ -d "$target_skill" ]; then
-      warn "Skipped $skill_name (not a symlink — was copied with --copy)"
+  # Update project templates
+  if [ -d "$target/.specify" ]; then
+    if [ -L "$target/.specify/templates" ]; then
+      if [ -d "$HOME/.specify/templates" ] || [ -L "$HOME/.specify/templates" ]; then
+        ln -sfn "$HOME/.specify/templates" "$target/.specify/templates"
+      else
+        ln -sfn "$SDD_HOME/.specify/templates" "$target/.specify/templates"
+      fi
+      ok "Updated templates"
     else
-      ln -sfn "$skill_dir" "$target_skill"
-      ok "Added new skill: $skill_name"
+      warn "Skipped templates (not a symlink)"
     fi
-  done
-
-  # Re-sync templates
-  if [ -L "$target/.specify/templates" ]; then
-    ln -sfn "$SDD_HOME/.specify/templates" "$target/.specify/templates"
-    ok "Updated templates"
-  else
-    warn "Skipped templates (not a symlink)"
   fi
 
   ok "Update complete!"
@@ -171,46 +260,120 @@ cmd_doctor() {
   target="$(pwd)"
   local issues=0
 
-  log "Checking SDD setup in $target"
+  log "Checking SDD setup"
 
-  # Check structure
+  # Check global core skills
+  echo ""
+  log "Global core (~/.claude/skills/):"
+  for skill in $CORE_SKILLS; do
+    if [ -d "$HOME/.claude/skills/$skill" ] || [ -L "$HOME/.claude/skills/$skill" ]; then
+      ok "  $skill"
+    else
+      warn "  $skill — MISSING (run 'sdd init --global')"
+      ((issues++))
+    fi
+  done
+
+  # Check project structure
+  echo ""
+  log "Project ($target):"
   for dir in .claude .claude/skills .claude/rules .specify specs research docs; do
     if [ -d "$target/$dir" ]; then
-      ok "$dir/ exists"
+      ok "  $dir/"
     else
-      warn "$dir/ missing"
+      warn "  $dir/ — MISSING"
       ((issues++))
     fi
   done
 
-  # Check key files
+  # Check key project files
   for file in .claude/CLAUDE.md .claude/rules/conventions.md; do
     if [ -f "$target/$file" ]; then
-      ok "$file exists"
+      ok "  $file"
     else
-      warn "$file missing"
+      warn "  $file — MISSING"
       ((issues++))
     fi
   done
 
-  # Check skills
-  local expected_skills="new-feature plan-feature implement-task research-spike review-feature archive-feature architecture-map init-project"
-  for skill in $expected_skills; do
-    if [ -d "$target/.claude/skills/$skill" ] || [ -L "$target/.claude/skills/$skill" ]; then
-      ok "Skill: $skill"
-    else
-      warn "Skill missing: $skill"
-      ((issues++))
-    fi
-  done
-
-  # Check if architecture-map has been generated
+  # Check architecture-map
   local arch_file="$target/.claude/skills/architecture-map/SKILL.md"
-  if [ -f "$arch_file" ] || [ -L "$arch_file" ]; then
+  if [ -f "$arch_file" ]; then
     if grep -q "TODO" "$arch_file" 2>/dev/null; then
-      warn "architecture-map has TODO placeholders — run /init-project"
+      warn "  architecture-map has TODOs — run /init-project"
+      ((issues++))
+    else
+      ok "  architecture-map (populated)"
+    fi
+  else
+    warn "  architecture-map — MISSING"
+    ((issues++))
+  fi
+
+  # Check project-specific skills
+  echo ""
+  log "Project skills (.claude/skills/):"
+  local project_skills=0
+  for skill_dir in "$target/.claude/skills"/*/; do
+    [ ! -d "$skill_dir" ] && continue
+    local skill_name
+    skill_name="$(basename "$skill_dir")"
+    # Skip core skills and architecture-map
+    if is_core_skill "$skill_name" || [ "$skill_name" = "architecture-map" ]; then
+      continue
+    fi
+    local skill_file="$skill_dir/SKILL.md"
+    if [ -f "$skill_file" ]; then
+      # Check for applies-to frontmatter
+      if grep -q "applies-to:" "$skill_file" 2>/dev/null; then
+        local applies_to
+        applies_to=$(grep "applies-to:" "$skill_file" | head -1 | sed 's/.*applies-to: *//')
+        ok "  $skill_name → $applies_to"
+      else
+        log "  $skill_name → implement-task, review-feature (default)"
+      fi
+      ((project_skills++))
+    fi
+  done
+  if [ "$project_skills" -eq 0 ]; then
+    log "  (none — add project skills to .claude/skills/)"
+  fi
+
+  # Check skill registry
+  echo ""
+  log "Skill registry:"
+  local registry_file="$target/.claude/skills/skill-registry.md"
+  if [ -f "$registry_file" ]; then
+    local registry_skills
+    registry_skills=$(grep -c "^### " "$registry_file" 2>/dev/null || echo "0")
+    ok "  skill-registry.md ($registry_skills compact rule sets)"
+    if [ "$project_skills" -gt 0 ] && [ "$registry_skills" -lt "$project_skills" ]; then
+      warn "  Registry has fewer skills than installed — run /build-registry"
       ((issues++))
     fi
+  else
+    if [ "$project_skills" -gt 0 ]; then
+      warn "  skill-registry.md — MISSING (run /build-registry to generate)"
+      ((issues++))
+    else
+      log "  (no project skills installed, registry not needed)"
+    fi
+  fi
+
+  # Check Engram
+  echo ""
+  log "Engram:"
+  if command -v engram &>/dev/null; then
+    ok "  engram binary: $(engram version 2>/dev/null || echo 'installed')"
+    if [ -f "$HOME/.engram/engram.db" ]; then
+      ok "  database: ~/.engram/engram.db"
+    else
+      warn "  database not found — run 'engram setup claude-code'"
+      ((issues++))
+    fi
+  else
+    warn "  engram not installed — run 'brew install gentleman-programming/tap/engram'"
+    ((issues++))
   fi
 
   echo ""

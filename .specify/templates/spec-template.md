@@ -29,7 +29,8 @@
 -
 
 ## Acceptance Criteria
-<!-- At least 2. Use Given/When/Then format -->
+<!-- REQUIRED: All criteria MUST use Given/When/Then format. Non-GWT criteria will be rejected.
+     Each criterion must be independently testable with a measurable "Then" clause. -->
 - [ ] Given [precondition], When [action], Then [expected result]
 - [ ] Given [precondition], When [action], Then [expected result]
 

@@ -10,6 +10,8 @@ arguments: idea or request description
 
 You received a feature idea/request in `$ARGUMENTS`.
 
+> **Executor boundary**: You are an EXECUTOR. Do the work yourself. Do NOT launch sub-agents or delegate. See `.claude/skills/_shared/sdd-phase-common.md`.
+
 ## Approach
 
 Do NOT generate the full spec at once. Instead, have a short conversation to gather what you need. Ask one thing at a time, in this order:
@@ -33,7 +35,7 @@ Ask: "What could go wrong? What are the tricky cases?" Push for at least 2 concr
 Ask: "How do we know this is done? Give me at least 2 criteria in **Given/When/Then** format:
 - Given [precondition], When [action], Then [expected result]"
 
-If the user gives free-form criteria, help them rewrite into Given/When/Then before moving on.
+**Hard-stop**: Do NOT proceed until ALL criteria are in Given/When/Then format. If the user gives free-form criteria, rewrite them into Given/When/Then yourself and ask the user to confirm before moving on. Never accept non-GWT criteria.
 
 ### 7. Rollback & success criteria
 Ask: "If something goes wrong after deploy, how do we revert? And what measurable indicators tell us this is working correctly?"
@@ -47,11 +49,13 @@ Before writing the spec, verify you have ALL of these:
 - [ ] Clear trigger
 - [ ] Happy path with numbered steps
 - [ ] At least 2 edge cases
-- [ ] At least 2 acceptance criteria in Given/When/Then format
+- [ ] At least 2 acceptance criteria in **strict Given/When/Then** format (`Given [X], When [Y], Then [Z]`)
 - [ ] Rollback plan
 - [ ] At least 1 measurable success criterion
 
 If anything is missing, ask one more targeted question. Do NOT generate the spec until the gate passes.
+
+**GWT validation**: Before passing the gate, verify EVERY acceptance criterion matches the pattern `Given [precondition], When [action], Then [measurable result]`. If any criterion is vague, lacks a measurable "Then", or is free-form prose — rewrite it and confirm with the user. This is a blocking requirement.
 
 ## Generate the spec
 
@@ -67,6 +71,21 @@ Once the gate passes:
 8. Tell the user the next step is `/plan-feature NNN-feature-name`.
 
 **Size budget**: The generated `spec.md` MUST be under 650 words. Prefer tables over prose. Be concise.
+
+## Engram memory (skip all mem_* calls if Engram unavailable)
+
+### On start
+1. Call `mem_search` with query keywords from the feature idea + `project: "{project}"` — check if related work, decisions, or patterns exist from prior features.
+2. If results exist, use them to inform questions (e.g., "I see we already have X in this project — does this feature build on that?").
+
+### During conversation
+Save immediately when:
+- User makes a trade-off or non-obvious decision → `mem_save` type: `decision`
+- User reveals a constraint or preference → `mem_save` type: `preference`
+- You discover something about the domain that would help future features → `mem_save` type: `discovery`
+
+### After generating the spec
+- `mem_save` topic_key: `sdd/{feature-id}/spec`, type: `decision` — Key scope decisions and trade-offs the user made (not a summary of the spec — that's in the file)
 
 ## Result envelope
 
