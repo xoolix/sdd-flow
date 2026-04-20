@@ -6,40 +6,22 @@ user-invocable: false
 
 # Architecture Map
 
-AWS Lambda function that processes SQS messages and forwards medical reports to the Wellbin API. Handles JWT authentication with token caching via AWS Parameter Store.
+<!-- Populated by /init-project. Describe the repo in one paragraph: what it is, main stack, deployment target. -->
 
 ## Apps / Packages
-- **Lambda Function** (single handler, Node.js 20.x runtime)
-  - `handler.ts` — Main SQS event handler (entry point)
-  - `scripts/` — Utility scripts (LocalStack setup)
-  - `events/` — Sample SQS event payloads for local testing
-  - `dist/` — Compiled JavaScript output
+<!-- List each app/package with its entry points and key files. -->
 
 ## Shared Libraries
-- None — single-file handler with inline logic for auth, token caching, and API calls
+<!-- Internal shared packages consumed across apps. -->
 
 ## API Boundaries
-- **Inbound:** AWS SQS trigger (batch of records with `accession_number` and `mrd_id`)
-- **Outbound:**
-  - `POST {AUTH_URL}` — Wellbin CRM login (username/password -> JWT)
-  - `POST {API_URL}/api/admin/manual-medical-report/{mrd_id}/proccess-to-wellbin` — Submit report
+<!-- Inbound/outbound contracts: routes, event sources, external calls. -->
 
 ## Data Stores
-- **AWS Secrets Manager** — API credentials (`prod/api-waas/credentials`)
-- **AWS SSM Parameter Store** — Cached JWT token (`/prod/api-waas/jwt-token`, SecureString)
+<!-- Databases, caches, secret stores, object storage. -->
 
 ## External Integrations
-- **Wellbin CRM API** — JWT authentication
-- **Wellbin Medical Report API** — Report submission
-- **AWS SQS** — Event source (with DLQ for failed messages)
-- **AWS Secrets Manager** — Credential storage
-- **AWS SSM Parameter Store** — Token caching
+<!-- Third-party services and SDKs. -->
 
 ## Operational Entrypoints
-- `npm run build` — Compile TypeScript (`tsc`)
-- `npm run dev` — Watch mode + SAM local API
-- `npm run test-local` — Invoke handler locally via SAM with test event
-- `npm run start-localstack` — Start LocalStack Docker container
-- `npm run setup-local` — Configure LocalStack secrets/parameters
-- `npm run deploy` — Deploy via AWS SAM
-- `npm run deploy:guided` — First-time interactive SAM deployment
+<!-- Scripts, CLIs, CI/CD, deploy commands. -->

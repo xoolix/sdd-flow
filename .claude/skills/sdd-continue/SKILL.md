@@ -36,15 +36,17 @@ Check which artifacts exist in `specs/<feature-id>/`:
 | Has `plan.md`? | File exists |
 | Has `tasks.md`? | File exists |
 | All tasks checked? | Read `tasks.md`, count `- [ ]` vs `- [x]` |
+| Has **fresh** `.simplified` sentinel? | File exists AND `git-head:` line in the sentinel equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch) is treated as absent — it will be cleaned up by `/simplify-code`'s pre-flight. |
 
 Apply the decision table:
 
-| spec.md | plan.md + tasks.md | All tasks [x] | → Action |
-|:---:|:---:|:---:|---|
-| No | — | — | STOP: "Run `/sdd-new` first." |
-| Yes | No | — | Launch `/plan-feature` |
-| Yes | Yes | No | Launch `/implement-task` |
-| Yes | Yes | Yes | Launch `/review-feature` |
+| spec.md | plan.md + tasks.md | All tasks [x] | Fresh `.simplified`? | → Action |
+|:---:|:---:|:---:|:---:|---|
+| No | — | — | — | STOP: "Run `/sdd-new` first." |
+| Yes | No | — | — | Launch `/plan-feature` |
+| Yes | Yes | No | — | Launch `/implement-task` |
+| Yes | Yes | Yes | No | Launch `/simplify-code` |
+| Yes | Yes | Yes | Yes | Launch `/review-feature` |
 
 ## Step 2b: Load skill registry
 
@@ -79,6 +81,7 @@ Phase-specific settings:
 |-------|------|-------|-------|
 | plan-feature | `"auto"` | `opus` | Is itself an orchestrator — will launch its own sub-agents |
 | implement-task | `"auto"` | `sonnet` | Include project skills if applicable |
+| simplify-code | `"auto"` | `sonnet` | Executor — does the work itself |
 | review-feature | `"auto"` | `sonnet` | Is itself an orchestrator |
 | archive-feature | `"auto"` | `haiku` | Executor — does the work itself |
 
@@ -118,9 +121,11 @@ Initialize `review_cycle = 1`.
    ```
    The sub-agent should address only the failed criteria, not re-implement everything.
 3. **Validate implement-task result**: Apply Step 4 validation to the implement-task result (artifacts exist, envelope complete, lint/tests pass). If validation fails, follow Step 4 retry logic.
-4. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 3 pattern) to re-review the updated implementation.
-5. **Validate review result**: Apply Step 4 validation to the review result.
-6. **Check verdict**:
+4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.simplified`, so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 3 pattern).
+5. **Validate simplify-code result**: Apply Step 4 validation. If simplify-code returns `Status: blocked` (regression revert or baseline red), **STOP** the fix loop and report the blocked status — the human must resolve the regression before the loop can continue.
+6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 3 pattern) to re-review the updated implementation.
+7. **Validate review result**: Apply Step 4 validation to the review result.
+8. **Check verdict**:
    - **PASS or PASS WITH WARNINGS** → exit loop, go to Step 6.
    - **FAIL** → increment `review_cycle`. If `review_cycle > 2`, **STOP** with `Status: ESCALATED` and include a diagnostic showing the failed criteria from each review cycle so the human can intervene.
 

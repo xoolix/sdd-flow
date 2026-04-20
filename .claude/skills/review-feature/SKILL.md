@@ -133,6 +133,14 @@ Combine the 3 agents' findings into a single report:
 - **Risks**: Merge from all agents (deduplicated)
 - **Dissent** (if any): Include the dissenting agent's rationale verbatim
 
+### 4.5. Invalidate simplify sentinel on conformance FAIL
+
+If the consolidated conformance verdict is **FAIL**:
+
+- Delete `specs/$ARGUMENTS/.simplified` if it exists. The next `/sdd-continue` after the fix cycle will re-launch `/simplify-code` before re-review — this guarantees the fix code also passes through simplify.
+
+**Scope**: this deletion fires **only on conformance FAIL**. PASS and PASS WITH WARNINGS leave the sentinel intact. SPEC-GAP-HIGH (Step 5.5) also leaves the sentinel intact — that path pauses for a human spec edit, not a code fix.
+
 ### 5. Build Review-Feedback (when verdict is FAIL or PASS WITH WARNINGS)
 
 If the final verdict includes failures, construct the `Review-Feedback` field as a structured list:

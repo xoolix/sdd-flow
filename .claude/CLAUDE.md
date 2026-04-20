@@ -78,15 +78,26 @@ The orchestrator only pauses for:
                  ├─ inline validation: tests/lint run after each change
                  └─ fixes applied before moving on
     ↓
+/sdd-continue → simplify code            (simplify-code, runs once per pass)
+                 ├─ baseline validation (lint+types+tests) — block if red
+                 ├─ scope = git diff --name-only <base>..HEAD, minus tests/lockfiles/migrations/configs
+                 ├─ apply KISS/DRY/YAGNI preserving behavior
+                 ├─ post-validation — on regression, git checkout revert + Status: blocked
+                 └─ success → write specs/<id>/.simplified sentinel
+    ↓
 /sdd-continue → review                   (review-feature, 3-agent voting)
                  ├─ 3 independent reviewers run in parallel
                  ├─ PASS or PASS WITH WARNINGS → adversarial review (Step 5.5)
                  │       ├─ no gaps → advance to archive
                  │       ├─ medium/low gaps → record SPEC-GAP in decisions.md → advance
-                 │       └─ high-severity gaps → record SPEC-GAP-HIGH → Status: blocked (human decides)
-                 └─ any FAIL        → extract Review-Feedback
+                 │       └─ high-severity gaps → record SPEC-GAP-HIGH → Status: blocked (human decides; sentinel preserved)
+                 └─ any FAIL        → delete specs/<id>/.simplified (forces re-simplify after fix)
+                        ↓
+                   extract Review-Feedback
                         ↓
                    implement-task (fix feedback)
+                        ↓
+                   /simplify-code (re-runs — sentinel absent)
                         ↓
                    re-review (3-agent voting)
                         ↓
@@ -97,14 +108,17 @@ The orchestrator only pauses for:
 
 ### Phase Detection Logic (for /sdd-continue)
 
-| Has spec.md? | Has plan.md + tasks.md? | All tasks [x]? | Next phase |
-|:---:|:---:|:---:|---|
-| No | — | — | Blocked: run `/sdd-new` first |
-| Yes | No | — | `/plan-feature` |
-| Yes | No | — | `/plan-feature` (if `discovery.md` exists, skip Explore — resume from discovery checkpoint) |
-| Yes | Yes | No | `/implement-task` (next unchecked task) |
-| Yes | Yes | Yes | `/review-feature` |
-| After review passes | | | `/archive-feature` |
+`Fresh .simplified?` column means: the sentinel file exists AND its `git-head:` line equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch — e.g., user amended HEAD, rebased, or the sentinel was spoofed) is treated as absent and cleaned up by `/simplify-code`'s pre-flight.
+
+| Has spec.md? | Has plan.md + tasks.md? | All tasks [x]? | Fresh `.simplified`? | Next phase |
+|:---:|:---:|:---:|:---:|---|
+| No | — | — | — | Blocked: run `/sdd-new` first |
+| Yes | No | — | — | `/plan-feature` |
+| Yes | No | — | — | `/plan-feature` (if `discovery.md` exists, skip Explore — resume from discovery checkpoint) |
+| Yes | Yes | No | — | `/implement-task` (next unchecked task) |
+| Yes | Yes | Yes | No | `/simplify-code` |
+| Yes | Yes | Yes | Yes | `/review-feature` |
+| After review passes | | | | `/archive-feature` |
 
 ### Sub-Agent Launch Pattern
 
@@ -181,6 +195,7 @@ For skills that need non-default phase mapping, create `.claude/skills/skill-map
 | Fast-forward all phases | `/sdd-ff` |
 | Spec to plan + tasks | `/plan-feature` |
 | Execute next task | `/implement-task` |
+| Simplify code after implementation | `/simplify-code` |
 | Investigate uncertainty | `/research-spike` |
 | Review vs spec | `/review-feature` |
 | Close & archive feature | `/archive-feature` |
@@ -206,6 +221,7 @@ Orchestrators (`sdd-continue`, `sdd-ff`) MUST pass the `model` parameter when la
 | Discovery evaluator | plan-feature sub-agent (Discovery Evaluator) | haiku |
 | Design/task agents | plan-feature sub-agents (general-purpose) | sonnet |
 | Implementation | implement-task | sonnet |
+| Simplify | simplify-code | sonnet |
 | Review orchestrator | review-feature | sonnet |
 | Review agents | review-feature sub-agents (Agent-A/B/C) | sonnet |
 | Adversarial review agent | review-feature sub-agent (adversarial, Step 5.5) | sonnet |
@@ -230,7 +246,7 @@ To override for a specific project, add a `## Model Overrides` section below thi
 
 ## Workflow
 ```
-idea -> /new-feature -> refine spec -> /plan-feature -> /implement-task (repeat) -> /review-feature -> /archive-feature
+idea -> /new-feature -> refine spec -> /plan-feature -> /implement-task (repeat) -> /simplify-code -> /review-feature -> /archive-feature
                                    \-> /research-spike (if uncertain)
 ```
 

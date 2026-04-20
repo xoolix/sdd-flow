@@ -15,7 +15,7 @@ Scan all project-specific skills in `.claude/skills/`, generate **compact rules*
 ## Steps
 
 1. **Scan for project skills** — List all directories in `.claude/skills/`. Skip core SDD skills:
-   `new-feature`, `plan-feature`, `implement-task`, `review-feature`, `archive-feature`, `research-spike`, `sdd-new`, `sdd-continue`, `sdd-ff`, `init-project`, `build-registry`, `architecture-map`, `_shared`
+   `new-feature`, `plan-feature`, `implement-task`, `simplify-code`, `review-feature`, `archive-feature`, `research-spike`, `sdd-new`, `sdd-continue`, `sdd-ff`, `init-project`, `build-registry`, `architecture-map`, `_shared`
 
 2. **For each project skill found**, read its `SKILL.md` and extract:
    - `name` from frontmatter
