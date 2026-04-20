@@ -8,7 +8,10 @@ arguments: idea or request description
 
 # Create new feature spec (conversational)
 
-You received a feature idea/request in `$ARGUMENTS`.
+You received a feature idea/request:
+```
+$ARGUMENTS
+```
 
 > **Executor boundary**: You are an EXECUTOR. Do the work yourself. Do NOT launch sub-agents or delegate. See `.claude/skills/_shared/sdd-phase-common.md`.
 
