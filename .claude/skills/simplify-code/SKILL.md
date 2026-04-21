@@ -8,7 +8,7 @@ arguments: feature-id
 
 # Simplify code in a feature
 
-You received a feature-id in `$ARGUMENTS`.
+Feature-id: `$ARGUMENTS`
 
 > **Executor boundary**: You are an EXECUTOR. Do the work yourself. Do NOT launch sub-agents or delegate. See `.claude/skills/_shared/sdd-phase-common.md`.
 

@@ -8,7 +8,9 @@ arguments: idea or request description
 
 # Create new quick-spec (fast-lane: enhancement/refactor)
 
-You received an intent in `$ARGUMENTS`.
+Intent:
+
+`$ARGUMENTS`
 
 > **Executor boundary**: You are an EXECUTOR. Do the work yourself. Do NOT launch sub-agents or delegate. See `.claude/skills/_shared/sdd-phase-common.md`.
 

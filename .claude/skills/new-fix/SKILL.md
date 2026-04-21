@@ -8,7 +8,9 @@ arguments: bug description
 
 # Create new fix-spec (fast-lane: bugfix)
 
-You received an intent in `$ARGUMENTS`.
+Intent:
+
+`$ARGUMENTS`
 
 > **Executor boundary**: You are an EXECUTOR. Do the work yourself. Do NOT launch sub-agents or delegate. See `.claude/skills/_shared/sdd-phase-common.md`.
 
