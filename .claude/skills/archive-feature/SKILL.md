@@ -14,9 +14,10 @@ You received a feature-id in `$ARGUMENTS`.
 
 ## Pre-flight checks
 
-Before starting, verify the feature is ready to archive:
-- [ ] `specs/$ARGUMENTS/spec.md`, `plan.md`, `tasks.md`, and `decisions.md` all exist
-- [ ] All tasks in `tasks.md` are checked (`- [x]`). If unchecked tasks remain, **block** and tell the user to complete them or explicitly remove them.
+Before starting, **resolve lane** per `.claude/skills/_shared/sdd-phase-common.md` §I, then verify the feature is ready to archive:
+
+- [ ] **FAST_LANE = false**: `specs/$ARGUMENTS/spec.md`, `plan.md`, `tasks.md`, and `decisions.md` all exist; all tasks in `tasks.md` checked (`- [x]`).
+- [ ] **FAST_LANE = true**: `specs/$ARGUMENTS/quick-spec.md` and `decisions.md` exist; all `- [ ]` in `quick-spec.md` `## Tasks` section are `- [x]`.
 - [ ] A `/review-feature` has been run with verdict **PASS** or **PASS WITH WARNINGS**. If the verdict was **FAIL**, **block** and tell the user to fix critical issues first. If no review has been run, **block** and tell the user to run `/review-feature` first.
 
 If any check fails, stop and tell the user what's needed. Do NOT proceed.
@@ -24,15 +25,15 @@ If any check fails, stop and tell the user what's needed. Do NOT proceed.
 ## Steps
 
 1. **Read all artifacts**:
-   - `specs/$ARGUMENTS/spec.md`
-   - `specs/$ARGUMENTS/plan.md`
-   - `specs/$ARGUMENTS/tasks.md`
+   - `specs/$ARGUMENTS/$SPEC_FILE` (resolved in pre-flight per §I — `spec.md` for full-flow, `quick-spec.md` for fast-lane)
+   - **FAST_LANE = false only**: `specs/$ARGUMENTS/plan.md`, `specs/$ARGUMENTS/tasks.md`
    - `specs/$ARGUMENTS/decisions.md`
 
 2. **Merge delta specs** — Read `decisions.md` for any delta entries (ADDED/MODIFIED/REMOVED sections). For each delta:
-   - **ADDED**: Add the new requirement to the appropriate section in `spec.md`.
-   - **MODIFIED**: Update the original requirement in `spec.md` with the new version.
-   - **REMOVED**: Delete the requirement from `spec.md` and add a note in the removal reason.
+   - **ADDED**: Add the new requirement to the appropriate section in `$SPEC_FILE`.
+   - **MODIFIED**: Update the original requirement in `$SPEC_FILE` with the new version.
+   - **REMOVED**: Delete the requirement from `$SPEC_FILE` and add a note in the removal reason.
+   - **Fast-lane note**: `quick-spec.md` may already reflect the final state because `/implement-task` modified it in place during execution. Apply only deltas **not already represented** — "already represented" means the delta's described change is literally visible in the current `quick-spec.md` text. For ADDED: skip if the new requirement's substance appears in any section. For MODIFIED: skip if the current wording already matches the post-change text. For REMOVED: skip if the requirement is absent.
    - After merging, add a `## Deltas merged` header at the bottom of `decisions.md` with a timestamp, listing what was merged.
    - If there are no deltas, skip this step.
 

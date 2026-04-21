@@ -14,9 +14,9 @@ You received a feature-id in `$ARGUMENTS`.
 
 ## Pre-flight checks
 
-Before starting, verify:
-- [ ] `specs/$ARGUMENTS/spec.md`, `plan.md`, and `tasks.md` exist
-- [ ] All tasks in `tasks.md` are checked (`- [x]`)
+Before starting, **resolve lane** per `.claude/skills/_shared/sdd-phase-common.md` §I, then verify:
+- [ ] **FAST_LANE = false**: `specs/$ARGUMENTS/spec.md`, `plan.md`, and `tasks.md` exist; all tasks in `tasks.md` checked (`- [x]`)
+- [ ] **FAST_LANE = true**: `specs/$ARGUMENTS/quick-spec.md` exists; all `- [ ]` in its `## Tasks` section are `- [x]`
 - [ ] `specs/$ARGUMENTS/decisions.md` has no unresolved `SPEC-GAP-HIGH` entry
 - [ ] `specs/$ARGUMENTS/.simplified` is absent OR is stale (its `git-head` field ≠ `git rev-parse HEAD`) — a stale sentinel is deleted and treated as absent
 - [ ] `git merge-base main HEAD` resolves to a valid commit SHA (fallback: `origin/main`)
@@ -43,12 +43,17 @@ This guarantees that any post-edit failure later is attributable to simplify-cod
 ### 3. Determine scope
 
 1. Resolve branch base: `git merge-base main HEAD` (fallback `git merge-base origin/main HEAD`). If both fail → `Status: blocked` with diagnostic.
-2. Compute touched files: `git diff --name-only <base-sha>..HEAD`.
+2. Compute touched files as the **union** of:
+   - committed diff: `git diff --name-only <base-sha>..HEAD`
+   - working-tree changes: `git status --short` → paths from `M `, ` M`, `MM`, `A `, `??` entries (ignore `D`, `R`)
+
+   The union handles both normal flows (agent commits feature work) and never-commit flows (per `.claude/rules/git.md`, agent leaves work unstaged). If both sets are empty, there is nothing to simplify — skip to step 3.5.
 3. Apply exclusion filters — drop any file matching:
    - **Tests**: `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`, `**/test/**`, `**/tests/**`
    - **Lockfiles**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Cargo.lock`
    - **Migrations**: `**/migrations/**`, `**/db/migrate/**`
    - **Configs**: `*.config.*`, `.env*`, `docker-compose.*`, `tsconfig.json`, `vite.config.*`
+   - **SDD artifacts**: `specs/**/*.md`, `.claude/skills/**/*.md`, `.claude/CLAUDE.md`, `.specify/templates/*.md` — spec, plan, tasks, quick-spec, SKILL.md, templates, and orchestrator docs are prose artifacts, not code. KISS/DRY/YAGNI applied to these is out of scope and can corrupt load-bearing structure (e.g., `## Tasks` checkboxes).
 4. Record the remaining list as `SCOPED_FILES` — this is the revert target list.
 5. **If `SCOPED_FILES` is empty** → write the sentinel (step 6) with `Summary: no changes needed` and return `Status: success`. Skip steps 4 and 5.
 

@@ -110,6 +110,8 @@ The orchestrator only pauses for:
 
 `Fresh .simplified?` column means: the sentinel file exists AND its `git-head:` line equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch — e.g., user amended HEAD, rebased, or the sentinel was spoofed) is treated as absent and cleaned up by `/simplify-code`'s pre-flight.
 
+> **Fast-lane features are NOT detected by this table.** If a folder has `quick-spec.md` but no `spec.md`, `/sdd-continue` will return "Blocked: run `/sdd-new` first" — this is expected per B7 (manual-only invocation). Invoke phases manually per the `Next` field in each envelope. See the Fast-lane note under Skill routing.
+
 | Has spec.md? | Has plan.md + tasks.md? | All tasks [x]? | Fresh `.simplified`? | Next phase |
 |:---:|:---:|:---:|:---:|---|
 | No | — | — | — | Blocked: run `/sdd-new` first |
@@ -191,6 +193,8 @@ For skills that need non-default phase mapping, create `.claude/skills/skill-map
 |---|---|
 | Initialize project (first time) | `/init-project` |
 | New feature from idea | `/new-feature` (or `/sdd-new`) |
+| Fast-lane: small enhancement / refactor | `/new-quick-feature` |
+| Fast-lane: bugfix (Current/Expected/Unchanged) | `/new-fix` |
 | Detect & run next phase | `/sdd-continue` |
 | Fast-forward all phases | `/sdd-ff` |
 | Spec to plan + tasks | `/plan-feature` |
@@ -201,6 +205,8 @@ For skills that need non-default phase mapping, create `.claude/skills/skill-map
 | Close & archive feature | `/archive-feature` |
 | Build skill registry | `/build-registry` |
 | RAG, embeddings, retrieval | `llm-application-dev` skills |
+
+> **Fast-lane note**: `/sdd-continue` and `/sdd-ff` do NOT support fast-lane (`quick-spec.md`) features. After running `/new-quick-feature` or `/new-fix`, invoke phases manually following the `Next` field in each result envelope (`/implement-task` → `/simplify-code` → `/review-feature` → `/archive-feature`).
 
 ## Agent usage
 - Use **Explore agents** (`subagent_type: "Explore"`) for codebase analysis in `/plan-feature` and `/review-feature`.
@@ -258,4 +264,4 @@ Status | Summary | Artifacts | Next | Risks
 This enables consistent handoff between phases.
 
 ## Delta specs
-When implementation diverges from the spec, `/implement-task` documents deltas (ADDED/MODIFIED/REMOVED) in `decisions.md`. `/archive-feature` merges these deltas into the final `spec.md` before archiving.
+When implementation diverges from the spec, `/implement-task` documents deltas (ADDED/MODIFIED/REMOVED) in `decisions.md`. `/archive-feature` merges these deltas into the final `$SPEC_FILE` before archiving — `spec.md` for full-flow features, `quick-spec.md` for fast-lane features.

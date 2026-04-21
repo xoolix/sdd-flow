@@ -29,10 +29,11 @@ If you catch yourself about to use Read/Grep/Glob on a source file, STOP and del
 
 ## Pre-flight checks
 
-Before starting, verify:
-- [ ] All tasks in `specs/$ARGUMENTS/tasks.md` are checked (`- [x]`). If unchecked tasks remain, **block** and tell the user to complete them first with `/implement-task`.
+Before starting, **resolve lane** per `.claude/skills/_shared/sdd-phase-common.md` §I, then verify:
+- [ ] **FAST_LANE = false**: all tasks in `specs/$ARGUMENTS/tasks.md` are checked (`- [x]`).
+- [ ] **FAST_LANE = true**: all `- [ ]` in `specs/$ARGUMENTS/quick-spec.md` `## Tasks` section are `- [x]`.
 
-If the check fails, stop and tell the user what's needed.
+If unchecked tasks remain, **block** and tell the user to complete them first with `/implement-task`.
 
 ## Steps
 
@@ -42,7 +43,9 @@ Call `mem_search` with query `sdd/$ARGUMENTS`, `project: "{project}"` to load im
 
 ### 1. Read state files
 
-Read `specs/$ARGUMENTS/spec.md`, `specs/$ARGUMENTS/plan.md`, `specs/$ARGUMENTS/tasks.md`, and `specs/$ARGUMENTS/decisions.md`.
+Read state files:
+- **FAST_LANE = false**: Read `specs/$ARGUMENTS/spec.md`, `plan.md`, `tasks.md`, and `decisions.md`.
+- **FAST_LANE = true**: Read `specs/$ARGUMENTS/quick-spec.md` (combined spec + plan + change list) and `decisions.md`.
 
 ### 2. Launch 3 independent review agents in parallel
 
@@ -50,10 +53,8 @@ Launch **3 independent sub-agents in parallel** with `model: "sonnet"`. Each age
 
 Each agent receives the **same prompt** containing:
 
-- The full spec (acceptance criteria, GWT scenarios)
-- The plan (design, touched areas)
-- The tasks list (what was implemented)
-- The decisions log (documented deltas)
+- **FAST_LANE = false**: The full spec (acceptance criteria, GWT scenarios), the plan (design, touched areas), the tasks list (what was implemented), the decisions log (documented deltas).
+- **FAST_LANE = true**: The full `quick-spec.md` content (combined spec + plan + change list) and the decisions log.
 - Instructions to perform a complete review (below)
 
 **Per-agent instructions** (include verbatim in each agent's prompt):
@@ -143,19 +144,24 @@ If the consolidated conformance verdict is **FAIL**:
 
 ### 5. Build Review-Feedback (when verdict is FAIL or PASS WITH WARNINGS)
 
-If the final verdict includes failures, construct the `Review-Feedback` field as a structured list:
+If the final verdict includes failures, construct the `Review-Feedback` field as a structured list. Each row MUST name a **task bullet** so `/implement-task` Step 2b can reopen the right item. Use the exact verbatim text of the bullet from `tasks.md` (full-flow) or `quick-spec.md` `## Tasks` (fast-lane):
 
 ```
 ### Review-Feedback
 
-| # | Criterion | Status | Agent(s) | Fix Required |
-|---|-----------|--------|----------|-------------|
-| 1 | [GWT or gap description] | NON-COMPLIANT | A, B | [specific fix instruction] |
-| 2 | [GWT or gap description] | UNTESTED | B, C | [what test to add] |
-| 3 | [gap description] | CRITICAL GAP | A | [what's missing] |
+| # | Task bullet (verbatim) | Criterion | Status | Agent(s) | Fix Required |
+|---|------------------------|-----------|--------|----------|-------------|
+| 1 | - [x] **T03** Add snippet to ... | [GWT or gap] | NON-COMPLIANT | A, B | [specific fix] |
+| 2 | - [x] Validate input X | [GWT or gap] | UNTESTED | B, C | [what to add] |
+| 3 | (new task needed — not in list) | [gap description] | CRITICAL GAP | A | [what's missing] |
 ```
 
-This structured feedback is consumed by the evaluator-optimizer loop in `/sdd-continue` and `/sdd-ff` to re-launch `/implement-task` with targeted fix instructions.
+- If a gap has no corresponding task bullet (e.g., a test was never written for an AC), put `(new task needed — not in list)` in the bullet column. `/implement-task` will add the task and implement it.
+- The **Task bullet** column is how Step 2b maps criteria → bullets. Exact string match required.
+
+**Manual-mode handoff (fast-lane / no-orchestrator users)**: copy the entire `### Review-Feedback` block verbatim from this result and paste it into your next `/implement-task <feature-id>` message (before or after the feature-id argument). Step 2b of `/implement-task` will parse the Task-bullet column to flip the right `- [x]` back to `- [ ]` before re-implementing.
+
+This structured feedback is consumed by the evaluator-optimizer loop in `/sdd-continue` and `/sdd-ff` to re-launch `/implement-task` automatically.
 
 ### Adversarial Agent Prompt
 
@@ -169,10 +175,8 @@ Follow the executor boundary from `.claude/skills/_shared/sdd-phase-common.md` �
 Your role is NOT to check whether the code matches the spec. The 3 conformance agents already did that. Your role is to challenge the spec itself — find what it never considered, what it assumed without stating, and what could go wrong that nobody wrote down.
 
 You receive:
-- The full spec (spec.md)
-- The plan (plan.md)
-- The tasks list (tasks.md)
-- The decisions log (decisions.md)
+- **FAST_LANE = false**: The full spec (spec.md), the plan (plan.md), the tasks list (tasks.md), the decisions log (decisions.md).
+- **FAST_LANE = true**: The full quick-spec.md (combined spec + plan + change list) and the decisions log (decisions.md).
 - The consolidated conformance report (provided inline)
 
 ### Your analysis steps:
@@ -212,7 +216,8 @@ None — spec appears complete for the scope defined.
 **Gate**: Skip this step entirely if the conformance verdict is FAIL. Only run when the consolidated conformance verdict is PASS or PASS WITH WARNINGS.
 
 **Action**: Launch 1 adversarial agent with `model: "sonnet"` using the **Adversarial Agent Prompt** above. Pass as context:
-- Full contents of `spec.md`, `plan.md`, `tasks.md`, `decisions.md`
+- **FAST_LANE = false**: Full contents of `spec.md`, `plan.md`, `tasks.md`, `decisions.md`
+- **FAST_LANE = true**: Full contents of `quick-spec.md`, `decisions.md`
 - The consolidated conformance report from Step 4
 
 **Branching logic based on adversarial agent output**:

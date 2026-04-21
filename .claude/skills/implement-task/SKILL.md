@@ -16,12 +16,17 @@ You received a feature-id in `$ARGUMENTS`.
 
 ## Pre-flight checks
 
-Before starting, verify:
-- [ ] `specs/$ARGUMENTS/plan.md` exists
-- [ ] `specs/$ARGUMENTS/tasks.md` exists
+Before starting, **resolve lane** per `.claude/skills/_shared/sdd-phase-common.md` §I:
+- If `specs/$ARGUMENTS/quick-spec.md` exists AND `plan.md` does NOT → **FAST_LANE = true**, **SPEC_FILE = quick-spec.md**
+- Else if `plan.md` AND `tasks.md` exist → **FAST_LANE = false**, **SPEC_FILE = spec.md**
+- Else → blocked: tell the user which artifact is missing and suggest `/plan-feature` or `/new-quick-feature`/`new-fix`
+
+Then verify:
+- [ ] **FAST_LANE = false**: `specs/$ARGUMENTS/spec.md`, `plan.md`, and `tasks.md` all exist
+- [ ] **FAST_LANE = true**: `specs/$ARGUMENTS/quick-spec.md` exists
 - [ ] There are no tasks marked as `BLOCKED` that would prevent progress
 
-If any check fails, tell the user what's missing and suggest the appropriate step (e.g., `/plan-feature`).
+If any check fails, tell the user what's missing and suggest the appropriate step.
 
 ## TDD detection
 
@@ -41,10 +46,20 @@ Check if this project uses TDD:
 
 1. **Recover prior context (once)** — Call `mem_search` with query `sdd/$ARGUMENTS` + domain keywords, `project: "{project}"` to recover architecture decisions, patterns, and discoveries from planning and prior tasks. If Engram is unavailable, skip. **Do this only on the first invocation** — if the orchestrator already passed context or this is a continuation, skip.
 
-2. Read `specs/$ARGUMENTS/spec.md`, `specs/$ARGUMENTS/plan.md`, and `specs/$ARGUMENTS/tasks.md`.
-   - If any of these don't exist, tell the user which step to run first.
+2. Read state files:
+   - **FAST_LANE = false**: Read `specs/$ARGUMENTS/spec.md`, `plan.md`, and `tasks.md`.
+   - **FAST_LANE = true**: Read `specs/$ARGUMENTS/quick-spec.md` (combined spec + plan + change list). Treat its `## Tasks` section as the task list.
+   - If the required file(s) don't exist, tell the user which step to run first.
 
-3. **Determine batch scope** — Read the domain analysis in `plan.md` to determine feature size:
+2b. **Review-fix cycle** — If the invoker (user or orchestrator) passed `Review-Feedback` (a structured table from `/review-feature`, with a **Task bullet** column), first **reopen** the listed tasks before planning. The `Review-Feedback` table has the form `| # | Task bullet (verbatim) | Criterion | Status | Agent(s) | Fix Required |`. For each row:
+   - If the Task-bullet cell contains verbatim text matching an existing `- [x]` bullet in `tasks.md` (full-flow) or `quick-spec.md` `## Tasks` (fast-lane), flip that bullet back to `- [ ]`.
+   - If the cell reads `(new task needed — not in list)`, append a new `- [ ]` bullet in the same `## Tasks` section using the Fix-Required text as the bullet body — this becomes a new atomic task.
+   
+   Manual users pass `Review-Feedback` by copying the entire `### Review-Feedback` block from `/review-feature`'s result into their `/implement-task` message. If no `Review-Feedback` was passed, skip this step.
+
+3. **Determine batch scope** — Read the domain analysis to determine feature size:
+   - **FAST_LANE = false**: from `plan.md`.
+   - **FAST_LANE = true**: from `quick-spec.md` `## Plan` section. Single-domain by entry-gate construction — treat as SMALL.
    - **SMALL**: Implement **all remaining unchecked tasks** in one batch. Validate once at the end.
    - **MEDIUM/LARGE**: Implement **all unchecked tasks in the current phase** (e.g., "Phase 1 — API plumbing") in one batch. Validate at the end of each phase.
    - If the orchestrator passed a specific task or set of tasks (e.g., review fix cycle), implement only those.
@@ -52,7 +67,9 @@ Check if this project uses TDD:
 4. **For each task in the batch**:
    a. Read and understand the relevant code paths.
    b. Write the code change (if TDD mode: follow RED → GREEN → REFACTOR cycle).
-   c. Mark the task as completed: change `- [ ]` to `- [x]` in `tasks.md`.
+   c. Mark the task as completed:
+      - **FAST_LANE = false**: change `- [ ]` to `- [x]` in `tasks.md`.
+      - **FAST_LANE = true**: change `- [ ]` to `- [x]` in `quick-spec.md` `## Tasks` section (NOT `tasks.md` — there is no `tasks.md` for fast-lane features).
    d. If the implementation diverges from the spec, note the delta (don't write it yet — batch at the end).
    e. **Continue to the next task in the batch without pausing.**
 
