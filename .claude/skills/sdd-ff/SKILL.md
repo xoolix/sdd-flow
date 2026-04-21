@@ -20,7 +20,9 @@ If Engram tools are unavailable, skip this step. Still resolve the project name 
 
 ## Step 1: Resolve feature-id
 
-If `$ARGUMENTS` is provided, use it. Otherwise:
+Feature-id (optional): `$ARGUMENTS`
+
+If non-empty, use it as the feature-id. Otherwise:
 1. List folders in `specs/` (excluding `archive/`).
 2. If exactly one folder exists, use it.
 3. If multiple folders exist, ask the user which one.

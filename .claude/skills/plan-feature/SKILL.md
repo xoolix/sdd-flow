@@ -8,7 +8,7 @@ arguments: feature-id
 
 # Plan feature implementation
 
-You received a feature-id in `$ARGUMENTS`.
+Feature-id: `$ARGUMENTS`
 
 **You are an orchestrator. Do NOT do the analysis work yourself — delegate to sub-agents and synthesize their results.**
 
