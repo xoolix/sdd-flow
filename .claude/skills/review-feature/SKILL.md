@@ -8,7 +8,7 @@ arguments: feature-id
 
 # Review feature implementation
 
-You received a feature-id in `$ARGUMENTS`.
+Feature-id: `$ARGUMENTS`
 
 **You are an orchestrator. Delegate the review work to 3 independent sub-agents launched in parallel — do NOT read implementation files yourself.**
 

@@ -20,7 +20,9 @@ If Engram tools are unavailable, skip this step. Still resolve the project name 
 
 ## Step 1: Resolve feature-id
 
-If `$ARGUMENTS` is provided, use it. Otherwise:
+Feature-id (optional): `$ARGUMENTS`
+
+If non-empty, use it as the feature-id. Otherwise:
 1. List folders in `specs/` (excluding `archive/`).
 2. If exactly one folder exists, use it.
 3. If multiple folders exist, ask the user which one.
@@ -70,7 +72,7 @@ For each phase:
    - **First line of the prompt MUST be**: `"CRITICAL: NEVER use EnterPlanMode or Plan Mode. Write all files directly using Write/Edit tools. Do NOT propose plans for approval."`
    - The full content of `sdd-phase-common.md`
    - The full content of the phase's `SKILL.md`
-   - `$ARGUMENTS` set to the feature-id
+   - Feature-id for the sub-agent: pass the resolved feature-id from Step 1
    - The full content of `.claude/skills/_shared/engram-protocol.md` (Engram memory protocol)
    - `Engram project name: "{project}"` (the resolved project name from Step 0)
    - If compact rules were collected in Step 2b, append them as a `## Project Standards (auto-resolved)` section with all matching compact rule blocks

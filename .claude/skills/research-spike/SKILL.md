@@ -9,7 +9,9 @@ context: fork
 
 # Research spike
 
-You received a research topic in `$ARGUMENTS`.
+Research topic:
+
+`$ARGUMENTS`
 
 ## Steps
 
