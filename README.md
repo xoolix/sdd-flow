@@ -175,8 +175,9 @@ Los skills usan agentes de Claude Code automáticamente:
 
 ## Adopción progresiva
 
-1. **Día 1**: `sdd init` + `/init-project`. Ya podés usar `/new-feature` y `/research-spike`.
-2. **Con código**: Revisar y ajustar los archivos en `.claude/rules/` a medida que el proyecto define convenciones.
-3. **Primer cambio chico**: Probá el fast-lane con `/new-fix "<bug>"` o `/new-quick-feature "<mejora>"`. El entry gate te va a redirigir a `/new-feature` si el cambio no califica.
-4. **Con arquitectura**: Correr `/init-project` de nuevo si la arquitectura cambió significativamente.
-5. **Con skills de stack** (React, Python, etc.): Instalar en `.claude/skills/`, correr `/build-registry` para compilar compact rules que se inyectan automáticamente en sub-agents.
+1. **Día 1**: `sdd init` + `/init-project`. Ya podés usar `/new-feature` y `/research-spike`. `.claude/CLAUDE.md` queda como symlink a SDD_HOME — los updates propagan vía `git pull` sin acción tuya.
+2. **Proyecto pre-symlink**: si ya tenías SDD instalado antes de esta migración, `sdd update` convierte `.claude/CLAUDE.md` de copy a symlink (con backup a `.claude/CLAUDE.md.backup`). Si editaste el CLAUDE.md con overrides custom, muévelos a `.claude/rules/model-overrides.md` (auto-cargado por Claude Code). Ambos archivos se agregan automáticamente a `.gitignore` — los symlinks absolutos no portan entre máquinas.
+3. **Con código**: Revisar y ajustar los archivos en `.claude/rules/` a medida que el proyecto define convenciones.
+4. **Primer cambio chico**: Probá el fast-lane con `/new-fix "<bug>"` o `/new-quick-feature "<mejora>"`. El entry gate te va a redirigir a `/new-feature` si el cambio no califica.
+5. **Con arquitectura**: Correr `/init-project` de nuevo si la arquitectura cambió significativamente.
+6. **Con skills de stack** (React, Python, etc.): Instalar en `.claude/skills/`, correr `/build-registry` para compilar compact rules que se inyectan automáticamente en sub-agents.
