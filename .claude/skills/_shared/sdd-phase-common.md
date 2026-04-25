@@ -128,7 +128,7 @@ Before any `mem_*` call, you need the project name. Resolve it in this order:
 
 ### Session Init (when running without an orchestrator)
 
-If you are running as a standalone skill (not launched by `sdd-continue`/`sdd-ff`):
+If you are running as a standalone skill (not launched by `sdd-next`/`sdd-auto`):
 1. Call `mem_session_start` with `project: "{project}"`, description: `SDD {phase-name}: {feature-id}`
 2. Call `mem_context` with `project: "{project}"` to load prior context
 
@@ -173,7 +173,7 @@ Context compaction may occur mid-session, erasing working memory. Follow these r
 
 1. **Save during work, not just at the end**: Call `mem_save` as discoveries happen. Don't accumulate saves for the end — compaction may erase them.
 2. **Save before returning**: You have the freshest context. Save key observations before producing the return envelope (section D).
-3. **Session management**: Orchestrators (`sdd-continue`, `sdd-ff`) or standalone skills (section G) manage sessions. Project name is resolved once and reused.
+3. **Session management**: Orchestrators (`sdd-next`, `sdd-auto`) or standalone skills (section G) manage sessions. Project name is resolved once and reused.
 4. **Recovery after compaction**: If you lose context, call `mem_context` with `project: "{project}"` and re-read state files to re-derive your position in the pipeline.
 5. **Sub-agents are stateless**: Each sub-agent starts fresh. The `mem_search` at phase start (section G) is how sub-agents inherit knowledge from prior phases. The orchestrator passes the resolved project name in the launch prompt.
 
@@ -212,7 +212,7 @@ Resolve lane:
 
 ### Out of scope
 
-`/sdd-continue` and `/sdd-ff` do NOT support fast-lane. The result envelope of `/new-quick-feature` and `/new-fix` includes a `Next` field guiding the user to the next phase command (manual invocation only).
+`/sdd-next` and `/sdd-auto` do NOT support fast-lane. The result envelope of `/new-quick-feature` and `/new-fix` includes a `Next` field guiding the user to the next phase command (manual invocation only).
 
 ### Tasks section format
 

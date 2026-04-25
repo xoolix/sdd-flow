@@ -8,7 +8,7 @@ SDD_HOME="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")/..
 VERSION="2.0.0"
 
 # ─── Core SDD skills (these go to global ~/.claude/skills/) ──────
-CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-continue sdd-ff init-project build-registry _shared"
+CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto init-project build-registry _shared"
 
 # ─── helpers ───────────────────────────────────────────────────────
 
@@ -160,7 +160,7 @@ cmd_init() {
   fi
 
   # Check if global core is installed
-  if [ ! -d "$HOME/.claude/skills/sdd-continue" ] && [ ! -L "$HOME/.claude/skills/sdd-continue" ]; then
+  if [ ! -d "$HOME/.claude/skills/sdd-next" ] && [ ! -L "$HOME/.claude/skills/sdd-next" ]; then
     warn "Core SDD skills not found in ~/.claude/skills/"
     log "Installing globally first..."
     cmd_init_global "$mode"
@@ -216,6 +216,25 @@ cmd_init() {
       ok "Created .claude/rules/$rule_name"
     fi
   done
+
+  # ── Agents (project-local copies, never overwrite) ──
+  # Native sub-agents are discovered by Claude Code at session init from .claude/agents/*.md.
+  # They declare model/tools/context in frontmatter. Skill routers in .claude/skills/*/SKILL.md
+  # delegate to them via Agent tool (subagent_type: "sdd-<phase>"). See feature 008.
+  if [ -d "$SDD_HOME/.claude/agents" ]; then
+    mkdir -p "$target/.claude/agents"
+    for agent_file in "$SDD_HOME/.claude/agents"/sdd-*.md; do
+      [ -f "$agent_file" ] || continue
+      local agent_name
+      agent_name="$(basename "$agent_file")"
+      if [ -f "$target/.claude/agents/$agent_name" ]; then
+        warn "Skipped .claude/agents/$agent_name (already exists)"
+      else
+        cp "$agent_file" "$target/.claude/agents/$agent_name"
+        ok "Created .claude/agents/$agent_name"
+      fi
+    done
+  fi
 
   # ── CLAUDE.md (symlink by default for auto-updates, cp on --copy) ──
   # -e tests if the target exists (follows symlinks). A broken symlink → -e false, -L true.
@@ -274,10 +293,18 @@ cmd_update() {
   local target
   target="$(pwd)"
 
+  # Protection: refuse to update inside the SDD boilerplate repo itself.
+  # Running `sdd update` with target == SDD_HOME creates self-referential (circular)
+  # symlinks for CLAUDE.md. Observed in feature 008 dev cycle — caused ELOOP.
+  if [ "$target" = "$SDD_HOME" ]; then
+    err "Cannot update inside the SDD boilerplate repo itself."
+    exit 1
+  fi
+
   log "Updating SDD"
 
   # Update global core skills
-  if [ -d "$HOME/.claude/skills/sdd-continue" ] || [ -L "$HOME/.claude/skills/sdd-continue" ]; then
+  if [ -d "$HOME/.claude/skills/sdd-next" ] || [ -L "$HOME/.claude/skills/sdd-next" ]; then
     log "Updating global core skills..."
     for skill in $CORE_SKILLS; do
       local global_skill="$HOME/.claude/skills/$skill"
@@ -329,10 +356,12 @@ cmd_update() {
     ok "Refreshed CLAUDE.md symlink"
     gitignore_claude_md_artifacts "$target"
   elif [ -L "$claude_md" ]; then
-    # Broken symlink — repair (target missing, likely SDD_HOME moved)
+    # Broken OR circular symlink — repair by replacing target.
+    # Circular case: readlink returns a path that resolves back to $claude_md (ELOOP).
+    # Both cases: [ -L true ] && [ -e false ]. Same fix for both.
     rm "$claude_md"
     ln -sfn "$SDD_HOME/.claude/CLAUDE.md" "$claude_md"
-    ok "Repaired broken CLAUDE.md symlink"
+    ok "Repaired broken/circular CLAUDE.md symlink"
     gitignore_claude_md_artifacts "$target"
   elif [ -f "$claude_md" ]; then
     log "Migrating .claude/CLAUDE.md from copy to symlink..."
@@ -351,6 +380,23 @@ cmd_update() {
     ln -sfn "$SDD_HOME/.claude/CLAUDE.md" "$claude_md"
     ok "Created CLAUDE.md symlink (was absent)"
     gitignore_claude_md_artifacts "$target"
+  fi
+
+  # ── Agents: add new ones from SDD_HOME, never overwrite local customizations ──
+  # If the repo gained new native sub-agents since last install, copy them in.
+  # Existing files (user may have customized) are preserved.
+  if [ -d "$SDD_HOME/.claude/agents" ]; then
+    mkdir -p "$target/.claude/agents"
+    for agent_file in "$SDD_HOME/.claude/agents"/sdd-*.md; do
+      [ -f "$agent_file" ] || continue
+      local agent_name
+      agent_name="$(basename "$agent_file")"
+      local agent_dst="$target/.claude/agents/$agent_name"
+      if [ ! -e "$agent_dst" ]; then
+        cp "$agent_file" "$agent_dst"
+        ok "Added .claude/agents/$agent_name"
+      fi
+    done
   fi
 
   ok "Update complete!"

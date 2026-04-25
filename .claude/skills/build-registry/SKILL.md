@@ -10,12 +10,12 @@ arguments: none
 
 Scan all project-specific skills in `.claude/skills/`, generate **compact rules** (5-15 lines per skill), and write the registry to `.claude/skills/skill-registry.md`.
 
-> The registry is what orchestrators (`sdd-continue`, `sdd-ff`) inject into sub-agents instead of full skill files. This saves tokens: ~100 lines of compact rules vs ~2000 lines of full skills.
+> The registry is what orchestrators (`sdd-next`, `sdd-auto`) inject into sub-agents instead of full skill files. This saves tokens: ~100 lines of compact rules vs ~2000 lines of full skills.
 
 ## Steps
 
 1. **Scan for project skills** — List all directories in `.claude/skills/`. Skip core SDD skills:
-   `new-feature`, `plan-feature`, `implement-task`, `simplify-code`, `review-feature`, `archive-feature`, `research-spike`, `sdd-new`, `sdd-continue`, `sdd-ff`, `init-project`, `build-registry`, `architecture-map`, `_shared`
+   `new-feature`, `plan-feature`, `implement-task`, `simplify-code`, `review-feature`, `archive-feature`, `research-spike`, `sdd-new`, `sdd-next`, `sdd-auto`, `init-project`, `build-registry`, `architecture-map`, `_shared`
 
 2. **For each project skill found**, read its `SKILL.md` and extract:
    - `name` from frontmatter

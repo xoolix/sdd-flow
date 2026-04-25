@@ -128,13 +128,13 @@ This is the ONE place where saving a summary of artifacts is appropriate.
 
 Context compaction can happen mid-session, causing loss of working memory.
 
-### On Session Start (orchestrators only: sdd-continue, sdd-ff)
+### On Session Start (orchestrators only: sdd-next, sdd-auto)
 
 1. Resolve project name from git remote
 2. Call `mem_session_start` with `project: "{project}"`, description: `SDD pipeline: {feature-id}`
 3. Call `mem_context` with `project: "{project}"` to load existing context
 
-### On Session End (orchestrators only: sdd-continue, sdd-ff)
+### On Session End (orchestrators only: sdd-next, sdd-auto)
 
 1. Call `mem_session_summary` with `project: "{project}"` — phases completed, current state, blockers
 2. Call `mem_session_end`

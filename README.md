@@ -60,8 +60,8 @@ Después del entry hay 5 fases: `plan-feature` → `implement-task` (loop) → `
 
 **Automático** (solo full-flow):
 ```
-/sdd-continue         ← detecta en qué fase estás y lanza la próxima
-/sdd-ff               ← fast-forward, encadena todas las fases restantes
+/sdd-next         ← detecta en qué fase estás y lanza la próxima
+/sdd-auto               ← fast-forward, encadena todas las fases restantes
 ```
 El orchestrator maneja retries (2 por fase), validaciones post-fase, y pausa solo en checkpoints reales (ambigüedades en spec, discovery findings, SPEC-GAP-HIGH del adversarial, ESCALATED).
 
@@ -73,7 +73,7 @@ El orchestrator maneja retries (2 por fase), validaciones post-fase, y pausa sol
 /review-feature NNN-name
 /archive-feature NNN-name
 ```
-Cada envelope de cada fase incluye un campo `Next` que te dice qué invocar. `/sdd-continue` y `/sdd-ff` **NO soportan fast-lane** — si tu feature tiene `quick-spec.md`, solo podés avanzar manual.
+Cada envelope de cada fase incluye un campo `Next` que te dice qué invocar. `/sdd-next` y `/sdd-auto` **NO soportan fast-lane** — si tu feature tiene `quick-spec.md`, solo podés avanzar manual.
 
 ### Herramienta transversal: research-spike
 
@@ -85,7 +85,7 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
 ### Resumen visual
 
 ```
-                       ┌─ /sdd-continue  (auto, solo full-flow)
+                       ┌─ /sdd-next  (auto, solo full-flow)
 /new-feature ──spec.md ┤
                        └─ /plan-feature → /implement-task → /simplify-code → /review-feature → /archive-feature  (manual)
 
@@ -102,8 +102,8 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
 |---|---|
 | `/init-project` | Escanea el codebase, genera architecture-map y conventions |
 | `/sdd-new "idea"` | Entry point full-flow (delega a `/new-feature`) |
-| `/sdd-continue [NNN]` | Detecta la fase actual y corre la próxima |
-| `/sdd-ff [NNN]` | Fast-forward: encadena todas las fases restantes |
+| `/sdd-next [NNN]` | Detecta la fase actual y corre la próxima |
+| `/sdd-auto [NNN]` | Fast-forward: encadena todas las fases restantes |
 | `/new-feature "idea"` | Crea spec.md conversacionalmente (full-flow) |
 | `/new-quick-feature "idea"` | Fast-lane: enhancement/refactor → quick-spec.md |
 | `/new-fix "bug"` | Fast-lane: bugfix (C/E/U) → quick-spec.md |
@@ -120,7 +120,7 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
 | Situación | Entry | Modo |
 |---|---|---|
 | No estás seguro si una lib/patrón sirve | `/research-spike` | — (standalone) |
-| Feature grande, querés que Claude maneje todo | `/new-feature` | Automático (`/sdd-continue` o `/sdd-ff`) |
+| Feature grande, querés que Claude maneje todo | `/new-feature` | Automático (`/sdd-next` o `/sdd-auto`) |
 | Feature grande, querés checkpoints entre fases | `/new-feature` | Manual (invocar cada fase) |
 | Cambio chico single-domain, sin deps nuevas, ≤2 GWT | `/new-quick-feature` | Manual (único modo) |
 | Bug chico con Current/Expected/Unchanged claros | `/new-fix` | Manual (único modo) |
@@ -139,8 +139,8 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
     _shared/                   # Protocolo común + lane resolution (§I)
     init-project/              # Inicialización automática
     sdd-new/                   # Entry point full-flow
-    sdd-continue/              # Orchestrator: detecta y corre próxima fase
-    sdd-ff/                    # Orchestrator: fast-forward
+    sdd-next/              # Orchestrator: detecta y corre próxima fase
+    sdd-auto/                    # Orchestrator: fast-forward
     new-feature/               # Full-flow: crear spec desde idea
     new-quick-feature/         # Fast-lane: enhancement/refactor
     new-fix/                   # Fast-lane: bugfix (C/E/U)
@@ -165,13 +165,13 @@ docs/architecture/             # Documentación de arquitectura
 
 ## Uso de agentes
 
-Los skills usan agentes de Claude Code automáticamente:
+Desde la feature 008, SDD usa **native sub-agents** de Claude Code. Cada fase (9 públicas + 6 internas = 15 archivos) vive en `.claude/agents/sdd-*.md` con frontmatter que declara `model`, `disallowedTools`, `context`, y `mcpServers`. Los skills en `.claude/skills/*/SKILL.md` son routers finos (~10 líneas) que delegan al native agent cuando el user invoca `/plan-feature`, `/implement-task`, etc.
 
-- **`/plan-feature`**: Lanza Explore agents + discovery-evaluator para analizar el codebase en paralelo
-- **`/review-feature`**: 3 agentes independientes votan el veredicto + 1 adversarial challenge al spec
-- **`/research-spike`**: Agentes en paralelo para investigar múltiples opciones simultáneamente
-- **`/implement-task`**: Corre validaciones (lint, typecheck, tests) en paralelo
-- **Orchestrators** (`/sdd-continue`, `/sdd-ff`): lanzan las fases como sub-agents con el modelo apropiado (opus para planning, sonnet para implement/review, haiku para archive)
+**Modelo por fase**: no hay tabla hardcoded — cada `.claude/agents/sdd-<phase>.md` declara su `model:` en frontmatter (fuente única de verdad). Para cambiar el modelo de una fase, editá solo ese archivo.
+
+**Contexto aislado**: los agents corren en context window separado del padre, por lo que las fases no se contaminan entre sí. El user puede invocar directamente con `/phase <id>` (router delega al agent) o con `@agent-sdd-<phase> <id>` (mention directo).
+
+**Orchestrators** (`/sdd-next` para paso a paso, `/sdd-auto` para auto-chain): lanzan cada fase vía Agent tool nativo apuntando al nombre del agent (`subagent_type: "sdd-<phase>"`). Fallback inline si el runtime no reconoce el agent (ej. instalación desactualizada).
 
 ## Adopción progresiva
 
