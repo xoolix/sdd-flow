@@ -42,11 +42,12 @@ This guarantees that any post-edit failure later is attributable to simplify-cod
 ### 3. Determine scope
 
 1. Resolve branch base: `git merge-base main HEAD` (fallback `git merge-base origin/main HEAD`). If both fail → `Status: blocked` with diagnostic.
-2. Compute touched files as the **union** of:
-   - committed diff: `git diff --name-only <base-sha>..HEAD`
-   - working-tree changes: `git status --short` → paths from `M `, ` M`, `MM`, `A `, `??` entries (ignore `D`, `R`)
-
-   The union handles both normal flows (agent commits feature work) and never-commit flows (per `.claude/rules/git.md`, agent leaves work unstaged). If both sets are empty, there is nothing to simplify — skip to step 3.5.
+2. Compute touched files as the committed diff only: `git diff --name-only <base-sha>..HEAD`. This is the strict scope — working-tree changes outside this diff are not eligible for simplification. If the result is empty, there is nothing to simplify — skip to step 5.
+2b. Compute `IGNORED_DIRTY`: from `git status --short`, collect paths from `M `, ` M`, `MM`, `A `, `??` entries (ignore `D`, `R`) that are **not** already in the committed diff list. Apply the same exclusion filters as `SCOPED_FILES` (tests, lockfiles, migrations, configs, SDD artifacts). If `IGNORED_DIRTY` is non-empty, print:
+   ```
+   Ignored uncommitted paths outside <base>..HEAD: <list>
+   ```
+   This is a notice only — the run continues normally. No block is raised.
 3. Apply exclusion filters — drop any file matching:
    - **Tests**: `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`, `**/test/**`, `**/tests/**`
    - **Lockfiles**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Cargo.lock`

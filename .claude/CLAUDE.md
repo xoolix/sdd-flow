@@ -250,11 +250,22 @@ To override for a specific project, add rows to `.claude/rules/model-overrides.m
 - Claude Code loads these automatically — no need to reference them manually
 - Shared phase rules live in `.claude/skills/_shared/sdd-phase-common.md`
 
+> **Customization**: Customize SDD behavior via `.claude/rules/*.md`. **Do NOT edit `.claude/agents/sdd-*.md` directly** — `bin/sdd update` overwrites those files using `cmp -s` byte-diff.
+
 ## Workflow
 ```
 idea -> /new-feature -> refine spec -> /plan-feature -> /implement-task (repeat) -> /simplify-code -> /review-feature -> /archive-feature
                                    \-> /research-spike (if uncertain)
 ```
+
+## Archive folder format
+
+Archived features are stored under `specs/archive/` using this naming convention:
+
+- **Path**: `specs/archive/YYYY-MM-DD-<feature-id>/`
+- **Date**: `%Y-%m-%d` format, using the archive-day local time (the day `/archive-feature` runs).
+- **Feature-id**: the original `NNN-kebab` identifier (e.g., `011-sdd-pipeline-operational-fixes`).
+- `.simplified` is intentionally deleted by `/archive-feature` — the sentinel's only purpose is the simplify→review handoff guard and has no value after archiving.
 
 ## Result envelope
 All skills output a structured result envelope at the end:

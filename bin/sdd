@@ -304,21 +304,19 @@ cmd_update() {
   log "Updating SDD"
 
   # Update global core skills
-  if [ -d "$HOME/.claude/skills/sdd-next" ] || [ -L "$HOME/.claude/skills/sdd-next" ]; then
-    log "Updating global core skills..."
-    for skill in $CORE_SKILLS; do
-      local global_skill="$HOME/.claude/skills/$skill"
-      if [ -L "$global_skill" ]; then
-        ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
-        ok "Updated global: $skill"
-      elif [ -d "$global_skill" ]; then
-        warn "Skipped global $skill (not a symlink — was copied with --copy)"
-      else
-        ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
-        ok "Added global: $skill"
-      fi
-    done
-  fi
+  log "Updating global core skills..."
+  for skill in $CORE_SKILLS; do
+    local global_skill="$HOME/.claude/skills/$skill"
+    if [ -L "$global_skill" ]; then
+      ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
+      ok "Updated global: $skill"
+    elif [ -d "$global_skill" ]; then
+      warn "Skipped global $skill (not a symlink — was copied with --copy)"
+    else
+      ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
+      ok "Added global: $skill"
+    fi
+  done
 
   # Update project templates
   if [ -d "$target/.specify" ]; then
@@ -382,11 +380,12 @@ cmd_update() {
     gitignore_claude_md_artifacts "$target"
   fi
 
-  # ── Agents: add new ones from SDD_HOME, never overwrite local customizations ──
-  # If the repo gained new native sub-agents since last install, copy them in.
-  # Existing files (user may have customized) are preserved.
+  # ── Agents: sync upstream sdd-*.md files; byte-diff decides action ──
+  # (a) absent → copy in; (b) identical → skip; (c) changed → overwrite.
+  # Only upstream files are iterated — project-local agents are never touched.
   if [ -d "$SDD_HOME/.claude/agents" ]; then
     mkdir -p "$target/.claude/agents"
+    local added=0 updated=0 unchanged=0
     for agent_file in "$SDD_HOME/.claude/agents"/sdd-*.md; do
       [ -f "$agent_file" ] || continue
       local agent_name
@@ -395,8 +394,16 @@ cmd_update() {
       if [ ! -e "$agent_dst" ]; then
         cp "$agent_file" "$agent_dst"
         ok "Added .claude/agents/$agent_name"
+        : $((added++))
+      elif cmp -s "$agent_file" "$agent_dst"; then
+        : $((unchanged++))
+      else
+        cp "$agent_file" "$agent_dst"
+        ok "Updated: $agent_name"
+        : $((updated++))
       fi
     done
+    log "Agents: $added added, $updated updated, $unchanged unchanged"
   fi
 
   ok "Update complete!"

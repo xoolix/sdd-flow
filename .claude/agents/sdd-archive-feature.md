@@ -39,6 +39,7 @@ If any check fails, stop and tell the user what's needed. Do NOT proceed.
 3. **Archive the feature** — Move the feature folder:
    - Create `specs/archive/` if it doesn't exist.
    - Move `specs/$ARGUMENTS/` to `specs/archive/YYYY-MM-DD-$ARGUMENTS/` (using today's date).
+   - Run `rm -f specs/archive/YYYY-MM-DD-$ARGUMENTS/.simplified` — silent no-op if absent (see CLAUDE.md `## Archive folder format`; sentinel has no value after archiving).
 
 4. **Present summary** — Show the user what was archived and any deltas that were merged.
 
