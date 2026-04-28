@@ -18,7 +18,7 @@ Before starting, **resolve lane** per `.claude/skills/_shared/sdd-phase-common.m
 - [ ] **FAST_LANE = true**: `specs/$ARGUMENTS/quick-spec.md` exists; all `- [ ]` in its `## Tasks` section are `- [x]`
 - [ ] `specs/$ARGUMENTS/decisions.md` has no unresolved `SPEC-GAP-HIGH` entry
 - [ ] `specs/$ARGUMENTS/.simplified` is absent OR is stale (its `git-head` field ≠ `git rev-parse HEAD`) — a stale sentinel is deleted and treated as absent
-- [ ] `git merge-base main HEAD` resolves to a valid commit SHA (fallback: `origin/main`)
+- [ ] `sdd base-branch $ARGUMENTS` exits 0 (base branch is resolvable) AND `git merge-base "$(sdd base-branch $ARGUMENTS)" HEAD` resolves to a valid commit SHA
 
 **Stale sentinel handling**: if `.simplified` exists, read its `git-head` line. If it equals the current `git rev-parse HEAD`, the sentinel is fresh — abort pre-flight with `Status: blocked` (`Summary: already simplified at this HEAD`). If it differs, the sentinel is stale (e.g., user amended HEAD, rebased, or spoofed the file) — `rm specs/$ARGUMENTS/.simplified` and proceed.
 
@@ -41,7 +41,7 @@ This guarantees that any post-edit failure later is attributable to simplify-cod
 
 ### 3. Determine scope
 
-1. Resolve branch base: `git merge-base main HEAD` (fallback `git merge-base origin/main HEAD`). If both fail → `Status: blocked` with diagnostic.
+1. Resolve branch base: Run `BASE_BRANCH=$(sdd base-branch "$ARGUMENTS")`. If `sdd base-branch` exits non-zero, forward its stderr and return `Status: blocked` with diagnostic. Then run `git merge-base "$BASE_BRANCH" HEAD`; if this fails → `Status: blocked` with diagnostic. `sdd base-branch` is the canonical scope source — do not hardcode `main` or any other branch name.
 2. Compute touched files as the committed diff only: `git diff --name-only <base-sha>..HEAD`. This is the strict scope — working-tree changes outside this diff are not eligible for simplification. If the result is empty, there is nothing to simplify — skip to step 5.
 2b. Compute `IGNORED_DIRTY`: from `git status --short`, collect paths from `M `, ` M`, `MM`, `A `, `??` entries (ignore `D`, `R`) that are **not** already in the committed diff list. Apply the same exclusion filters as `SCOPED_FILES` (tests, lockfiles, migrations, configs, SDD artifacts). If `IGNORED_DIRTY` is non-empty, print:
    ```

@@ -4,3 +4,4 @@ research
 docs
 .claude/CLAUDE.md.backup
 .claude/CLAUDE.md
+specs/**/.parent-branch
