@@ -1,6 +1,6 @@
 ---
 name: sdd-review-feature
-description: Review implementation against the feature spec and plan using 3-agent voting
+description: Review implementation against the feature spec and plan using tiered voting (1 or 3 agents based on tier)
 model: sonnet
 ---
 
@@ -8,7 +8,7 @@ model: sonnet
 
 Feature-id: `$ARGUMENTS`
 
-**You are an orchestrator. Delegate the review work to 3 independent sub-agents launched in parallel — do NOT read implementation files yourself.**
+**You are an orchestrator. Delegate the review work to sub-agents (1 or 3, per resolved tier) — do NOT read implementation files yourself.**
 
 > Sub-agents you launch MUST follow the executor boundary from `.claude/skills/_shared/sdd-phase-common.md` — they do the work themselves without re-delegating.
 
@@ -45,9 +45,42 @@ Read state files:
 - **FAST_LANE = false**: Read `specs/$ARGUMENTS/spec.md`, `plan.md`, `tasks.md`, and `decisions.md`.
 - **FAST_LANE = true**: Read `specs/$ARGUMENTS/quick-spec.md` (combined spec + plan + change list) and `decisions.md`.
 
-### 2. Launch 3 independent review agents in parallel
+### 1.5. Resolve review tier
 
-Launch **3 independent `sdd-reviewer-voter` sub-agents in parallel**. Each performs a **complete, independent review** of the entire feature. Give each a different agent label (Agent-A, Agent-B, Agent-C) for tracking.
+Parse `$ARGUMENTS` for flags and determine the review tier. This step runs after state-read (Step 1) but before launching voters (Step 2).
+
+**Flag extraction** (exact-token match — `--minimal-foo` must NOT match):
+- Split `$ARGUMENTS` on whitespace.
+- Check if the exact token `--minimal` is present.
+
+**Tier resolution logic**:
+
+| Condition | Tier |
+|-----------|------|
+| `--minimal` flag present | `minimal` |
+| No `--minimal` AND folder contains only `quick-spec.md` (FAST_LANE = true) | `fast-lane` |
+| No `--minimal` AND folder contains `spec.md` (FAST_LANE = false) | `full-spec` |
+
+**Bind derived variables** for downstream steps:
+
+| Tier | `voter_count` | `adversarial_enabled` |
+|------|:---:|:---:|
+| `minimal` | 1 | false |
+| `fast-lane` | 1 | true |
+| `full-spec` | 3 | true |
+
+**Audit on downgrade** (AC4): if `--minimal` flag is present AND the folder has `spec.md` (FAST_LANE = false):
+
+1. Write to stderr: `WARNING: downgrading full-spec to minimal review on user request`
+2. Append to `specs/<feature-id>/decisions.md` (create file with `# Decisions\n` header if absent):
+   ```
+   [<ISO-8601 UTC timestamp>] review-tier=minimal (downgraded from full-spec via --minimal)
+   ```
+   The timestamp must be in format `YYYY-MM-DDTHH:MM:SSZ` (UTC). Example: `[2026-04-28T15:23:00Z]`.
+
+### 2. Launch review agents in parallel
+
+Launch **`voter_count` parallel `sdd-reviewer-voter` sub-agents**. When `voter_count = 1`, launch a single agent with label `Agent-A`. When `voter_count = 3`, launch three agents with labels `Agent-A`, `Agent-B`, `Agent-C`.
 
 Each agent receives the **same prompt** containing:
 
@@ -58,6 +91,12 @@ Each agent receives the **same prompt** containing:
 The `sdd-reviewer-voter` agent body encodes the per-agent review protocol (GWT compliance matrix, verdict rules).
 
 ### 3. Collect verdicts and apply voting logic
+
+**If `voter_count == 1` (tier = `minimal` or `fast-lane`)**:
+
+The single voter's verdict IS the review verdict — no aggregation. Skip the voting matrix below and proceed directly to Step 4 using Agent-A's output as the sole source of truth.
+
+**If `voter_count == 3` (tier = `full-spec`)**:
 
 Once all 3 agents return, collect their verdicts and apply these rules:
 
@@ -70,6 +109,15 @@ Once all 3 agents return, collect their verdicts and apply these rules:
 | **No majority** (all 3 different) | **Flag to human**. Include all 3 rationales. Verdict = FAIL (conservative). |
 
 ### 4. Build consolidated review report
+
+**If `voter_count == 1`**:
+
+- **Vote Summary**: `Agent-A: <verdict>`
+- **Consensus**: Agent-A's verdict (pass-through)
+- **Compliance Matrix**: Agent-A's matrix
+- **Passes / Gaps / Risks**: Agent-A's findings directly
+
+**If `voter_count == 3`**:
 
 Combine the 3 agents' findings into a single report:
 
@@ -110,9 +158,11 @@ If the final verdict includes failures, construct the `Review-Feedback` field as
 
 This structured feedback is consumed by the evaluator-optimizer loop in `/sdd-next` and `/sdd-auto` to re-launch `/implement-task` automatically.
 
-### 5.5. Adversarial spec review (runs only when conformance verdict is PASS or PASS WITH WARNINGS)
+### 5.5. Adversarial spec review (runs only when conformance verdict is PASS or PASS WITH WARNINGS AND adversarial_enabled is true)
 
-**Gate**: Skip this step entirely if the conformance verdict is FAIL. Only run when the consolidated conformance verdict is PASS or PASS WITH WARNINGS.
+**Tier gate**: Skip this step entirely if `adversarial_enabled == false` (tier = `minimal`). When skipped, proceed directly to Step 6.
+
+**Conformance gate**: Skip this step if the conformance verdict is FAIL. Only run when `adversarial_enabled == true` AND the consolidated conformance verdict is PASS or PASS WITH WARNINGS.
 
 **Action**: Launch 1 `sdd-adversarial-reviewer` sub-agent. Pass as context:
 - **FAST_LANE = false**: Full contents of `spec.md`, `plan.md`, `tasks.md`, `decisions.md`
@@ -151,7 +201,8 @@ Use tag `SPEC-GAP-HIGH` if any row has severity = high. Use tag `SPEC-GAP` if al
 ### 6. Engram memory (skip if Engram unavailable)
 
 - **On start** (Step 0): `mem_search` query `sdd/$ARGUMENTS` + domain keywords, `project: "{project}"` — recover implementation context and find patterns from prior reviews
-- **After review**: Save only what would help future features:
+- **After review**: Save tier usage for SC1 measurement AND any reusable patterns:
+  - Always `mem_save` type: `event`, topic_key: `sdd/$ARGUMENTS/review`, content: `tier=<resolved> verdict=<verdict> feature=$ARGUMENTS` — required for SC1 adoption measurement
   - If a recurring quality issue was found across reviews → `mem_save` type: `learning`, topic_key: `project/quality-patterns` — e.g., "Tests in this project tend to miss edge case X"
   - If the adversarial agent found a gap pattern → `mem_save` type: `discovery` — the pattern, not the specific gap (that's in decisions.md)
   - Don't save "review passed 3/3" — that's not actionable for future work
@@ -165,6 +216,7 @@ After completing, output:
 - **Status**: success | partial | blocked
 - **Summary**: [1-3 sentences: vote breakdown, final verdict, key findings]
 - **Artifacts**: [review report location]
+- **tier**: <resolved> (minimal | fast-lane | full-spec)
 - **Next**: /archive-feature $ARGUMENTS (if PASS) or specific fixes needed (if FAIL)
 - **Risks**: [critical gaps or concerns, or "None"]
 - **Review-Feedback**: [structured table of failed criteria — include ONLY when verdict is FAIL or PASS WITH WARNINGS]
@@ -173,7 +225,7 @@ After completing, output:
 
 ## Rules
 - **NEVER use Plan Mode**: Do NOT use `EnterPlanMode`. Write files directly. Plan Mode breaks the SDD pipeline.
-- **Delegate, don't execute**: Launch 3 parallel review agents, synthesize their results via voting.
+- **Delegate, don't execute**: Launch voter agents (1 or 3 per tier), synthesize their results via pass-through (N=1) or voting (N=3).
 - **Run real tests**: Each agent must run actual tests — compliance matrices must be based on real test execution.
 - **Conservative voting**: When in doubt, use the more conservative verdict. Any FAIL means the feature FAILs.
 - **Structured feedback**: The `Review-Feedback` field must be actionable — specific criteria and specific fixes, not vague suggestions.

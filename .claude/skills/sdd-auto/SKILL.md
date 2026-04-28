@@ -18,11 +18,18 @@ Like `/sdd-next` but runs ALL remaining phases without asking between each one. 
 
 If Engram tools are unavailable, skip this step. Still resolve the project name — pass it to sub-agents.
 
-## Step 1: Resolve feature-id
+## Step 1: Resolve feature-id and flags
 
-Feature-id (optional): `$ARGUMENTS`
+Feature-id (optional, with optional flags): `$ARGUMENTS`
 
-If non-empty, use it as the feature-id. Otherwise:
+**Flag extraction** (before resolving feature-id, once at pipeline start):
+- Split `$ARGUMENTS` on whitespace.
+- Extract the exact token `--minimal` if present (NOT substring match — `--minimal-foo` must NOT match).
+- The remaining tokens (non-flag parts) form the raw feature-id string.
+- Cache `has_minimal_flag = true/false` for the entire pipeline run.
+
+**Feature-id resolution** (from the non-flag tokens):
+If non-empty after stripping flags, use it as the feature-id. Otherwise:
 1. List folders in `specs/` (excluding `archive/`).
 2. If exactly one folder exists, use it.
 3. If multiple folders exist, ask the user which one.
@@ -45,7 +52,8 @@ Repeat until pipeline is complete, blocked, or escalated:
    - **Do NOT read the phase's SKILL.md and inject** — the agent preloads its own body. The SKILL.md is now a router.
    - **Prompt content**:
      - First line: `"CRITICAL: NEVER use EnterPlanMode or Plan Mode. Write all files directly using Write/Edit tools. Do NOT propose plans for approval."`
-     - `Feature-id: <feature-id>`
+     - `Feature-id: <feature-id>` — pass the clean feature-id (no flags) for all phases EXCEPT:
+       - If `has_minimal_flag = true` AND the detected phase is `review-feature`, pass `Feature-id: <feature-id> --minimal`. All other phases receive the clean feature-id. This ensures `--minimal` is review-only (AC6 / EC5).
      - Full content of `.claude/skills/_shared/sdd-phase-common.md` + `engram-protocol.md`
      - `Engram project name: "{project}"`
      - Compact rules (from Step 1b) appended as `## Project Standards (auto-resolved)` if present
@@ -85,7 +93,7 @@ Initialize `review_cycle = 1`.
 3. **Validate implement-task result**: Apply Step 2 item 3 validation (artifacts exist, envelope complete, lint/tests pass). If validation fails, follow item 5 retry logic.
 4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.simplified`, so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 2 item 2 pattern).
 5. **Validate simplify-code result**: Apply Step 2 item 3 validation. If simplify-code returns `Status: blocked` (regression revert or baseline red), **STOP** the fix loop and report the blocked status — the human must resolve the regression before the loop can continue.
-6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 2 item 2 pattern) to re-review the updated implementation.
+6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 2 item 2 pattern) to re-review the updated implementation. If `has_minimal_flag = true`, pass `Feature-id: <feature-id> --minimal` (same tier as the original review — AC5 / EC7).
 7. **Validate review result**: Apply Step 2 item 3 validation to the review result.
 8. **Check verdict**:
    - **PASS or PASS WITH WARNINGS** → exit loop, continue the pipeline (back to phase detection in Step 2).
