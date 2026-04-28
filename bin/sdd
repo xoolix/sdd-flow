@@ -86,6 +86,7 @@ Usage:
   sdd doctor                     Verify SDD setup is healthy
   sdd base-branch [feature-id]   Resolve the base branch for scope computations
                                  (Layer 1: sidecar, Layer 2: git.md config, Layer 3: auto-detect)
+  sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
   sdd help                       Show this help
 
 Options for 'init':
@@ -636,6 +637,167 @@ cmd_base_branch() {
   return 3
 }
 
+# ─── status ────────────────────────────────────────────────────────
+
+cmd_status() {
+  local feature_id="${1:-}"
+
+  # ── Task 2: Feature-id resolution ──────────────────────────────
+  if [ -z "$feature_id" ]; then
+    local branch
+    branch="$(git branch --show-current 2>/dev/null || true)"
+    if [[ "$branch" =~ ^feature/([0-9]{3}-.+)$ ]]; then
+      feature_id="${BASH_REMATCH[1]}"
+    else
+      printf 'error: not on a feature branch\n' >&2
+      exit 1
+    fi
+  fi
+
+  # ── Task 3: Folder lookup ───────────────────────────────────────
+  local specs_dir
+  specs_dir="$(pwd)/specs"
+
+  local feature_dir=""
+  local is_archived=false
+
+  if [ -d "$specs_dir/$feature_id" ]; then
+    feature_dir="$specs_dir/$feature_id"
+  else
+    # Scan specs/archive/ for *-<feature_id>
+    local archive_match
+    archive_match="$(find "$specs_dir/archive" -maxdepth 1 -type d -name "*-${feature_id}" 2>/dev/null | head -1)"
+    if [ -n "$archive_match" ]; then
+      feature_dir="$archive_match"
+      is_archived=true
+    fi
+  fi
+
+  if [ -z "$feature_dir" ]; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    exit 1
+  fi
+
+  # ── Task 4: Phase detection ─────────────────────────────────────
+  local phase
+
+  if $is_archived; then
+    phase="archived"
+  elif [ ! -f "$feature_dir/spec.md" ] && [ ! -f "$feature_dir/quick-spec.md" ]; then
+    phase="missing"
+  elif [ ! -f "$feature_dir/plan.md" ] || [ ! -f "$feature_dir/tasks.md" ]; then
+    # Check if fast-lane (quick-spec.md present without plan.md/tasks.md is OK)
+    if [ -f "$feature_dir/quick-spec.md" ]; then
+      # Fast-lane: use quick-spec.md for tasks — fall through to task counting below
+      phase=""  # determined after task counting
+    else
+      phase="spec"
+    fi
+  else
+    phase=""  # determined after task counting
+  fi
+
+  # ── Task 5: Task counting ───────────────────────────────────────
+  local tasks_done=0
+  local tasks_remaining=0
+  local tasks_total=0
+
+  if [ -z "$phase" ] || [ "$phase" = "" ]; then
+    # Determine task file
+    local task_file=""
+    if [ -f "$feature_dir/tasks.md" ]; then
+      task_file="$feature_dir/tasks.md"
+      tasks_done=$(grep -c '^\- \[x\]' "$task_file" 2>/dev/null || true)
+      tasks_remaining=$(grep -c '^\- \[ \]' "$task_file" 2>/dev/null || true)
+    elif [ -f "$feature_dir/quick-spec.md" ]; then
+      # Fast-lane: grep only inside the ## Tasks section
+      # Extract from '## Tasks' to next '##' or end of file
+      local in_tasks=false
+      while IFS= read -r line; do
+        if [[ "$line" =~ ^##[[:space:]]Tasks ]]; then
+          in_tasks=true
+          continue
+        fi
+        if $in_tasks && [[ "$line" =~ ^## ]]; then
+          break
+        fi
+        if $in_tasks; then
+          if [[ "$line" =~ ^\-[[:space:]]\[x\] ]]; then
+            ((tasks_done++)) || true
+          elif [[ "$line" =~ ^\-[[:space:]]\[[[:space:]]\] ]]; then
+            ((tasks_remaining++)) || true
+          fi
+        fi
+      done < "$feature_dir/quick-spec.md"
+    fi
+    tasks_total=$((tasks_done + tasks_remaining))
+
+    # ── Task 6: Sentinel freshness ────────────────────────────────
+    local sentinel_fresh=false
+    local sentinel_file="$feature_dir/.simplified"
+    if [ -f "$sentinel_file" ]; then
+      local current_head
+      current_head="$(git rev-parse HEAD 2>/dev/null || true)"
+      if [ -n "$current_head" ] && grep -q "^git-head: ${current_head}$" "$sentinel_file" 2>/dev/null; then
+        sentinel_fresh=true
+      fi
+    fi
+
+    # Now determine phase based on task counts + sentinel
+    if [ "$tasks_total" -eq 0 ]; then
+      # No tasks found — treat as planned (empty tasks file)
+      phase="planned"
+    elif [ "$tasks_remaining" -eq "$tasks_total" ]; then
+      phase="planned"
+    elif [ "$tasks_remaining" -gt 0 ]; then
+      phase="implementing"
+    elif $sentinel_fresh; then
+      phase="ready-to-review"
+    else
+      phase="ready-to-simplify"
+    fi
+  else
+    # Phase already determined (archived, missing, spec); set sentinel and counts
+    local sentinel_fresh=false
+    tasks_total=0
+    tasks_remaining=0
+  fi
+
+  # ── Blockers array ──────────────────────────────────────────────
+  local blockers='[]'
+
+  # ── Next command ────────────────────────────────────────────────
+  local next_command
+  case "$phase" in
+    missing)           next_command="/sdd-new" ;;
+    spec)              next_command="/plan-feature ${feature_id}" ;;
+    planned)           next_command="/implement-task ${feature_id}" ;;
+    implementing)      next_command="/implement-task ${feature_id}" ;;
+    ready-to-simplify) next_command="/simplify-code ${feature_id}" ;;
+    ready-to-review)   next_command="/review-feature ${feature_id}" ;;
+    archived)          next_command="(none — feature archived)" ;;
+    *)                 next_command="(unknown)" ;;
+  esac
+
+  # ── Task 7: JSON emission ───────────────────────────────────────
+  # Normalise sentinel_fresh to JSON boolean
+  local sentinel_json="false"
+  if ${sentinel_fresh:-false}; then
+    sentinel_json="true"
+  fi
+
+  printf '{\n'
+  printf '  "feature_id": "%s",\n' "$feature_id"
+  printf '  "phase": "%s",\n' "$phase"
+  printf '  "tasks_total": %d,\n' "$tasks_total"
+  printf '  "tasks_remaining": %d,\n' "$tasks_remaining"
+  printf '  "sentinel_fresh": %s,\n' "$sentinel_json"
+  printf '  "blockers": %s,\n' "$blockers"
+  printf '  "next_command": "%s"\n' "$next_command"
+  printf '}\n'
+  exit 0
+}
+
 # ─── main ──────────────────────────────────────────────────────────
 
 case "${1:-help}" in
@@ -643,6 +805,7 @@ case "${1:-help}" in
   update)       cmd_update ;;
   doctor)       cmd_doctor ;;
   base-branch)  shift; cmd_base_branch "$@" ;;
+  status)       shift; cmd_status "$@" ;;
   help|--help|-h) usage ;;
   version|--version|-v) echo "sdd v${VERSION}" ;;
   *)
