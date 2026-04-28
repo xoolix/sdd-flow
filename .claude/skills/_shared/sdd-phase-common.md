@@ -40,6 +40,7 @@ All artifacts live in `specs/<feature-id>/`:
 | Plan | `specs/<feature-id>/plan.md` |
 | Tasks | `specs/<feature-id>/tasks.md` |
 | Decisions | `specs/<feature-id>/decisions.md` |
+| **Fast-lane combined spec** | `specs/<feature-id>/quick-spec.md` (replaces spec+plan+tasks — see §I) |
 
 Rules:
 - Always write artifacts to these paths.
@@ -127,7 +128,7 @@ Before any `mem_*` call, you need the project name. Resolve it in this order:
 
 ### Session Init (when running without an orchestrator)
 
-If you are running as a standalone skill (not launched by `sdd-continue`/`sdd-ff`):
+If you are running as a standalone skill (not launched by `sdd-next`/`sdd-auto`):
 1. Call `mem_session_start` with `project: "{project}"`, description: `SDD {phase-name}: {feature-id}`
 2. Call `mem_context` with `project: "{project}"` to load prior context
 
@@ -172,6 +173,47 @@ Context compaction may occur mid-session, erasing working memory. Follow these r
 
 1. **Save during work, not just at the end**: Call `mem_save` as discoveries happen. Don't accumulate saves for the end — compaction may erase them.
 2. **Save before returning**: You have the freshest context. Save key observations before producing the return envelope (section D).
-3. **Session management**: Orchestrators (`sdd-continue`, `sdd-ff`) or standalone skills (section G) manage sessions. Project name is resolved once and reused.
+3. **Session management**: Orchestrators (`sdd-next`, `sdd-auto`) or standalone skills (section G) manage sessions. Project name is resolved once and reused.
 4. **Recovery after compaction**: If you lose context, call `mem_context` with `project: "{project}"` and re-read state files to re-derive your position in the pipeline.
 5. **Sub-agents are stateless**: Each sub-agent starts fresh. The `mem_search` at phase start (section G) is how sub-agents inherit knowledge from prior phases. The orchestrator passes the resolved project name in the launch prompt.
+
+---
+
+## I. Fast-Lane Resolution
+
+Fast-lane features (created via `/new-quick-feature` or `/new-fix`) use a single `quick-spec.md` artifact instead of separate `spec.md` + `plan.md` + `tasks.md`. Skills that read spec artifacts MUST resolve the lane in their pre-flight using this canonical pattern:
+
+```
+Resolve lane:
+- If `specs/<feature-id>/quick-spec.md` exists AND `specs/<feature-id>/plan.md` does NOT exist
+    → FAST_LANE = true,  SPEC_FILE = quick-spec.md
+- Else if `specs/<feature-id>/spec.md`, `plan.md`, AND `tasks.md` all exist
+    → FAST_LANE = false, SPEC_FILE = spec.md
+- Else
+    → blocked: tell the user which artifact is missing and suggest `/plan-feature` or `/new-quick-feature`
+```
+
+### Behavior table
+
+| Concern | Full-flow (`FAST_LANE=false`) | Fast-lane (`FAST_LANE=true`) |
+|---|---|---|
+| Spec content source | `spec.md` + `plan.md` + `tasks.md` | `quick-spec.md` (combined) |
+| Task list location | `tasks.md` checkboxes | `quick-spec.md` `## Tasks` section |
+| Task writeback target | `tasks.md` | `quick-spec.md` `## Tasks` section (NOT `tasks.md`) |
+| All-`[x]` gate target | `tasks.md` | `quick-spec.md` `## Tasks` section |
+| `decisions.md` delta merge target | `spec.md` | `quick-spec.md` |
+
+### Skills that MUST apply this resolution
+
+- `/implement-task`
+- `/simplify-code`
+- `/review-feature`
+- `/archive-feature`
+
+### Out of scope
+
+`/sdd-next` and `/sdd-auto` do NOT support fast-lane. The result envelope of `/new-quick-feature` and `/new-fix` includes a `Next` field guiding the user to the next phase command (manual invocation only).
+
+### Tasks section format
+
+The `## Tasks` section in `quick-spec.md` uses the SAME `- [ ]` / `- [x]` checkbox format as `tasks.md`, allowing skills to reuse existing iteration logic without parsing changes — only the file target changes.

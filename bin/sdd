@@ -8,7 +8,7 @@ SDD_HOME="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")/..
 VERSION="2.0.0"
 
 # ─── Core SDD skills (these go to global ~/.claude/skills/) ──────
-CORE_SKILLS="new-feature plan-feature implement-task review-feature archive-feature research-spike sdd-new sdd-continue sdd-ff init-project build-registry _shared"
+CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto init-project build-registry _shared"
 
 # ─── helpers ───────────────────────────────────────────────────────
 
@@ -35,6 +35,45 @@ link_or_copy() {
   fi
 }
 
+# True if the project at $1 (default pwd) was installed in --copy mode.
+# Primary signal: `.specify/.sdd-copy-install` sentinel file, written by `sdd init --copy`.
+# Legacy fallback: `.specify/templates` is a regular dir that resolves to a path OUTSIDE SDD_HOME
+# (real-path check — `cp -R` on a symlink source may produce either symlink or copy depending
+# on platform; the sentinel makes intent explicit).
+is_copy_install() {
+  local target="${1:-$(pwd)}"
+  [ -f "$target/.specify/.sdd-copy-install" ] && return 0
+  # Legacy fallback for projects that predate the sentinel
+  [ -d "$target/.specify/templates" ] && [ ! -L "$target/.specify/templates" ] || return 1
+  # Confirm via real-path: if readlink resolves templates into SDD_HOME, it's a symlink install
+  local real_tpl
+  real_tpl="$(cd "$target/.specify/templates" 2>/dev/null && pwd -P)" || return 1
+  case "$real_tpl" in
+    "$SDD_HOME"/*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# Ensure a path is present in the project's .gitignore. No-op if already listed.
+# Creates .gitignore if missing. Matches whole-line entries.
+ensure_gitignored() {
+  local target="$1" path="$2"
+  local gi="$target/.gitignore"
+  [ -f "$gi" ] || touch "$gi"
+  if ! grep -Fxq "$path" "$gi" 2>/dev/null; then
+    printf '%s\n' "$path" >> "$gi"
+    ok "Added $path to .gitignore"
+  fi
+}
+
+# Gitignore the two machine-local CLAUDE.md artifacts (symlink + its migration backup).
+# Called ONLY from symlink-mode branches — --copy installs commit CLAUDE.md to git.
+gitignore_claude_md_artifacts() {
+  local target="$1"
+  ensure_gitignored "$target" ".claude/CLAUDE.md"
+  ensure_gitignored "$target" ".claude/CLAUDE.md.backup"
+}
+
 usage() {
   cat <<EOF
 sdd — Spec Driven Development CLI (v${VERSION})
@@ -42,7 +81,8 @@ sdd — Spec Driven Development CLI (v${VERSION})
 Usage:
   sdd init [--copy]       Initialize SDD in the current directory
   sdd init --global       Install core SDD skills to ~/.claude/skills/ (one time)
-  sdd update              Re-sync symlinked skills and templates
+  sdd update              Re-sync symlinks (skills, templates, CLAUDE.md);
+                          migrate pre-symlink CLAUDE.md to symlink with backup
   sdd doctor              Verify SDD setup is healthy
   sdd help                Show this help
 
@@ -53,8 +93,8 @@ Options for 'init':
 Layers:
   ~/.claude/skills/        Core SDD skills (shared across all projects)
   .claude/skills/          Project-specific skills (React, Go, etc.)
-  .claude/rules/           Project conventions (stack, testing, git)
-  .claude/CLAUDE.md        Orchestrator config + model overrides
+  .claude/rules/           Project conventions + model overrides
+  .claude/CLAUDE.md        Symlink to SDD_HOME (auto-updates on SDD git pull)
 
 After 'sdd init', start Claude Code and run /init-project to auto-generate
 architecture docs and detect project conventions.
@@ -120,7 +160,7 @@ cmd_init() {
   fi
 
   # Check if global core is installed
-  if [ ! -d "$HOME/.claude/skills/sdd-continue" ] && [ ! -L "$HOME/.claude/skills/sdd-continue" ]; then
+  if [ ! -d "$HOME/.claude/skills/sdd-next" ] && [ ! -L "$HOME/.claude/skills/sdd-next" ]; then
     warn "Core SDD skills not found in ~/.claude/skills/"
     log "Installing globally first..."
     cmd_init_global "$mode"
@@ -152,6 +192,12 @@ cmd_init() {
   fi
   ok "Templates installed"
 
+  # Mark --copy installs with an explicit sentinel so is_copy_install() is reliable
+  # regardless of what cp -R produces on a symlinked source.
+  if [ "$mode" = "copy" ]; then
+    : > "$target/.specify/.sdd-copy-install"
+  fi
+
   # ── Scripts (shared) ──
   if [ -d "$SDD_HOME/.specify/scripts" ]; then
     link_or_copy "$SDD_HOME/.specify/scripts" "$target/.specify/scripts" "$mode"
@@ -171,12 +217,42 @@ cmd_init() {
     fi
   done
 
-  # ── CLAUDE.md (project-specific — never overwrite) ──
-  if [ -f "$target/.claude/CLAUDE.md" ]; then
+  # ── Agents (project-local copies, never overwrite) ──
+  # Native sub-agents are discovered by Claude Code at session init from .claude/agents/*.md.
+  # They declare model/tools/context in frontmatter. Skill routers in .claude/skills/*/SKILL.md
+  # delegate to them via Agent tool (subagent_type: "sdd-<phase>"). See feature 008.
+  if [ -d "$SDD_HOME/.claude/agents" ]; then
+    mkdir -p "$target/.claude/agents"
+    for agent_file in "$SDD_HOME/.claude/agents"/sdd-*.md; do
+      [ -f "$agent_file" ] || continue
+      local agent_name
+      agent_name="$(basename "$agent_file")"
+      if [ -f "$target/.claude/agents/$agent_name" ]; then
+        warn "Skipped .claude/agents/$agent_name (already exists)"
+      else
+        cp "$agent_file" "$target/.claude/agents/$agent_name"
+        ok "Created .claude/agents/$agent_name"
+      fi
+    done
+  fi
+
+  # ── CLAUDE.md (symlink by default for auto-updates, cp on --copy) ──
+  # -e tests if the target exists (follows symlinks). A broken symlink → -e false, -L true.
+  # We repair broken symlinks rather than silently skipping them.
+  if [ -e "$target/.claude/CLAUDE.md" ]; then
     warn "Skipped .claude/CLAUDE.md (already exists)"
   else
-    cp "$SDD_HOME/.claude/CLAUDE.md" "$target/.claude/CLAUDE.md"
-    ok "Created .claude/CLAUDE.md"
+    if [ -L "$target/.claude/CLAUDE.md" ]; then
+      rm "$target/.claude/CLAUDE.md"
+      log "Removed broken CLAUDE.md symlink"
+    fi
+    link_or_copy "$SDD_HOME/.claude/CLAUDE.md" "$target/.claude/CLAUDE.md" "$mode"
+    if [ "$mode" = "copy" ]; then
+      ok "Created .claude/CLAUDE.md (copy — standalone, no auto-updates)"
+    else
+      ok "Created .claude/CLAUDE.md (symlink → SDD_HOME, auto-updates on git pull)"
+      gitignore_claude_md_artifacts "$target"
+    fi
   fi
 
   # ── settings.local.json (never overwrite) ──
@@ -217,24 +293,30 @@ cmd_update() {
   local target
   target="$(pwd)"
 
+  # Protection: refuse to update inside the SDD boilerplate repo itself.
+  # Running `sdd update` with target == SDD_HOME creates self-referential (circular)
+  # symlinks for CLAUDE.md. Observed in feature 008 dev cycle — caused ELOOP.
+  if [ "$target" = "$SDD_HOME" ]; then
+    err "Cannot update inside the SDD boilerplate repo itself."
+    exit 1
+  fi
+
   log "Updating SDD"
 
   # Update global core skills
-  if [ -d "$HOME/.claude/skills/sdd-continue" ] || [ -L "$HOME/.claude/skills/sdd-continue" ]; then
-    log "Updating global core skills..."
-    for skill in $CORE_SKILLS; do
-      local global_skill="$HOME/.claude/skills/$skill"
-      if [ -L "$global_skill" ]; then
-        ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
-        ok "Updated global: $skill"
-      elif [ -d "$global_skill" ]; then
-        warn "Skipped global $skill (not a symlink — was copied with --copy)"
-      else
-        ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
-        ok "Added global: $skill"
-      fi
-    done
-  fi
+  log "Updating global core skills..."
+  for skill in $CORE_SKILLS; do
+    local global_skill="$HOME/.claude/skills/$skill"
+    if [ -L "$global_skill" ]; then
+      ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
+      ok "Updated global: $skill"
+    elif [ -d "$global_skill" ]; then
+      warn "Skipped global $skill (not a symlink — was copied with --copy)"
+    else
+      ln -sfn "$SDD_HOME/.claude/skills/$skill" "$global_skill"
+      ok "Added global: $skill"
+    fi
+  done
 
   # Update project templates
   if [ -d "$target/.specify" ]; then
@@ -248,6 +330,80 @@ cmd_update() {
     else
       warn "Skipped templates (not a symlink)"
     fi
+  fi
+
+  # ── CLAUDE.md: refresh symlink or migrate pre-symlink copy ──
+  # Respect --copy installs: don't force-migrate when the project opted out.
+  local claude_md="$target/.claude/CLAUDE.md"
+  if is_copy_install "$target"; then
+    if [ -f "$claude_md" ] && [ ! -L "$claude_md" ]; then
+      warn "Skipped CLAUDE.md migration (--copy install detected)"
+    elif [ -L "$claude_md" ] && [ ! -e "$claude_md" ]; then
+      # --copy install with a broken symlink (unusual state — user likely replaced manually)
+      rm "$claude_md"
+      cp "$SDD_HOME/.claude/CLAUDE.md" "$claude_md"
+      ok "Repaired broken CLAUDE.md (copy — standalone install)"
+    elif [ ! -e "$claude_md" ] && [ ! -L "$claude_md" ]; then
+      # --copy install but CLAUDE.md is absent — restore as copy (NOT symlink; respects --copy)
+      cp "$SDD_HOME/.claude/CLAUDE.md" "$claude_md"
+      ok "Restored missing CLAUDE.md (copy — standalone install)"
+    fi
+    # --copy: do NOT auto-gitignore (users of this mode legitimately track CLAUDE.md in git)
+  elif [ -L "$claude_md" ] && [ -e "$claude_md" ]; then
+    ln -sfn "$SDD_HOME/.claude/CLAUDE.md" "$claude_md"
+    ok "Refreshed CLAUDE.md symlink"
+    gitignore_claude_md_artifacts "$target"
+  elif [ -L "$claude_md" ]; then
+    # Broken OR circular symlink — repair by replacing target.
+    # Circular case: readlink returns a path that resolves back to $claude_md (ELOOP).
+    # Both cases: [ -L true ] && [ -e false ]. Same fix for both.
+    rm "$claude_md"
+    ln -sfn "$SDD_HOME/.claude/CLAUDE.md" "$claude_md"
+    ok "Repaired broken/circular CLAUDE.md symlink"
+    gitignore_claude_md_artifacts "$target"
+  elif [ -f "$claude_md" ]; then
+    log "Migrating .claude/CLAUDE.md from copy to symlink..."
+    if [ -e "$claude_md.backup" ]; then
+      warn "Skipped backup (.claude/CLAUDE.md.backup already exists) — existing backup preserved"
+    else
+      cp "$claude_md" "$claude_md.backup"
+    fi
+    rm "$claude_md"
+    ln -sfn "$SDD_HOME/.claude/CLAUDE.md" "$claude_md"
+    ok "Migrated CLAUDE.md → symlink (backup at .claude/CLAUDE.md.backup)"
+    warn "Review backup for custom overrides; move them to .claude/rules/model-overrides.md"
+    gitignore_claude_md_artifacts "$target"
+  else
+    # No CLAUDE.md present — create symlink (honors spec §Happy Path: "si falta, crear")
+    ln -sfn "$SDD_HOME/.claude/CLAUDE.md" "$claude_md"
+    ok "Created CLAUDE.md symlink (was absent)"
+    gitignore_claude_md_artifacts "$target"
+  fi
+
+  # ── Agents: sync upstream sdd-*.md files; byte-diff decides action ──
+  # (a) absent → copy in; (b) identical → skip; (c) changed → overwrite.
+  # Only upstream files are iterated — project-local agents are never touched.
+  if [ -d "$SDD_HOME/.claude/agents" ]; then
+    mkdir -p "$target/.claude/agents"
+    local added=0 updated=0 unchanged=0
+    for agent_file in "$SDD_HOME/.claude/agents"/sdd-*.md; do
+      [ -f "$agent_file" ] || continue
+      local agent_name
+      agent_name="$(basename "$agent_file")"
+      local agent_dst="$target/.claude/agents/$agent_name"
+      if [ ! -e "$agent_dst" ]; then
+        cp "$agent_file" "$agent_dst"
+        ok "Added .claude/agents/$agent_name"
+        : $((added++))
+      elif cmp -s "$agent_file" "$agent_dst"; then
+        : $((unchanged++))
+      else
+        cp "$agent_file" "$agent_dst"
+        ok "Updated: $agent_name"
+        : $((updated++))
+      fi
+    done
+    log "Agents: $added added, $updated updated, $unchanged unchanged"
   fi
 
   ok "Update complete!"
@@ -287,7 +443,7 @@ cmd_doctor() {
   done
 
   # Check key project files
-  for file in .claude/CLAUDE.md .claude/rules/conventions.md; do
+  for file in .claude/rules/conventions.md; do
     if [ -f "$target/$file" ]; then
       ok "  $file"
     else
@@ -295,6 +451,35 @@ cmd_doctor() {
       ((issues++))
     fi
   done
+
+  # CLAUDE.md should be a symlink (auto-updates) unless --copy install
+  local claude_md="$target/.claude/CLAUDE.md"
+  if [ -L "$claude_md" ] && [ -e "$claude_md" ]; then
+    ok "  .claude/CLAUDE.md (symlink → auto-updates)"
+  elif [ -L "$claude_md" ]; then
+    warn "  .claude/CLAUDE.md is a broken symlink (target missing) — run 'sdd update' to repair"
+    ((issues++))
+  elif [ -f "$claude_md" ]; then
+    if is_copy_install "$target"; then
+      ok "  .claude/CLAUDE.md (copy — --copy install)"
+    else
+      warn "  .claude/CLAUDE.md is a regular file — run 'sdd update' to migrate to symlink"
+      ((issues++))
+    fi
+  else
+    warn "  .claude/CLAUDE.md — MISSING (run 'sdd update' to create symlink)"
+    ((issues++))
+  fi
+
+  # Warn if CLAUDE.md is git-tracked (absolute symlinks don't port across team machines)
+  if [ -e "$claude_md" ] && (cd "$target" && git ls-files --error-unmatch .claude/CLAUDE.md &>/dev/null); then
+    if [ -f "$target/.gitignore" ] && grep -Fxq ".claude/CLAUDE.md" "$target/.gitignore"; then
+      warn "  .claude/CLAUDE.md is in .gitignore but still tracked — run: git rm --cached .claude/CLAUDE.md && git commit"
+    else
+      warn "  .claude/CLAUDE.md is tracked in git — add to .gitignore AND run: git rm --cached .claude/CLAUDE.md && git commit"
+    fi
+    ((issues++))
+  fi
 
   # Check architecture-map
   local arch_file="$target/.claude/skills/architecture-map/SKILL.md"

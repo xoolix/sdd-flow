@@ -16,8 +16,19 @@ User's input:
 
 ## What to do
 
-1. Read `.claude/skills/new-feature/SKILL.md`.
-2. Follow its instructions exactly, using the user's input above as the feature idea.
-3. This is a **conversational skill** — ask one question at a time, wait for answers.
-4. When the spec is generated, output the result envelope.
-5. After the envelope, tell the user: "Para continuar con plan + tasks, escribí `/sdd-continue`"
+1. Invoke the native agent `sdd-new-feature` via the Agent tool:
+
+   ```
+   Agent(
+     subagent_type: "sdd-new-feature",
+     prompt: "<idea: $ARGUMENTS>\n\n<shared rules: sdd-phase-common.md + engram-protocol.md>"
+   )
+   ```
+
+   The agent runs in opus (executor, `disallowedTools: [Agent]`) and handles the conversational spec intake (confirm → trigger → happy path → domains → edge cases → GWT criteria → rollback → success criterion).
+
+   **Fallback** — if `subagent_type: "sdd-new-feature"` is not recognized by the runtime:
+   - Read the body of `.claude/agents/sdd-new-feature.md` and execute inline (degrade path — loses context isolation and model-per-frontmatter).
+
+2. When the spec is generated, output the result envelope from the agent.
+3. After the envelope, tell the user: "Para continuar con plan + tasks, escribí `/sdd-next`"

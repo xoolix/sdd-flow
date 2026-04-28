@@ -1,12 +1,12 @@
 ---
-name: sdd-continue
-description: Detect current SDD phase and run the next one automatically
+name: sdd-next
+description: Detect current SDD phase and run the next one (one step at a time)
 user-invocable: true
 disable-model-invocation: true
 arguments: feature-id - optional — auto-detects if only one active feature exists
 ---
 
-# Continue SDD pipeline
+# SDD next phase
 
 You are the **orchestrator**. Detect where the feature is in the pipeline and launch the next phase.
 
@@ -38,15 +38,17 @@ Check which artifacts exist in `specs/<feature-id>/`:
 | Has `plan.md`? | File exists |
 | Has `tasks.md`? | File exists |
 | All tasks checked? | Read `tasks.md`, count `- [ ]` vs `- [x]` |
+| Has **fresh** `.simplified` sentinel? | File exists AND `git-head:` line in the sentinel equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch) is treated as absent — it will be cleaned up by `/simplify-code`'s pre-flight. |
 
 Apply the decision table:
 
-| spec.md | plan.md + tasks.md | All tasks [x] | → Action |
-|:---:|:---:|:---:|---|
-| No | — | — | STOP: "Run `/sdd-new` first." |
-| Yes | No | — | Launch `/plan-feature` |
-| Yes | Yes | No | Launch `/implement-task` |
-| Yes | Yes | Yes | Launch `/review-feature` |
+| spec.md | plan.md + tasks.md | All tasks [x] | Fresh `.simplified`? | → Action |
+|:---:|:---:|:---:|:---:|---|
+| No | — | — | — | STOP: "Run `/sdd-new` first." |
+| Yes | No | — | — | Launch `/plan-feature` |
+| Yes | Yes | No | — | Launch `/implement-task` |
+| Yes | Yes | Yes | No | Launch `/simplify-code` |
+| Yes | Yes | Yes | Yes | Launch `/review-feature` |
 
 ## Step 2b: Load skill registry
 
@@ -60,29 +62,35 @@ If the registry does not exist, skip this step (no project skills injected). Sug
 
 ## Step 3: Launch the phase
 
-**Do NOT use the Skill tool.** Instead, read the skill's SKILL.md file and pass its full content as the sub-agent's prompt.
+Invoke the native agent `sdd-<phase>` via the Agent tool:
 
-For each phase:
+```
+Agent(
+  subagent_type: "sdd-<phase>",
+  prompt: "<context: see below>"
+)
+```
 
-1. Read `.claude/skills/_shared/sdd-phase-common.md` (shared rules).
-2. Read `.claude/skills/<phase-skill>/SKILL.md` (phase instructions).
-3. Launch a sub-agent (`subagent_type: "general-purpose"`) with a prompt that includes:
-   - **First line of the prompt MUST be**: `"CRITICAL: NEVER use EnterPlanMode or Plan Mode. Write all files directly using Write/Edit tools. Do NOT propose plans for approval."`
-   - The full content of `sdd-phase-common.md`
-   - The full content of the phase's `SKILL.md`
-   - Feature-id for the sub-agent: pass the resolved feature-id from Step 1
-   - The full content of `.claude/skills/_shared/engram-protocol.md` (Engram memory protocol)
-   - `Engram project name: "{project}"` (the resolved project name from Step 0)
-   - If compact rules were collected in Step 2b, append them as a `## Project Standards (auto-resolved)` section with all matching compact rule blocks
+Where `<phase>` is the detected phase from Step 2 (`plan-feature`, `implement-task`, `simplify-code`, `review-feature`, `archive-feature`).
 
-Phase-specific settings:
+**The agent declares model, disallowedTools, context, and mcpServers in its own frontmatter** (`.claude/agents/sdd-<phase>.md`). Do NOT pass `model=` from the orchestrator — the frontmatter is the single source of truth (per AC4 of feature 008).
 
-| Phase | mode | model | Notes |
-|-------|------|-------|-------|
-| plan-feature | `"auto"` | `opus` | Is itself an orchestrator — will launch its own sub-agents |
-| implement-task | `"auto"` | `sonnet` | Include project skills if applicable |
-| review-feature | `"auto"` | `sonnet` | Is itself an orchestrator |
-| archive-feature | `"auto"` | `haiku` | Executor — does the work itself |
+**Prompt content** (pass to the agent as the full message):
+
+- **First line**: `"CRITICAL: NEVER use EnterPlanMode or Plan Mode. Write all files directly using Write/Edit tools. Do NOT propose plans for approval."`
+- `Feature-id: <feature-id>` (the resolved feature-id from Step 1)
+- The full content of `.claude/skills/_shared/sdd-phase-common.md` (shared rules)
+- The full content of `.claude/skills/_shared/engram-protocol.md` (engram memory protocol)
+- `Engram project name: "{project}"` (resolved in Step 0)
+- If compact rules were collected in Step 2b, append them as a `## Project Standards (auto-resolved)` section
+
+**Do NOT read the phase's SKILL.md and inject its content** — the native agent preloads its own body (migrated from the original SKILL.md). The SKILL.md is now a router.
+
+**Fallback** (if `subagent_type: "sdd-<phase>"` is not recognized by the runtime and returns an error):
+
+1. Read `.claude/agents/sdd-<phase>.md` — extract the body (everything after the frontmatter).
+2. Launch `subagent_type: "general-purpose"` with a prompt that includes the agent body + all context above.
+3. This preserves behavior but loses the model-per-frontmatter benefit — degrade path only.
 
 ## Step 4: Validate and retry
 
@@ -120,9 +128,11 @@ Initialize `review_cycle = 1`.
    ```
    The sub-agent should address only the failed criteria, not re-implement everything.
 3. **Validate implement-task result**: Apply Step 4 validation to the implement-task result (artifacts exist, envelope complete, lint/tests pass). If validation fails, follow Step 4 retry logic.
-4. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 3 pattern) to re-review the updated implementation.
-5. **Validate review result**: Apply Step 4 validation to the review result.
-6. **Check verdict**:
+4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.simplified`, so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 3 pattern).
+5. **Validate simplify-code result**: Apply Step 4 validation. If simplify-code returns `Status: blocked` (regression revert or baseline red), **STOP** the fix loop and report the blocked status — the human must resolve the regression before the loop can continue.
+6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 3 pattern) to re-review the updated implementation.
+7. **Validate review result**: Apply Step 4 validation to the review result.
+8. **Check verdict**:
    - **PASS or PASS WITH WARNINGS** → exit loop, go to Step 6.
    - **FAIL** → increment `review_cycle`. If `review_cycle > 2`, **STOP** with `Status: ESCALATED` and include a diagnostic showing the failed criteria from each review cycle so the human can intervene.
 

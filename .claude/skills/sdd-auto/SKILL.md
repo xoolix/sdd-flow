@@ -1,14 +1,14 @@
 ---
-name: sdd-ff
-description: Fast-forward — chain all remaining SDD phases automatically without pausing
+name: sdd-auto
+description: Auto-run — chain all remaining SDD phases automatically without pausing
 user-invocable: true
 disable-model-invocation: true
 arguments: feature-id - optional — auto-detects if only one active feature exists
 ---
 
-# Fast-forward SDD pipeline
+# SDD auto pipeline
 
-Like `/sdd-continue` but runs ALL remaining phases without asking between each one. Stops only on `blocked`, `ESCALATED` status, or pipeline completion.
+Like `/sdd-next` but runs ALL remaining phases without asking between each one. Stops only on `blocked`, `ESCALATED` status, or pipeline completion.
 
 ## Step 0: Engram session init
 
@@ -30,7 +30,7 @@ If non-empty, use it as the feature-id. Otherwise:
 
 ## Step 1b: Load skill registry
 
-Same as `/sdd-continue` Step 2b: read `.claude/skills/skill-registry.md` if it exists. Cache the trigger table and compact rules for the entire pipeline run — no need to re-read on each phase.
+Same as `/sdd-next` Step 2b: read `.claude/skills/skill-registry.md` if it exists. Cache the trigger table and compact rules for the entire pipeline run — no need to re-read on each phase.
 
 ## Step 2: Run pipeline loop
 
@@ -38,15 +38,18 @@ Initialize a **per-task retry tracker**: a map of `task-id → retry_count`, sta
 
 Repeat until pipeline is complete, blocked, or escalated:
 
-1. **Detect phase** — same logic as `/sdd-continue` Step 2.
-2. **Launch phase** — **Do NOT use the Skill tool.** Read the phase's SKILL.md + `_shared/sdd-phase-common.md` and pass their full content as the sub-agent's prompt.
-   - **First line of the prompt MUST be**: `"CRITICAL: NEVER use EnterPlanMode or Plan Mode. Write all files directly using Write/Edit tools. Do NOT propose plans for approval."`
-   - Use `mode: "auto"`.
-   - Same launch pattern as `/sdd-continue` Step 3.
-   - Pass `model: "<model>"` based on the Model Routing table in CLAUDE.md.
-   - Include the full content of `.claude/skills/_shared/engram-protocol.md` in the sub-agent prompt.
-   - Include `Engram project name: "{project}"` (the resolved project name from Step 0).
-   - If compact rules were collected for the current phase (from Step 1b), append them as a `## Project Standards (auto-resolved)` section.
+1. **Detect phase** — same logic as `/sdd-next` Step 2.
+2. **Launch phase** — Invoke the native agent `sdd-<phase>` via the Agent tool (same pattern as `/sdd-next` Step 3).
+   - `subagent_type: "sdd-<phase>"` — where `<phase>` matches the detected phase.
+   - **Do NOT pass `model=`** — the agent's frontmatter is the single source of truth (per AC4 of feature 008).
+   - **Do NOT read the phase's SKILL.md and inject** — the agent preloads its own body. The SKILL.md is now a router.
+   - **Prompt content**:
+     - First line: `"CRITICAL: NEVER use EnterPlanMode or Plan Mode. Write all files directly using Write/Edit tools. Do NOT propose plans for approval."`
+     - `Feature-id: <feature-id>`
+     - Full content of `.claude/skills/_shared/sdd-phase-common.md` + `engram-protocol.md`
+     - `Engram project name: "{project}"`
+     - Compact rules (from Step 1b) appended as `## Project Standards (auto-resolved)` if present
+   - **Fallback**: if `subagent_type: "sdd-<phase>"` is not recognized, read the agent body from `.claude/agents/sdd-<phase>.md` and pass it with `subagent_type: "general-purpose"` (degrade path only — loses model-per-frontmatter).
 3. **Validate result** — apply the **Post-Phase Validation Protocol** from `sdd-phase-common.md` section F:
    - **Artifacts exist** — `ls` each path listed in the `Artifacts` field of the return envelope.
    - **Envelope complete** — verify the return envelope contains all required fields: Status, Summary, Artifacts, Next, Risks.
@@ -80,9 +83,11 @@ Initialize `review_cycle = 1`.
    ```
    The sub-agent should address only the failed criteria, not re-implement everything.
 3. **Validate implement-task result**: Apply Step 2 item 3 validation (artifacts exist, envelope complete, lint/tests pass). If validation fails, follow item 5 retry logic.
-4. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 2 item 2 pattern) to re-review the updated implementation.
-5. **Validate review result**: Apply Step 2 item 3 validation to the review result.
-6. **Check verdict**:
+4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.simplified`, so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 2 item 2 pattern).
+5. **Validate simplify-code result**: Apply Step 2 item 3 validation. If simplify-code returns `Status: blocked` (regression revert or baseline red), **STOP** the fix loop and report the blocked status — the human must resolve the regression before the loop can continue.
+6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 2 item 2 pattern) to re-review the updated implementation.
+7. **Validate review result**: Apply Step 2 item 3 validation to the review result.
+8. **Check verdict**:
    - **PASS or PASS WITH WARNINGS** → exit loop, continue the pipeline (back to phase detection in Step 2).
    - **FAIL** → increment `review_cycle`. If `review_cycle > 2`, **STOP** with `Status: ESCALATED` and include a diagnostic showing the failed criteria from each review cycle so the human can intervene.
 

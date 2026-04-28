@@ -58,15 +58,15 @@ The orchestrator only pauses for:
 | Command | What it does |
 |---------|-------------|
 | `/sdd-new <idea>` | Start new feature — read and follow `/new-feature` skill directly |
-| `/sdd-continue [feature-id]` | Detect current phase and run the next one |
-| `/sdd-ff [feature-id]` | Fast-forward: chain all remaining phases automatically |
+| `/sdd-next [feature-id]` | Detect current phase and run the next one |
+| `/sdd-auto [feature-id]` | Fast-forward: chain all remaining phases automatically |
 
 ### Phase Pipeline
 
 ```
 /sdd-new → spec.md
     ↓
-/sdd-continue → plan.md + tasks.md       (plan-feature)
+/sdd-next → plan.md + tasks.md       (plan-feature)
                  ├─ discovery checkpoint: Explore → Discovery Evaluator
                  │    ├─ high-impact findings → write discovery.md, Status: blocked
                  │    │       ↓ (human reviews discovery.md, adds ACCEPTED/DISCARDED)
@@ -74,37 +74,53 @@ The orchestrator only pauses for:
                  │    └─ no high-impact findings → continue to Design + Task agents
                  └─ plan.md + tasks.md written
     ↓
-/sdd-continue → implement task N          (implement-task, repeats)
+/sdd-next → implement task N          (implement-task, repeats)
                  ├─ inline validation: tests/lint run after each change
                  └─ fixes applied before moving on
     ↓
-/sdd-continue → review                   (review-feature, 3-agent voting)
+/sdd-next → simplify code            (simplify-code, runs once per pass)
+                 ├─ baseline validation (lint+types+tests) — block if red
+                 ├─ scope = git diff --name-only <base>..HEAD, minus tests/lockfiles/migrations/configs
+                 ├─ apply KISS/DRY/YAGNI preserving behavior
+                 ├─ post-validation — on regression, git checkout revert + Status: blocked
+                 └─ success → write specs/<id>/.simplified sentinel
+    ↓
+/sdd-next → review                   (review-feature, 3-agent voting)
                  ├─ 3 independent reviewers run in parallel
                  ├─ PASS or PASS WITH WARNINGS → adversarial review (Step 5.5)
                  │       ├─ no gaps → advance to archive
                  │       ├─ medium/low gaps → record SPEC-GAP in decisions.md → advance
-                 │       └─ high-severity gaps → record SPEC-GAP-HIGH → Status: blocked (human decides)
-                 └─ any FAIL        → extract Review-Feedback
+                 │       └─ high-severity gaps → record SPEC-GAP-HIGH → Status: blocked (human decides; sentinel preserved)
+                 └─ any FAIL        → delete specs/<id>/.simplified (forces re-simplify after fix)
+                        ↓
+                   extract Review-Feedback
                         ↓
                    implement-task (fix feedback)
+                        ↓
+                   /simplify-code (re-runs — sentinel absent)
                         ↓
                    re-review (3-agent voting)
                         ↓
                    still FAIL after 2 cycles → ESCALATE
     ↓
-/sdd-continue → archive                  (archive-feature)
+/sdd-next → archive                  (archive-feature)
 ```
 
-### Phase Detection Logic (for /sdd-continue)
+### Phase Detection Logic (for /sdd-next)
 
-| Has spec.md? | Has plan.md + tasks.md? | All tasks [x]? | Next phase |
-|:---:|:---:|:---:|---|
-| No | — | — | Blocked: run `/sdd-new` first |
-| Yes | No | — | `/plan-feature` |
-| Yes | No | — | `/plan-feature` (if `discovery.md` exists, skip Explore — resume from discovery checkpoint) |
-| Yes | Yes | No | `/implement-task` (next unchecked task) |
-| Yes | Yes | Yes | `/review-feature` |
-| After review passes | | | `/archive-feature` |
+`Fresh .simplified?` column means: the sentinel file exists AND its `git-head:` line equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch — e.g., user amended HEAD, rebased, or the sentinel was spoofed) is treated as absent and cleaned up by `/simplify-code`'s pre-flight.
+
+> **Fast-lane features are NOT detected by this table.** If a folder has `quick-spec.md` but no `spec.md`, `/sdd-next` will return "Blocked: run `/sdd-new` first" — this is expected per B7 (manual-only invocation). Invoke phases manually per the `Next` field in each envelope. See the Fast-lane note under Skill routing.
+
+| Has spec.md? | Has plan.md + tasks.md? | All tasks [x]? | Fresh `.simplified`? | Next phase |
+|:---:|:---:|:---:|:---:|---|
+| No | — | — | — | Blocked: run `/sdd-new` first |
+| Yes | No | — | — | `/plan-feature` |
+| Yes | No | — | — | `/plan-feature` (if `discovery.md` exists, skip Explore — resume from discovery checkpoint) |
+| Yes | Yes | No | — | `/implement-task` (next unchecked task) |
+| Yes | Yes | Yes | No | `/simplify-code` |
+| Yes | Yes | Yes | Yes | `/review-feature` |
+| After review passes | | | | `/archive-feature` |
 
 ### Sub-Agent Launch Pattern
 
@@ -119,11 +135,11 @@ When launching a sub-agent for any phase:
 
 ### Engram Session Lifecycle
 
-Engram sessions are managed by whoever is coordinating the work — the SDD orchestrator (always active via CLAUDE.md), `sdd-continue`, `sdd-ff`, or individual phase skills when run directly.
+Engram sessions are managed by whoever is coordinating the work — the SDD orchestrator (always active via CLAUDE.md), `sdd-next`, `sdd-auto`, or individual phase skills when run directly.
 
 1. **On start of any SDD work**: Resolve project name from `git remote get-url origin` (extract repo name, fallback to directory name). Call `mem_session_start` with `project: "{project}"`. Call `mem_context` with `project: "{project}"`.
 2. **Before each sub-agent launch**: Pass the resolved project name as `Engram project name: "{project}"` in the sub-agent prompt. Sub-agents use this for all `mem_*` calls.
-3. **During phases**: Save proactively when discoveries happen — not just at phase end. This applies whether running via `sdd-continue` or directly via `/implement-task`.
+3. **During phases**: Save proactively when discoveries happen — not just at phase end. This applies whether running via `sdd-next` or directly via `/implement-task`.
 4. **On completion/stop**: Call `mem_session_summary` with `project: "{project}"`. Then call `mem_session_end`.
 5. **On compaction recovery**: Call `mem_context` with `project: "{project}"`, re-read state files, re-derive current phase, and continue.
 
@@ -140,7 +156,7 @@ Project-specific skills (React, Python, Playwright, etc.) are distilled into **c
 1. User installs skills in `.claude/skills/` (manually, via `npx skills add`, etc.)
 2. User runs `/build-registry` to scan all project skills and generate compact rules
 3. Registry is written to `.claude/skills/skill-registry.md`
-4. Orchestrators (`sdd-continue`, `sdd-ff`) read the registry at pipeline start
+4. Orchestrators (`sdd-next`, `sdd-auto`) read the registry at pipeline start
 5. When launching a phase, they collect compact rules for skills that match that phase
 6. Rules are injected as `## Project Standards (auto-resolved)` in the sub-agent prompt
 7. Sub-agents follow the compact rules — they never read original skill files
@@ -177,15 +193,20 @@ For skills that need non-default phase mapping, create `.claude/skills/skill-map
 |---|---|
 | Initialize project (first time) | `/init-project` |
 | New feature from idea | `/new-feature` (or `/sdd-new`) |
-| Detect & run next phase | `/sdd-continue` |
-| Fast-forward all phases | `/sdd-ff` |
+| Fast-lane: small enhancement / refactor | `/new-quick-feature` |
+| Fast-lane: bugfix (Current/Expected/Unchanged) | `/new-fix` |
+| Detect & run next phase | `/sdd-next` |
+| Fast-forward all phases | `/sdd-auto` |
 | Spec to plan + tasks | `/plan-feature` |
 | Execute next task | `/implement-task` |
+| Simplify code after implementation | `/simplify-code` |
 | Investigate uncertainty | `/research-spike` |
 | Review vs spec | `/review-feature` |
 | Close & archive feature | `/archive-feature` |
 | Build skill registry | `/build-registry` |
 | RAG, embeddings, retrieval | `llm-application-dev` skills |
+
+> **Fast-lane note**: `/sdd-next` and `/sdd-auto` do NOT support fast-lane (`quick-spec.md`) features. After running `/new-quick-feature` or `/new-fix`, invoke phases manually following the `Next` field in each result envelope (`/implement-task` → `/simplify-code` → `/review-feature` → `/archive-feature`).
 
 ## Agent usage
 - Use **Explore agents** (`subagent_type: "Explore"`) for codebase analysis in `/plan-feature` and `/review-feature`.
@@ -195,17 +216,18 @@ For skills that need non-default phase mapping, create `.claude/skills/skill-map
 
 ## Model Routing
 
-Orchestrators (`sdd-continue`, `sdd-ff`) MUST pass the `model` parameter when launching sub-agents, using this table:
+Orchestrators (`sdd-next`, `sdd-auto`) MUST pass the `model` parameter when launching sub-agents, using this table:
 
 | Role | Skill / Context | Model |
 |------|----------------|-------|
-| Orchestrator | sdd-continue, sdd-ff | opus |
+| Orchestrator | sdd-next, sdd-auto | opus |
 | Spec creation | new-feature | opus |
 | Planning orchestrator | plan-feature | opus |
 | Explore agents | plan-feature sub-agents (Explore) | sonnet |
 | Discovery evaluator | plan-feature sub-agent (Discovery Evaluator) | haiku |
 | Design/task agents | plan-feature sub-agents (general-purpose) | sonnet |
 | Implementation | implement-task | sonnet |
+| Simplify | simplify-code | sonnet |
 | Review orchestrator | review-feature | sonnet |
 | Review agents | review-feature sub-agents (Agent-A/B/C) | sonnet |
 | Adversarial review agent | review-feature sub-agent (adversarial, Step 5.5) | sonnet |
@@ -221,18 +243,29 @@ When launching a sub-agent:
 
 ### Overriding model assignments
 
-To override for a specific project, add a `## Model Overrides` section below this table with rows that replace the defaults. The orchestrator checks for overrides first, then falls back to this table.
+To override for a specific project, add rows to `.claude/rules/model-overrides.md` (auto-loaded by Claude Code via the `.claude/rules/*.md` convention). The orchestrator checks that file for overrides first, then falls back to the default table above. Keeping overrides in `rules/` lets this `CLAUDE.md` stay a symlink to SDD_HOME (auto-updates on SDD `git pull`) without losing per-project customization.
 
 ## Conventions
 - Project conventions live in `.claude/rules/` (conventions.md, testing.md, git.md)
 - Claude Code loads these automatically — no need to reference them manually
 - Shared phase rules live in `.claude/skills/_shared/sdd-phase-common.md`
 
+> **Customization**: Customize SDD behavior via `.claude/rules/*.md`. **Do NOT edit `.claude/agents/sdd-*.md` directly** — `bin/sdd update` overwrites those files using `cmp -s` byte-diff.
+
 ## Workflow
 ```
-idea -> /new-feature -> refine spec -> /plan-feature -> /implement-task (repeat) -> /review-feature -> /archive-feature
+idea -> /new-feature -> refine spec -> /plan-feature -> /implement-task (repeat) -> /simplify-code -> /review-feature -> /archive-feature
                                    \-> /research-spike (if uncertain)
 ```
+
+## Archive folder format
+
+Archived features are stored under `specs/archive/` using this naming convention:
+
+- **Path**: `specs/archive/YYYY-MM-DD-<feature-id>/`
+- **Date**: `%Y-%m-%d` format, using the archive-day local time (the day `/archive-feature` runs).
+- **Feature-id**: the original `NNN-kebab` identifier (e.g., `011-sdd-pipeline-operational-fixes`).
+- `.simplified` is intentionally deleted by `/archive-feature` — the sentinel's only purpose is the simplify→review handoff guard and has no value after archiving.
 
 ## Result envelope
 All skills output a structured result envelope at the end:
@@ -242,4 +275,4 @@ Status | Summary | Artifacts | Next | Risks
 This enables consistent handoff between phases.
 
 ## Delta specs
-When implementation diverges from the spec, `/implement-task` documents deltas (ADDED/MODIFIED/REMOVED) in `decisions.md`. `/archive-feature` merges these deltas into the final `spec.md` before archiving.
+When implementation diverges from the spec, `/implement-task` documents deltas (ADDED/MODIFIED/REMOVED) in `decisions.md`. `/archive-feature` merges these deltas into the final `$SPEC_FILE` before archiving — `spec.md` for full-flow features, `quick-spec.md` for fast-lane features.
