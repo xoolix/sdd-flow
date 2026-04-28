@@ -18,11 +18,18 @@ You are the **orchestrator**. Detect where the feature is in the pipeline and la
 
 If Engram tools are unavailable, skip this step. Still resolve the project name — pass it to sub-agents.
 
-## Step 1: Resolve feature-id
+## Step 1: Resolve feature-id and flags
 
-Feature-id (optional): `$ARGUMENTS`
+Feature-id (optional, with optional flags): `$ARGUMENTS`
 
-If non-empty, use it as the feature-id. Otherwise:
+**Flag extraction** (before resolving feature-id):
+- Split `$ARGUMENTS` on whitespace.
+- Extract the exact token `--minimal` if present (NOT substring match — `--minimal-foo` must NOT match).
+- The remaining tokens (non-flag parts) form the raw feature-id string.
+- Cache `has_minimal_flag = true/false` for Step 3.
+
+**Feature-id resolution** (from the non-flag tokens):
+If non-empty after stripping flags, use it as the feature-id. Otherwise:
 1. List folders in `specs/` (excluding `archive/`).
 2. If exactly one folder exists, use it.
 3. If multiple folders exist, ask the user which one.
@@ -78,7 +85,8 @@ Where `<phase>` is the detected phase from Step 2 (`plan-feature`, `implement-ta
 **Prompt content** (pass to the agent as the full message):
 
 - **First line**: `"CRITICAL: NEVER use EnterPlanMode or Plan Mode. Write all files directly using Write/Edit tools. Do NOT propose plans for approval."`
-- `Feature-id: <feature-id>` (the resolved feature-id from Step 1)
+- `Feature-id: <feature-id>` (the resolved feature-id from Step 1, clean — no flags)
+  - **Exception**: if `has_minimal_flag = true` AND the detected phase is `review-feature`, pass `Feature-id: <feature-id> --minimal` instead. All other phases receive the clean feature-id with no flags. This ensures `--minimal` is review-only (AC6 / EC5).
 - The full content of `.claude/skills/_shared/sdd-phase-common.md` (shared rules)
 - The full content of `.claude/skills/_shared/engram-protocol.md` (engram memory protocol)
 - `Engram project name: "{project}"` (resolved in Step 0)

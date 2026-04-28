@@ -85,9 +85,14 @@ The orchestrator only pauses for:
                  ├─ post-validation — on regression, git checkout revert + Status: blocked
                  └─ success → write specs/<id>/.simplified sentinel
     ↓
-/sdd-next → review                   (review-feature, 3-agent voting)
-                 ├─ 3 independent reviewers run in parallel
-                 ├─ PASS or PASS WITH WARNINGS → adversarial review (Step 5.5)
+/sdd-next [--minimal] → review        (review-feature, tiered voting)
+                 ├─ tier resolved at runtime:
+                 │       full-spec  (spec.md, no --minimal) → 3 voters + adversarial
+                 │       fast-lane  (quick-spec.md only)    → 1 voter  + adversarial
+                 │       minimal    (--minimal flag)        → 1 voter, no adversarial
+                 ├─ --minimal on full-spec → stderr warning + audit line in decisions.md
+                 ├─ N=1 tier: voter verdict IS review verdict (pass-through, no aggregation)
+                 ├─ PASS or PASS WITH WARNINGS + adversarial enabled → adversarial review (Step 5.5)
                  │       ├─ no gaps → advance to archive
                  │       ├─ medium/low gaps → record SPEC-GAP in decisions.md → advance
                  │       └─ high-severity gaps → record SPEC-GAP-HIGH → Status: blocked (human decides; sentinel preserved)
@@ -99,7 +104,7 @@ The orchestrator only pauses for:
                         ↓
                    /simplify-code (re-runs — sentinel absent)
                         ↓
-                   re-review (3-agent voting)
+                   re-review (same tier as original review)
                         ↓
                    still FAIL after 2 cycles → ESCALATE
     ↓
@@ -111,6 +116,8 @@ The orchestrator only pauses for:
 `Fresh .simplified?` column means: the sentinel file exists AND its `git-head:` line equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch — e.g., user amended HEAD, rebased, or the sentinel was spoofed) is treated as absent and cleaned up by `/simplify-code`'s pre-flight.
 
 > **Fast-lane features are NOT detected by this table.** If a folder has `quick-spec.md` but no `spec.md`, `/sdd-next` will return "Blocked: run `/sdd-new` first" — this is expected per B7 (manual-only invocation). Invoke phases manually per the `Next` field in each envelope. See the Fast-lane note under Skill routing.
+>
+> **`--minimal` flag**: review-only. When passed to `/sdd-next` or `/sdd-auto`, earlier phases (plan, implement, simplify) ignore the flag. Only the review-feature phase consumes it to select tier=minimal. Re-review in the fix loop uses the same flag state (deterministic from the outer invocation).
 
 | Has spec.md? | Has plan.md + tasks.md? | All tasks [x]? | Fresh `.simplified`? | Next phase |
 |:---:|:---:|:---:|:---:|---|
