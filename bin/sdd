@@ -79,12 +79,14 @@ usage() {
 sdd — Spec Driven Development CLI (v${VERSION})
 
 Usage:
-  sdd init [--copy]       Initialize SDD in the current directory
-  sdd init --global       Install core SDD skills to ~/.claude/skills/ (one time)
-  sdd update              Re-sync symlinks (skills, templates, CLAUDE.md);
-                          migrate pre-symlink CLAUDE.md to symlink with backup
-  sdd doctor              Verify SDD setup is healthy
-  sdd help                Show this help
+  sdd init [--copy]              Initialize SDD in the current directory
+  sdd init --global              Install core SDD skills to ~/.claude/skills/ (one time)
+  sdd update                     Re-sync symlinks (skills, templates, CLAUDE.md);
+                                 migrate pre-symlink CLAUDE.md to symlink with backup
+  sdd doctor                     Verify SDD setup is healthy
+  sdd base-branch [feature-id]   Resolve the base branch for scope computations
+                                 (Layer 1: sidecar, Layer 2: git.md config, Layer 3: auto-detect)
+  sdd help                       Show this help
 
 Options for 'init':
   --copy     Copy files instead of symlinking (standalone, no auto-updates)
@@ -569,12 +571,78 @@ cmd_doctor() {
   fi
 }
 
+# ─── base-branch ───────────────────────────────────────────────────
+
+cmd_base_branch() {
+  local feature_id="${1:-}"
+
+  # ── Layer 1: per-feature sidecar (only when feature-id supplied) ──
+  if [ -n "$feature_id" ]; then
+    local sidecar="specs/${feature_id}/.parent-branch"
+    if [ -f "$sidecar" ]; then
+      # Read first line only; strip leading/trailing whitespace
+      local ref
+      ref="$(head -n1 "$sidecar" | tr -d '[:space:]')"
+      if [ -n "$ref" ]; then
+        # Non-empty after trim — must resolve
+        if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+          printf '%s\n' "$ref"
+          return 0
+        else
+          printf 'error: %s references missing branch "%s"\n' "$sidecar" "$ref" >&2
+          return 2
+        fi
+      fi
+      # Empty/whitespace sidecar — fall through to Layer 2
+    fi
+  fi
+
+  # ── Layer 2: project config in .claude/rules/git.md ──────────────
+  local git_md=".claude/rules/git.md"
+  if [ -f "$git_md" ]; then
+    local config_ref
+    config_ref="$(grep -m1 '^base-branch:[[:space:]]*' "$git_md" 2>/dev/null | sed 's/^base-branch:[[:space:]]*//' | tr -d '[:space:]' || true)"
+    if [ -n "$config_ref" ]; then
+      if git rev-parse --verify "$config_ref" >/dev/null 2>&1; then
+        printf '%s\n' "$config_ref"
+        return 0
+      else
+        printf 'error: git.md base-branch "%s" does not exist locally\n' "$config_ref" >&2
+        return 2
+      fi
+    fi
+  fi
+
+  # ── Layer 3: auto-detect (develop → main → master, smallest count wins) ──
+  local best_ref=""
+  local best_count=""
+  for candidate in develop main master; do
+    if git rev-parse --verify "$candidate" >/dev/null 2>&1; then
+      local count
+      count="$(git rev-list --count "${candidate}..HEAD" 2>/dev/null || true)"
+      if [ -z "$best_ref" ] || [ "$count" -lt "$best_count" ]; then
+        best_ref="$candidate"
+        best_count="$count"
+      fi
+    fi
+  done
+
+  if [ -n "$best_ref" ]; then
+    printf '%s\n' "$best_ref"
+    return 0
+  fi
+
+  printf 'error: no base branch resolvable — set "base-branch:" in .claude/rules/git.md or create specs/<feature-id>/.parent-branch\n' >&2
+  return 3
+}
+
 # ─── main ──────────────────────────────────────────────────────────
 
 case "${1:-help}" in
-  init)   shift; cmd_init "$@" ;;
-  update) cmd_update ;;
-  doctor) cmd_doctor ;;
+  init)         shift; cmd_init "$@" ;;
+  update)       cmd_update ;;
+  doctor)       cmd_doctor ;;
+  base-branch)  shift; cmd_base_branch "$@" ;;
   help|--help|-h) usage ;;
   version|--version|-v) echo "sdd v${VERSION}" ;;
   *)
