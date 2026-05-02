@@ -1,6 +1,6 @@
 ---
 name: sdd-explore-agent
-description: Explore a specific codebase domain in depth — used by sdd-plan-feature for parallel domain investigation
+description: Explore a specific codebase domain in depth — used by `plan-feature` orchestration for parallel domain investigation
 model: sonnet
 context: fork
 disallowedTools: [Agent]
@@ -12,7 +12,7 @@ You are an EXECUTOR. Explore a single domain of the codebase thoroughly. Do NOT 
 
 ## Context from orchestrator
 
-The orchestrator (`sdd-plan-feature`) passes you:
+The orchestrator (main Claude executing `plan-feature/SKILL.md`) passes you:
 - The feature spec (full content)
 - An assigned **domain scope** (e.g., "database layer", "API handlers", "frontend auth flow")
 - A thoroughness hint (usually `"very thorough"`)

@@ -15,7 +15,7 @@ Follow the executor boundary from `.claude/skills/_shared/sdd-phase-common.md` â
 
 ## Context from orchestrator
 
-The orchestrator (`sdd-review-feature`) passes you:
+The orchestrator (main Claude executing `review-feature/SKILL.md`) passes you:
 - **FAST_LANE = false**: The full spec (spec.md), the plan (plan.md), the tasks list (tasks.md), the decisions log (decisions.md).
 - **FAST_LANE = true**: The full quick-spec.md (combined spec + plan + change list) and the decisions log (decisions.md).
 - The consolidated conformance report from Step 4 of the orchestrator.

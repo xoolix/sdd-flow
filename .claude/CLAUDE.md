@@ -230,14 +230,14 @@ Orchestrators (`sdd-next`, `sdd-auto`) MUST pass the `model` parameter when laun
 | Orchestrator | sdd-next, sdd-auto | opus |
 | Spec creation | new-feature | opus |
 | Planning orchestrator | plan-feature | opus |
-| Explore agents | plan-feature sub-agents (Explore) | sonnet |
-| Discovery evaluator | plan-feature sub-agent (Discovery Evaluator) | haiku |
-| Design/task agents | plan-feature sub-agents (general-purpose) | sonnet |
+| Explore agents | internal worker for plan-feature phase (Explore) | sonnet |
+| Discovery evaluator | internal worker for plan-feature phase (Discovery Evaluator) | haiku |
+| Design/task agents | internal worker for plan-feature phase (sdd-designer, sdd-task-planner) | sonnet |
 | Implementation | implement-task | sonnet |
 | Simplify | simplify-code | sonnet |
 | Review orchestrator | review-feature | sonnet |
-| Review agents | review-feature sub-agents (Agent-A/B/C) | sonnet |
-| Adversarial review agent | review-feature sub-agent (adversarial, Step 5.5) | sonnet |
+| Review agents | internal worker for review-feature phase (Agent-A/B/C) | sonnet |
+| Adversarial review agent | internal worker for review-feature phase (adversarial, Step 5.5) | sonnet |
 | Archive | archive-feature | haiku |
 | Research | research-spike | sonnet |
 
@@ -246,7 +246,7 @@ Orchestrators (`sdd-next`, `sdd-auto`) MUST pass the `model` parameter when laun
 When launching a sub-agent:
 - Read this table to determine the model for the phase being launched.
 - Pass `model: "<model-name>"` in the Agent tool call.
-- If a phase is itself an orchestrator (plan-feature, review-feature), that phase's SKILL.md specifies which model its own sub-agents use — the outer orchestrator only sets the model for the phase's top-level agent.
+- For phases like `plan-feature` and `review-feature`, the SKILL.md IS the orchestrator — it runs inline and spawns its own internal workers. The outer orchestrator only sets the model for the top-level phase invocation; the SKILL.md controls which model each internal worker uses.
 
 ### Overriding model assignments
 

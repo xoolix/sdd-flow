@@ -46,10 +46,22 @@ Initialize a **per-task retry tracker**: a map of `task-id → retry_count`, sta
 Repeat until pipeline is complete, blocked, or escalated:
 
 1. **Detect phase** — same logic as `/sdd-next` Step 2.
-2. **Launch phase** — Invoke the native agent `sdd-<phase>` via the Agent tool (same pattern as `/sdd-next` Step 3).
-   - `subagent_type: "sdd-<phase>"` — where `<phase>` matches the detected phase.
+2. **Launch phase** — filesystem-side branch detection (D-001 + D-003): check whether `.claude/agents/sdd-<phase>.md` exists.
+
+   ```
+   if .claude/agents/sdd-<phase>.md EXISTS → Branch A: leaf phase → spawn native agent
+   if .claude/agents/sdd-<phase>.md ABSENT  → Branch B: orchestrator phase → execute SKILL.md inline
+   ```
+
+   This check is filesystem-only — no hardcoded list of phase names. Orchestrator phases (those whose body now lives in `.claude/skills/<phase>/SKILL.md`) have no agent file after the migration. Leaf phases (standalone executors) always have an agent file.
+
+   ---
+
+   ### Branch A — Leaf phase (agent file EXISTS)
+
+   Invoke the native agent `sdd-<phase>` via the Agent tool:
+
    - **Do NOT pass `model=`** — the agent's frontmatter is the single source of truth (per AC4 of feature 008).
-   - **Do NOT read the phase's SKILL.md and inject** — the agent preloads its own body. The SKILL.md is now a router.
    - **Prompt content**:
      - First line: `"CRITICAL: NEVER use EnterPlanMode or Plan Mode. Write all files directly using Write/Edit tools. Do NOT propose plans for approval."`
      - `Feature-id: <feature-id>` — pass the clean feature-id (no flags) for all phases EXCEPT:
@@ -57,7 +69,23 @@ Repeat until pipeline is complete, blocked, or escalated:
      - Full content of `.claude/skills/_shared/sdd-phase-common.md` + `engram-protocol.md`
      - `Engram project name: "{project}"`
      - Compact rules (from Step 1b) appended as `## Project Standards (auto-resolved)` if present
-   - **Fallback**: if `subagent_type: "sdd-<phase>"` is not recognized, read the agent body from `.claude/agents/sdd-<phase>.md` and pass it with `subagent_type: "general-purpose"` (degrade path only — loses model-per-frontmatter).
+
+   **Fallback** (if `subagent_type: "sdd-<phase>"` is not recognized by the runtime and returns an error):
+
+   1. Read `.claude/agents/sdd-<phase>.md` — extract the body (everything after the frontmatter).
+   2. Launch `subagent_type: "general-purpose"` with a prompt that includes the agent body + all context above.
+   3. This preserves behavior but loses the model-per-frontmatter benefit — degrade path only.
+
+   ---
+
+   ### Branch B — Orchestrator phase (agent file ABSENT)
+
+   Read `.claude/skills/<phase>/SKILL.md` (the full orchestration body). If the file does not exist, **STOP with a hard error** — do NOT fall back to a general-purpose agent (D-003: no orchestrator fallback). Report the missing SKILL.md path and the phase name so the user can diagnose.
+
+   Execute the SKILL.md body inline (you, the main Claude instance, carry out the orchestration steps described in that file). Pass the same prompt content as Branch A (feature-id, sdd-phase-common.md, engram-protocol.md, project name, compact rules).
+
+   **Do NOT use a `model=` override** — inline execution runs in the current model context.
+
 3. **Validate result** — apply the **Post-Phase Validation Protocol** from `sdd-phase-common.md` section F:
    - **Artifacts exist** — `ls` each path listed in the `Artifacts` field of the return envelope.
    - **Envelope complete** — verify the return envelope contains all required fields: Status, Summary, Artifacts, Next, Risks.

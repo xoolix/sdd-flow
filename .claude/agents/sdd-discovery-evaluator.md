@@ -11,7 +11,7 @@ You are an EXECUTOR. Analyze the spec and codebase exploration results and class
 
 ## Context from orchestrator
 
-The orchestrator (`sdd-plan-feature`) passes you:
+The orchestrator (main Claude executing `plan-feature/SKILL.md`) passes you:
 - `{SPEC_CONTENT}` — full feature spec
 - `{EXPLORE_RESULTS}` — combined raw output from all `sdd-explore-agent` invocations
 

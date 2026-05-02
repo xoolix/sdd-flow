@@ -69,6 +69,19 @@ If the registry does not exist, skip this step (no project skills injected). Sug
 
 ## Step 3: Launch the phase
 
+**Filesystem-side branch (D-001 + D-003)**: before launching, check whether `.claude/agents/sdd-<phase>.md` exists.
+
+```
+if .claude/agents/sdd-<phase>.md EXISTS → leaf phase → spawn native agent
+if .claude/agents/sdd-<phase>.md ABSENT  → orchestrator phase → execute SKILL.md inline
+```
+
+This check is filesystem-only — no hardcoded list of phase names. Orchestrator phases (those whose body now lives in `.claude/skills/<phase>/SKILL.md`) have no agent file after the migration. Leaf phases (standalone executors) always have an agent file.
+
+---
+
+### Branch A — Leaf phase (agent file EXISTS)
+
 Invoke the native agent `sdd-<phase>` via the Agent tool:
 
 ```
@@ -77,8 +90,6 @@ Agent(
   prompt: "<context: see below>"
 )
 ```
-
-Where `<phase>` is the detected phase from Step 2 (`plan-feature`, `implement-task`, `simplify-code`, `review-feature`, `archive-feature`).
 
 **The agent declares model, disallowedTools, context, and mcpServers in its own frontmatter** (`.claude/agents/sdd-<phase>.md`). Do NOT pass `model=` from the orchestrator — the frontmatter is the single source of truth (per AC4 of feature 008).
 
@@ -92,13 +103,21 @@ Where `<phase>` is the detected phase from Step 2 (`plan-feature`, `implement-ta
 - `Engram project name: "{project}"` (resolved in Step 0)
 - If compact rules were collected in Step 2b, append them as a `## Project Standards (auto-resolved)` section
 
-**Do NOT read the phase's SKILL.md and inject its content** — the native agent preloads its own body (migrated from the original SKILL.md). The SKILL.md is now a router.
-
 **Fallback** (if `subagent_type: "sdd-<phase>"` is not recognized by the runtime and returns an error):
 
 1. Read `.claude/agents/sdd-<phase>.md` — extract the body (everything after the frontmatter).
 2. Launch `subagent_type: "general-purpose"` with a prompt that includes the agent body + all context above.
 3. This preserves behavior but loses the model-per-frontmatter benefit — degrade path only.
+
+---
+
+### Branch B — Orchestrator phase (agent file ABSENT)
+
+Read `.claude/skills/<phase>/SKILL.md` (the full orchestration body). If the file does not exist, **STOP with a hard error** — do NOT fall back to a general-purpose agent (D-003: no orchestrator fallback). Report the missing SKILL.md path and the phase name so the user can diagnose.
+
+Execute the SKILL.md body inline (you, the main Claude instance, carry out the orchestration steps described in that file). Pass the same prompt content as Branch A (feature-id, sdd-phase-common.md, engram-protocol.md, project name, compact rules).
+
+**Do NOT use a `model=` override** — inline execution runs in the current model context.
 
 ## Step 4: Validate and retry
 

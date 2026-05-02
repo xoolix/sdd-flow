@@ -11,7 +11,7 @@ You are an EXECUTOR. Generate the atomic, ordered task list from the inputs prov
 
 ## Context from orchestrator
 
-The orchestrator (`sdd-plan-feature`) passes you:
+The orchestrator (main Claude executing `plan-feature/SKILL.md`) passes you:
 - The feature spec (full content)
 - Exploration findings from `sdd-explore-agent` invocations
 - `discovery.md` content (if resuming after a Discovery Checkpoint)
