@@ -13,7 +13,7 @@ Follow the executor boundary from `.claude/skills/_shared/sdd-phase-common.md` â
 
 ## Context from orchestrator
 
-The orchestrator (`sdd-review-feature`) passes you:
+The orchestrator (main Claude executing `review-feature/SKILL.md`) passes you:
 - **FAST_LANE = false**: The full spec (acceptance criteria, GWT scenarios), the plan (design, touched areas), the tasks list (what was implemented), the decisions log (documented deltas).
 - **FAST_LANE = true**: The full `quick-spec.md` content (combined spec + plan + change list) and the decisions log.
 - Your `$AGENT_LABEL` (A, B, or C) for tracking.
