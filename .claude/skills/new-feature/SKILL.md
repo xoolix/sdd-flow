@@ -1,6 +1,6 @@
 ---
 name: new-feature
-description: Create a feature spec from an idea through conversational refinement
+description: "Create a feature spec from an idea through conversational refinement; use only when fast-lane criteria don't fit"
 user-invocable: true
 disable-model-invocation: true
 arguments: idea or request description
