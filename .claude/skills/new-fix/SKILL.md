@@ -1,6 +1,6 @@
 ---
 name: new-fix
-description: Create a quick-spec.md for a single-domain bugfix (Kiro-style Current/Expected/Unchanged)
+description: "Fast-lane (bugfix): Create a quick-spec.md for a single-domain bugfix (Kiro-style Current/Expected/Unchanged)"
 user-invocable: true
 disable-model-invocation: true
 arguments: bug description

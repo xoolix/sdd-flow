@@ -1,6 +1,6 @@
 ---
 name: new-quick-feature
-description: Create a quick-spec.md for a single-domain enhancement or refactor (no new deps, ≤2 GWT)
+description: "Fast-lane (small changes): Create a quick-spec.md for a single-domain enhancement or refactor (no new deps, ≤2 GWT)"
 user-invocable: true
 disable-model-invocation: true
 arguments: idea or request description

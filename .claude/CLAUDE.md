@@ -195,13 +195,25 @@ For skills that need non-default phase mapping, create `.claude/skills/skill-map
 | design-system | plan-feature, implement-task, review-feature |
 ```
 
+> ### Choosing a lane
+>
+> Fast-lane (`/new-quick-feature`, `/new-fix`) is the **default expected path**.
+> Full-spec (`/new-feature`) is the escalation for complex or multi-domain work.
+>
+> **Decision rule**: `single-domain, no deps, ≤2 GWT → fast-lane`
+>
+> **Tie-breaker**: when in doubt, start with `/new-quick-feature` (or
+> `/new-fix` for bugs). If scope grows mid-flow, escalate by re-running
+> `/new-feature` with the same intent and archiving the orphaned `quick-spec.md`
+> manually — there is no automated promotion.
+
 ## Skill routing
 | Need | Skill |
 |---|---|
 | Initialize project (first time) | `/init-project` |
-| New feature from idea | `/new-feature` (or `/sdd-new`) |
 | Fast-lane: small enhancement / refactor | `/new-quick-feature` |
 | Fast-lane: bugfix (Current/Expected/Unchanged) | `/new-fix` |
+| New feature from idea (full-spec) | `/new-feature` (or `/sdd-new`) |
 | Detect & run next phase | `/sdd-next` |
 | Fast-forward all phases | `/sdd-auto` |
 | Spec to plan + tasks | `/plan-feature` |
@@ -261,8 +273,26 @@ To override for a specific project, add rows to `.claude/rules/model-overrides.m
 
 ## Workflow
 ```
-idea -> /new-feature -> refine spec -> /plan-feature -> /implement-task (repeat) -> /simplify-code -> /review-feature -> /archive-feature
-                                   \-> /research-spike (if uncertain)
+idea
+ ├─(fast-lane)─ /new-quick-feature ──────────────────┐
+ │              /new-fix                              │
+ │                                                    │
+ └─(full-spec)─ /new-feature → refine spec            │
+                  └→ /research-spike (if uncertain)   │
+                                  ↓                   │
+                            /plan-feature             │
+                                  │                   │
+                                  └─────────────────┘ │
+                                         ↓            │
+                                  ┌──────┘            │
+                                  ↓                   ↓
+                            /implement-task (repeat) ◄┘
+                                  ↓
+                            /simplify-code
+                                  ↓
+                            /review-feature
+                                  ↓
+                            /archive-feature
 ```
 
 ## Archive folder format
