@@ -2,7 +2,7 @@
 name: sdd-new-feature
 description: Create a feature spec from an idea through conversational refinement
 model: opus
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Create new feature spec (conversational)

@@ -3,7 +3,7 @@ name: sdd-explore-agent
 description: Explore a specific codebase domain in depth — used by `plan-feature` orchestration for parallel domain investigation
 model: sonnet
 context: fork
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Domain exploration

@@ -2,7 +2,7 @@
 name: sdd-adversarial-reviewer
 description: Challenge the spec itself — find uncovered scenarios, vague ACs, and undocumented assumptions
 model: sonnet
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Adversarial Reviewer

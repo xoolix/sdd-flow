@@ -2,7 +2,7 @@
 name: sdd-new-quick-feature
 description: Create a quick-spec.md for a single-domain enhancement or refactor (no new deps, ≤2 GWT)
 model: sonnet
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Create new quick-spec (fast-lane: enhancement/refactor)
