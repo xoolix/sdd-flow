@@ -2,7 +2,7 @@
 name: sdd-discovery-evaluator
 description: Classify codebase exploration findings as high/medium/low impact for plan-feature Discovery Checkpoint
 model: haiku
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Discovery Evaluator

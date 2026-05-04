@@ -2,7 +2,7 @@
 name: sdd-reviewer-voter
 description: Independent voter in the 3-agent review panel — complete review of feature against spec
 model: sonnet
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Reviewer Voter

@@ -2,7 +2,7 @@
 name: sdd-new-fix
 description: "Fast-lane (bugfix): Create a quick-spec.md for a single-domain bugfix (Kiro-style Current/Expected/Unchanged)"
 model: sonnet
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Create new fix-spec (fast-lane: bugfix)

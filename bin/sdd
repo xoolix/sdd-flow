@@ -406,7 +406,19 @@ cmd_update() {
         : $((updated++))
       fi
     done
-    log "Agents: $added added, $updated updated, $unchanged unchanged"
+    # ── Prune pass: remove project-side sdd-*.md files absent from upstream ──
+    local pruned=0
+    for project_agent in "$target/.claude/agents"/sdd-*.md; do
+      [ -f "$project_agent" ] || continue
+      local agent_name
+      agent_name="$(basename "$project_agent")"
+      if [ ! -f "$SDD_HOME/.claude/agents/$agent_name" ]; then
+        rm "$project_agent"
+        ok "Pruned: $agent_name"
+        : $((pruned++))
+      fi
+    done
+    log "Agents: $added added, $updated updated, $unchanged unchanged, $pruned pruned"
   fi
 
   ok "Update complete!"
@@ -482,6 +494,19 @@ cmd_doctor() {
       warn "  .claude/CLAUDE.md is tracked in git — add to .gitignore AND run: git rm --cached .claude/CLAUDE.md && git commit"
     fi
     ((issues++))
+  fi
+
+  # Check for orphaned sdd-*.md agent files (present in project but absent upstream)
+  if [ -d "$target/.claude/agents" ]; then
+    for project_agent in "$target/.claude/agents"/sdd-*.md; do
+      [ -f "$project_agent" ] || continue
+      local agent_name
+      agent_name="$(basename "$project_agent")"
+      if [ ! -f "$SDD_HOME/.claude/agents/$agent_name" ]; then
+        warn "  .claude/agents/$agent_name — orphan (not in upstream). Run 'sdd update' to remove."
+        ((issues++))
+      fi
+    done
   fi
 
   # Check architecture-map

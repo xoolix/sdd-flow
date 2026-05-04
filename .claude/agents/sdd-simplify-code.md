@@ -2,7 +2,7 @@
 name: sdd-simplify-code
 description: Apply KISS/DRY/YAGNI to files touched by a feature, re-validate, revert on regression
 model: sonnet
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Simplify code in a feature

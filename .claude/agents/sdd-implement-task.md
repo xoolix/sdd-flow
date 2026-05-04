@@ -2,7 +2,7 @@
 name: sdd-implement-task
 description: Execute the next uncompleted task from a feature's task list
 model: sonnet
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Implement next task

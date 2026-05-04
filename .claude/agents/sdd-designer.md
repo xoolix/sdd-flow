@@ -2,7 +2,7 @@
 name: sdd-designer
 description: Design the technical plan.md from a feature spec + exploration findings
 model: opus
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Designer

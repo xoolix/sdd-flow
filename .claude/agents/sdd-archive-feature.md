@@ -2,7 +2,7 @@
 name: sdd-archive-feature
 description: Close a completed feature — merge delta specs into main spec and archive
 model: haiku
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Archive feature

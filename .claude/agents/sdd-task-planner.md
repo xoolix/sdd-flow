@@ -2,7 +2,7 @@
 name: sdd-task-planner
 description: Generate the atomic task list (tasks.md) from a feature spec + exploration findings
 model: sonnet
-disallowedTools: [Agent]
+disallowedTools: [Agent, EnterPlanMode, ExitPlanMode]
 ---
 
 # Task Planner
