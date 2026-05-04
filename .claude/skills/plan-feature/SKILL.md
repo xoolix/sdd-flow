@@ -37,8 +37,9 @@ If any check fails, tell the user what's missing and suggest running `/new-featu
 
 **Step 0 — Session lifecycle guard** (avoids redundant session_start when invoked from sdd-next/sdd-auto):
 - Call `mem_context` with `project: "{project}"`.
-- If the response indicates an active session is already running → SKIP `mem_session_start` (we are inside an active orchestrator like sdd-next/sdd-auto that already opened the session).
-- Else (no active session) → call `mem_session_start` with `project: "{project}"`, `description: "SDD plan-feature: $ARGUMENTS"`.
+- Per "Active session detection" in `engram-protocol.md`: check whether `### Recent Sessions` is present in the response.
+  - If present → an active session exists → SKIP `mem_session_start` (we are inside an active orchestrator like sdd-next/sdd-auto that already opened the session).
+  - If absent, OR if `mem_context` errors / returns a response that does not contain `## Memory` (malformed) → call `mem_session_start` with `project: "{project}"`, `description: "SDD plan-feature: $ARGUMENTS"`.
 - Mirror at phase end: if this step opened a session, close it with `mem_session_end` after the result envelope. If the session was pre-existing, do NOT call `mem_session_end`.
 - If Engram is unavailable, skip this step entirely.
 

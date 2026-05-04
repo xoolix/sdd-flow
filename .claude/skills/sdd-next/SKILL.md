@@ -69,7 +69,29 @@ If the registry does not exist, skip this step (no project skills injected). Sug
 
 ## Step 3: Launch the phase
 
-**Filesystem-side branch (D-001 + D-003)**: before launching, check whether `.claude/agents/sdd-<phase>.md` exists.
+**Known-orchestrator guard (D-001/D-003 invariant — feature 017)**:
+
+Before applying the branch logic below, define:
+
+```
+KNOWN_ORCHESTRATORS = ["plan-feature", "review-feature"]
+# Keep in sync with sdd-auto/SKILL.md (intentional duplication per OQ-3 — DRY only when >5 entries)
+```
+
+If the resolved phase ∈ KNOWN_ORCHESTRATORS AND `.claude/agents/sdd-<phase>.md` exists:
+- HARD-ERROR. Print to stderr:
+  ```
+  ERROR: Orchestrator phase `<phase>` must NOT have a corresponding agent file at `.claude/agents/sdd-<phase>.md`.
+  This file violates the architectural invariant from feature 015 (D-001/D-003) — orchestrator
+  phases live as inline SKILL.md bodies, not native agents. Remediation: delete
+  `.claude/agents/sdd-<phase>.md` or fix your local fork. See feature 015 ADR for context.
+  ```
+- Stop the pipeline (do not spawn, do not fall back to inline). Return Status: ESCALATED with this diagnostic.
+- Sentinel preservation: if `specs/<feature-id>/.simplified` exists, leave it intact.
+
+---
+
+**Filesystem-side branch (D-001 + D-003)**: after the guard above passes, check whether `.claude/agents/sdd-<phase>.md` exists.
 
 ```
 if .claude/agents/sdd-<phase>.md EXISTS → leaf phase → spawn native agent
