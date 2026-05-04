@@ -145,3 +145,49 @@ If an orchestrator detects it has lost context:
 1. Call `mem_context` with `project: "{project}"` to reload feature context
 2. Re-read the state files (spec.md, plan.md, tasks.md) to re-derive the current phase
 3. Continue the pipeline from the detected phase
+
+---
+
+## Active session detection
+
+Use this section to decide whether to call `mem_session_start` at the top of any SDD phase.
+
+### (a) Response shape — no active session
+
+`mem_context` returns a markdown string whose first subsection (after `## Memory from Previous Sessions`) is `### Recent Observations`. The `### Recent Sessions` heading is **absent**.
+
+```
+## Memory from Previous Sessions
+
+### Recent Observations
+- [type] **title**: content ...
+```
+
+### (b) Response shape — active session exists
+
+`mem_context` returns the same markdown string but with a `### Recent Sessions` block **prepended before** `### Recent Observations`. The block lists one or more entries with session id, timestamp, and observation count.
+
+```
+## Memory from Previous Sessions
+
+### Recent Sessions
+- **{project}** (YYYY-MM-DD HH:MM:SS) [N observations]
+
+### Recent Observations
+- [type] **title**: content ...
+```
+
+### (c) Disambiguator field
+
+Check for the literal heading `### Recent Sessions` in the `mem_context` response string.
+
+- Present → an active session exists → **SKIP** `mem_session_start`.
+- Absent → no active session → **CALL** `mem_session_start`.
+
+### (d) Engram-unavailable fallback
+
+If `mem_context` errors, times out, or returns a response that does not contain `## Memory` (malformed / unexpected shape):
+
+- Assume **no active session**.
+- Call `mem_session_start` as if starting fresh.
+- Do NOT block or error the pipeline due to Engram unavailability.

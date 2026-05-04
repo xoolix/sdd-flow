@@ -46,7 +46,31 @@ Initialize a **per-task retry tracker**: a map of `task-id → retry_count`, sta
 Repeat until pipeline is complete, blocked, or escalated:
 
 1. **Detect phase** — same logic as `/sdd-next` Step 2.
-2. **Launch phase** — filesystem-side branch detection (D-001 + D-003): check whether `.claude/agents/sdd-<phase>.md` exists.
+2. **Launch phase** — known-orchestrator guard, then filesystem-side branch detection.
+
+   **Known-orchestrator guard (D-001/D-003 invariant — feature 017)**:
+
+   Before applying the branch logic below, define:
+
+   ```
+   KNOWN_ORCHESTRATORS = ["plan-feature", "review-feature"]
+   # Keep in sync with sdd-next/SKILL.md (intentional duplication per OQ-3 — DRY only when >5 entries)
+   ```
+
+   If the resolved phase ∈ KNOWN_ORCHESTRATORS AND `.claude/agents/sdd-<phase>.md` exists:
+   - HARD-ERROR. Print to stderr:
+     ```
+     ERROR: Orchestrator phase `<phase>` must NOT have a corresponding agent file at `.claude/agents/sdd-<phase>.md`.
+     This file violates the architectural invariant from feature 015 (D-001/D-003) — orchestrator
+     phases live as inline SKILL.md bodies, not native agents. Remediation: delete
+     `.claude/agents/sdd-<phase>.md` or fix your local fork. See feature 015 ADR for context.
+     ```
+   - Stop the pipeline (do not spawn, do not fall back to inline). Return Status: ESCALATED with this diagnostic.
+   - Sentinel preservation: if `specs/<feature-id>/.simplified` exists, leave it intact.
+
+   ---
+
+   **Filesystem-side branch detection (D-001 + D-003)**: after the guard above passes, check whether `.claude/agents/sdd-<phase>.md` exists.
 
    ```
    if .claude/agents/sdd-<phase>.md EXISTS → Branch A: leaf phase → spawn native agent
