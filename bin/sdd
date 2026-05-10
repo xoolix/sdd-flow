@@ -81,8 +81,9 @@ sdd — Spec Driven Development CLI (v${VERSION})
 Usage:
   sdd init [--copy]              Initialize SDD in the current directory
   sdd init --global              Install core SDD skills to ~/.claude/skills/ (one time)
-  sdd update                     Re-sync symlinks (skills, templates, CLAUDE.md);
-                                 migrate pre-symlink CLAUDE.md to symlink with backup
+  sdd update                     Re-sync symlinks (skills, templates, memory, shared,
+                                 CLAUDE.md, agents); migrate pre-symlink CLAUDE.md to
+                                 symlink with backup; prune orphaned upstream agents
   sdd doctor                     Verify SDD setup is healthy
   sdd base-branch [feature-id]   Resolve the base branch for scope computations
                                  (Layer 1: sidecar, Layer 2: git.md config, Layer 3: auto-detect)
@@ -205,6 +206,26 @@ cmd_init() {
   if [ -d "$SDD_HOME/.specify/scripts" ]; then
     link_or_copy "$SDD_HOME/.specify/scripts" "$target/.specify/scripts" "$mode"
     ok "Scripts installed"
+  fi
+
+  # ── Memory (constitution.md + future shared memory) ──
+  if [ -d "$SDD_HOME/.specify/memory" ]; then
+    if [ -e "$target/.specify/memory" ] || [ -L "$target/.specify/memory" ]; then
+      warn "Skipped .specify/memory/ (already exists)"
+    else
+      link_or_copy "$SDD_HOME/.specify/memory" "$target/.specify/memory" "$mode"
+      ok "Memory installed (constitution.md)"
+    fi
+  fi
+
+  # ── Shared skill docs (feature-spec, diagnose-bug) ──
+  if [ -d "$SDD_HOME/skills/shared" ]; then
+    if [ -e "$target/skills/shared" ] || [ -L "$target/skills/shared" ]; then
+      warn "Skipped skills/shared/ (already exists)"
+    else
+      link_or_copy "$SDD_HOME/skills/shared" "$target/skills/shared" "$mode"
+      ok "Shared skill docs installed (skills/shared/)"
+    fi
   fi
 
   # ── Rules (project-specific — always copy, never overwrite existing) ──
@@ -335,6 +356,34 @@ cmd_update() {
     fi
   fi
 
+  # ── Memory: refresh symlink (constitution + future shared memory) ──
+  if [ -d "$SDD_HOME/.specify/memory" ]; then
+    if [ -L "$target/.specify/memory" ]; then
+      ln -sfn "$SDD_HOME/.specify/memory" "$target/.specify/memory"
+      ok "Updated memory (constitution)"
+    elif [ ! -e "$target/.specify/memory" ]; then
+      mkdir -p "$target/.specify"
+      ln -sfn "$SDD_HOME/.specify/memory" "$target/.specify/memory"
+      ok "Created memory symlink (was absent)"
+    else
+      warn "Skipped memory (not a symlink — likely --copy install or local override)"
+    fi
+  fi
+
+  # ── Shared skill docs: refresh symlink ──
+  if [ -d "$SDD_HOME/skills/shared" ]; then
+    if [ -L "$target/skills/shared" ]; then
+      ln -sfn "$SDD_HOME/skills/shared" "$target/skills/shared"
+      ok "Updated skills/shared/"
+    elif [ ! -e "$target/skills/shared" ]; then
+      mkdir -p "$target/skills"
+      ln -sfn "$SDD_HOME/skills/shared" "$target/skills/shared"
+      ok "Created skills/shared symlink (was absent)"
+    else
+      warn "Skipped skills/shared (not a symlink — likely --copy install or local override)"
+    fi
+  fi
+
   # ── CLAUDE.md: refresh symlink or migrate pre-symlink copy ──
   # Respect --copy installs: don't force-migrate when the project opted out.
   local claude_md="$target/.claude/CLAUDE.md"
@@ -448,17 +497,17 @@ cmd_doctor() {
   # Check project structure
   echo ""
   log "Project ($target):"
-  for dir in .claude .claude/skills .claude/rules .specify specs research docs; do
+  for dir in .claude .claude/skills .claude/rules .specify .specify/memory specs research docs skills/shared; do
     if [ -d "$target/$dir" ]; then
       ok "  $dir/"
     else
-      warn "  $dir/ — MISSING"
+      warn "  $dir/ — MISSING (run 'sdd update' to install)"
       ((issues++))
     fi
   done
 
   # Check key project files
-  for file in .claude/rules/conventions.md; do
+  for file in .claude/rules/conventions.md .specify/memory/constitution.md; do
     if [ -f "$target/$file" ]; then
       ok "  $file"
     else

@@ -14,3 +14,7 @@
 
      The orchestrator reads this file and applies any overrides before
      falling back to the default table. -->
+
+| Role | Skill / Context | Model |
+|------|----------------|-------|
+| Review agents | internal worker for review-feature phase (Agent-A/B/C) | haiku |

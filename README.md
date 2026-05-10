@@ -37,7 +37,7 @@ Esto escanea el codebase y auto-genera:
 
 ```bash
 sdd doctor   # Verifica que todo esté en orden
-sdd update   # Re-sincroniza skills/templates después de un pull
+sdd update   # Re-sincroniza skills, templates, memory, shared, CLAUDE.md y agents después de un pull
 ```
 
 ## Workflow
@@ -48,9 +48,11 @@ Un feature en SDD tiene **tres dimensiones**: por dónde entrás, qué artefacto
 
 | Entry | Cuándo | Artefacto inicial |
 |---|---|---|
-| `/new-feature "idea"` | Feature grande, multi-domain, varias GWT | `spec.md` (+ después `plan.md` + `tasks.md`) |
+| `/new-feature "idea"` | Feature grande, multi-domain, varias GWT | `clarify.md` + `spec.md` (+ después `plan.md` + `tasks.md`; ADRs en `docs/adr/` si aplica) |
 | `/new-quick-feature "idea"` | Enhancement/refactor chico: single-domain, sin deps nuevas, ≤2 GWT | `quick-spec.md` (combinado spec+plan+tasks) |
 | `/new-fix "bug"` | Bugfix chico con formato Kiro Current/Expected/Unchanged | `quick-spec.md` (variante fix) |
+
+`/new-feature` corre una **entrevista adversarial estilo Pocock** en 8 categorías (problema → usuarios → scope → supuestos → edge cases → dominio → decisiones duras → acceptance), pegando las respuestas literales en `clarify.md` y formalizando en `spec.md`. Los bloques estructurados (Given/When/Then, rollback, success metric) los redacta el agente y el usuario los valida.
 
 Los dos fast-lane corren un **entry gate** de 3 preguntas antes del intake; si no califica, te redirige a `/new-feature`.
 
@@ -85,9 +87,9 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
 ### Resumen visual
 
 ```
-                       ┌─ /sdd-next  (auto, solo full-flow)
-/new-feature ──spec.md ┤
-                       └─ /plan-feature → /implement-task → /simplify-code → /review-feature → /archive-feature  (manual)
+                                       ┌─ /sdd-next  (auto, solo full-flow)
+/new-feature ──clarify.md + spec.md ──┤
+                                       └─ /plan-feature → /implement-task → /simplify-code → /review-feature → /archive-feature  (manual)
 
 /new-quick-feature ┐
                    ├── quick-spec.md ── /implement-task → /simplify-code → /review-feature → /archive-feature  (solo manual)
@@ -104,11 +106,11 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
 | `/sdd-new "idea"` | Entry point full-flow (delega a `/new-feature`) |
 | `/sdd-next [NNN]` | Detecta la fase actual y corre la próxima |
 | `/sdd-auto [NNN]` | Fast-forward: encadena todas las fases restantes |
-| `/new-feature "idea"` | Crea spec.md conversacionalmente (full-flow) |
+| `/new-feature "idea"` | Adversarial interview Pocock-style (8 categorías) → `clarify.md` + `spec.md` (+ ADRs si aplica) |
 | `/new-quick-feature "idea"` | Fast-lane: enhancement/refactor → quick-spec.md |
 | `/new-fix "bug"` | Fast-lane: bugfix (C/E/U) → quick-spec.md |
 | `/plan-feature NNN-name` | spec.md → plan.md + tasks.md (con discovery checkpoint) |
-| `/implement-task NNN-name` | Ejecuta la próxima tarea; acepta Review-Feedback para fix cycles |
+| `/implement-task NNN-name` | Ejecuta la próxima tarea con test-first gate + self-review pre-cierre + validación con output real; acepta Review-Feedback para fix cycles |
 | `/simplify-code NNN-name` | Aplica KISS/DRY/YAGNI al diff; revierte si rompe tests |
 | `/research-spike "topic"` | Investiga incertidumbre técnica en paralelo |
 | `/review-feature NNN-name` | 3-agent voting + adversarial spec review |
@@ -126,6 +128,19 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
 | Bug chico con Current/Expected/Unchanged claros | `/new-fix` | Manual (único modo) |
 | Cambio chico pero tocás 2+ dominios o agregás dep | `/new-feature` | El entry gate del fast-lane te redirige automáticamente |
 
+## Principios
+
+La constitución vive en `.specify/memory/constitution.md` (8 principios). Los más operacionales:
+
+1. **Specs drive changes** — todo cambio material arranca de una spec o research recommendation.
+2. **Research before architecture when uncertainty is high** — abrí `/research-spike` antes de comprometer arquitectura.
+3. **Plans must be executable** — el plan menciona módulos, contratos, data, migración, observabilidad y estrategia de testing.
+4. **Tasks must be atomic** — cada task se implementa y valida en una iteración.
+5. **Decisions must remain traceable** — divergencias van a `decisions.md` o ADR.
+6. **Done means verified** — sin acceptance checkeado y validación registrada, no está hecho.
+7. **Test-first cuando aplica** — si el cambio tiene comportamiento testeable, el test va antes que el código (`/implement-task` lo enforce con un test-first gate).
+8. **Evidence over claims** — done significa salida real de comandos pegada (`===== 4 passed =====`), no afirmaciones sobre cómo debería funcionar.
+
 ## Estructura
 
 ```
@@ -135,17 +150,18 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
     conventions.md
     testing.md
     git.md
-  skills/                      # Skills de Claude Code
+    model-overrides.md         # Overrides de model routing por proyecto
+  skills/                      # Skills de Claude Code (routers de slash commands)
     _shared/                   # Protocolo común + lane resolution (§I)
     init-project/              # Inicialización automática
     sdd-new/                   # Entry point full-flow
-    sdd-next/              # Orchestrator: detecta y corre próxima fase
-    sdd-auto/                    # Orchestrator: fast-forward
-    new-feature/               # Full-flow: crear spec desde idea
+    sdd-next/                  # Orchestrator: detecta y corre próxima fase
+    sdd-auto/                  # Orchestrator: fast-forward
+    new-feature/               # Full-flow: adversarial interview Pocock
     new-quick-feature/         # Fast-lane: enhancement/refactor
     new-fix/                   # Fast-lane: bugfix (C/E/U)
     plan-feature/              # Spec → plan + tasks
-    implement-task/            # Ejecutar tarea (+ review-fix cycle)
+    implement-task/            # Ejecutar tarea (test-first + self-review)
     simplify-code/             # KISS/DRY/YAGNI post-implement
     research-spike/            # Investigar incertidumbre
     review-feature/            # 3-agent voting + adversarial
@@ -153,13 +169,24 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
     architecture-map/          # Mapa de arquitectura (auto-generado)
     build-registry/            # Compila skills de proyecto en compact rules
 .specify/
+  memory/
+    constitution.md            # 8 principios del repo
   templates/                   # spec-template, plan-template, tasks-template,
                                # quick-spec-template, fix-spec-template, research-template
   scripts/                     # Scripts helper
-specs/                         # Features en curso (spec/plan/tasks O quick-spec + decisions)
+skills/shared/                 # Skill docs de referencia (no son slash commands)
+  feature-spec/SKILL.md        # Mirror del flow Pocock para /new-feature
+  diagnose-bug/SKILL.md        # Investigación disciplinada de bugs y regresiones
+specs/                         # Features en curso
+  NNN-name/
+    clarify.md                 # Q&A crudas (full-flow, salida de /new-feature)
+    spec.md                    # Spec formalizado (full-flow)
+    plan.md, tasks.md          # Después de /plan-feature
+    decisions.md               # Deltas y test-skip rationale
+    quick-spec.md              # Fast-lane (en lugar de spec/plan/tasks)
   archive/                     # Features cerradas (YYYY-MM-DD-NNN-name/)
 research/                      # Research spikes
-docs/adr/                      # Architecture Decision Records
+docs/adr/                      # Architecture Decision Records (creados por /new-feature in-the-moment)
 docs/architecture/             # Documentación de arquitectura
 ```
 

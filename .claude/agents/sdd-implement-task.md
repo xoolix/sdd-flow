@@ -65,19 +65,27 @@ Check if this project uses TDD:
 
 4. **For each task in the batch**:
    a. Read and understand the relevant code paths.
-   b. Write the code change (if TDD mode: follow RED → GREEN → REFACTOR cycle).
-   c. Mark the task as completed:
+   b. **Test-first gate** — before writing implementation code:
+      - **If the task has testable behavior**: write the test first, run it, paste the real failure output, only then implement. (Mandatory whenever TDD mode is detected; strongly preferred otherwise.)
+      - **If the task is not testable** (infra, config, migration, exploration, prose docs): document the reason inline in `decisions.md` under a `## Test-skip rationale` heading for that task — one line is enough.
+   c. Write the code change (if TDD mode: follow RED → GREEN → REFACTOR cycle).
+   d. **Self-review before marking complete** — re-read the full diff for this task and confirm:
+      - (a) every change is in scope of the current task,
+      - (b) nothing was added that wasn't asked for,
+      - (c) the task's acceptance criteria are met.
+      If any check fails, revert the out-of-scope change before continuing.
+   e. Mark the task as completed:
       - **FAST_LANE = false**: change `- [ ]` to `- [x]` in `tasks.md`.
       - **FAST_LANE = true**: change `- [ ]` to `- [x]` in `quick-spec.md` `## Tasks` section (NOT `tasks.md` — there is no `tasks.md` for fast-lane features).
-   d. If the implementation diverges from the spec, note the delta (don't write it yet — batch at the end).
-   e. **Continue to the next task in the batch without pausing.**
+   f. If the implementation diverges from the spec, note the delta (don't write it yet — batch at the end).
+   g. **Continue to the next task in the batch without pausing.**
 
-5. **Validate once after the batch** — Run validations in parallel using separate Bash calls:
+5. **Validate once after the batch** — Run lint, typecheck, and tests in parallel via separate Bash calls. **Paste the REAL terminal output** of each command into the result envelope's `Validations-Output` field — do not paraphrase, do not summarize. Valid: `===== 4 passed in 0.32s =====`. Invalid: `tests pass`.
    - **Lint** → PASS/FAIL (run if linter is configured)
    - **Type check** → PASS/FAIL (run if type checker is configured)
    - **Tests** (files touched by the batch) → PASS/FAIL
    - **If ALL pass** → proceed to step 6.
-   - **If ANY fail** → read the error output, fix the issue inline, and re-run validations. Repeat up to **3 inline fix attempts** per failure. If still failing after 3 attempts, stop and report `Status: blocked` with the validation output.
+   - **If ANY fail** → read the error output, fix the issue inline, and re-run validations. Repeat up to **3 inline fix attempts** per failure. If still failing after 3 attempts, stop and report `Status: blocked` with the validation output pasted verbatim.
 
 6. **Delta spec check**: If any tasks in the batch changed, added, or removed requirements from the original spec, document all deltas in `specs/$ARGUMENTS/decisions.md` in a single entry:
    ```

@@ -213,7 +213,7 @@ For skills that need non-default phase mapping, create `.claude/skills/skill-map
 | Initialize project (first time) | `/init-project` |
 | Fast-lane: small enhancement / refactor | `/new-quick-feature` |
 | Fast-lane: bugfix (Current/Expected/Unchanged) | `/new-fix` |
-| New feature from idea (full-spec) | `/new-feature` (or `/sdd-new`) |
+| New feature from idea (full-spec) — adversarial interview producing `clarify.md` + `spec.md` (cubre problema, usuarios, scope, supuestos, edge cases, dominio, decisiones, acceptance) | `/new-feature` (or `/sdd-new`) |
 | Detect & run next phase | `/sdd-next` |
 | Fast-forward all phases | `/sdd-auto` |
 | Spec to plan + tasks | `/plan-feature` |
@@ -223,6 +223,7 @@ For skills that need non-default phase mapping, create `.claude/skills/skill-map
 | Review vs spec | `/review-feature` |
 | Close & archive feature | `/archive-feature` |
 | Build skill registry | `/build-registry` |
+| Hard bug or perf regression that doesn't resolve trivially | `diagnose-bug` |
 | RAG, embeddings, retrieval | `llm-application-dev` skills |
 
 > **Fast-lane note**: `/sdd-next` and `/sdd-auto` do NOT support fast-lane (`quick-spec.md`) features. After running `/new-quick-feature` or `/new-fix`, invoke phases manually following the `Next` field in each result envelope (`/implement-task` → `/simplify-code` → `/review-feature` → `/archive-feature`).
