@@ -342,6 +342,29 @@ cmd_update() {
     fi
   done
 
+  # ── Prune orphan global skills (broken symlinks pointing into SDD_HOME) ──
+  # Catches skills renamed/removed upstream (e.g., sdd-continue → sdd-next migration).
+  # Only touches symlinks pointing INTO $SDD_HOME — leaves user-installed skills
+  # like langfuse, find-skills, etc. alone even if broken (not our responsibility).
+  if [ -d "$HOME/.claude/skills" ]; then
+    local global_pruned=0
+    for global_skill in "$HOME/.claude/skills"/*; do
+      [ -L "$global_skill" ] || continue
+      local skill_name link_target
+      skill_name="$(basename "$global_skill")"
+      link_target="$(readlink "$global_skill")"
+      case "$link_target" in
+        "$SDD_HOME"/*)
+          if [ ! -e "$global_skill" ]; then
+            rm "$global_skill"
+            ok "Pruned global orphan: $skill_name"
+            : $((global_pruned++))
+          fi
+          ;;
+      esac
+    done
+  fi
+
   # Update project templates
   if [ -d "$target/.specify" ]; then
     if [ -L "$target/.specify/templates" ]; then
