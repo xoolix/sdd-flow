@@ -1,6 +1,6 @@
 ---
 name: diagnose-bug
-summary: Investigación disciplinada de bugs y regresiones de performance.
+description: "Disciplined investigation of hard bugs and performance regressions. Use when a bug doesn't resolve on first attempt, root cause is unclear, or a perf regression appears."
 ---
 
 # Purpose

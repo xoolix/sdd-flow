@@ -1,10 +1,13 @@
 ---
 name: feature-spec
-summary: Entrevistar adversarialmente al usuario para producir clarify.md y spec.md de una feature.
+description: "Reference doc for the Pocock-style adversarial interview methodology that produces clarify.md + spec.md (+ ADRs). The canonical executor is the /new-feature command — this file documents the workflow."
+disable-model-invocation: true
 ---
 
 # Purpose
 Convertir una idea o pedido en `clarify.md` (Q&A crudas) y `spec.md` (formal) a través de un interrogatorio profundo que cubre todas las ramas del árbol de decisión.
+
+> **Note**: este SKILL.md es la referencia metodológica. El ejecutor real es `/new-feature` (delega a `.claude/agents/sdd-new-feature.md`).
 
 # Use when
 - Empieza una feature nueva.

@@ -8,7 +8,7 @@ SDD_HOME="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")/..
 VERSION="2.0.0"
 
 # ─── Core SDD skills (these go to global ~/.claude/skills/) ──────
-CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto init-project build-registry _shared"
+CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto init-project build-registry feature-spec diagnose-bug _shared"
 
 # ─── helpers ───────────────────────────────────────────────────────
 
@@ -81,9 +81,10 @@ sdd — Spec Driven Development CLI (v${VERSION})
 Usage:
   sdd init [--copy]              Initialize SDD in the current directory
   sdd init --global              Install core SDD skills to ~/.claude/skills/ (one time)
-  sdd update                     Re-sync symlinks (skills, templates, memory, shared,
+  sdd update                     Re-sync symlinks (skills, templates, memory,
                                  CLAUDE.md, agents); migrate pre-symlink CLAUDE.md to
-                                 symlink with backup; prune orphaned upstream agents
+                                 symlink with backup; prune orphaned agents + global
+                                 skills; remove legacy skills/shared symlink
   sdd doctor                     Verify SDD setup is healthy
   sdd base-branch [feature-id]   Resolve the base branch for scope computations
                                  (Layer 1: sidecar, Layer 2: git.md config, Layer 3: auto-detect)
@@ -215,16 +216,6 @@ cmd_init() {
     else
       link_or_copy "$SDD_HOME/.specify/memory" "$target/.specify/memory" "$mode"
       ok "Memory installed (constitution.md)"
-    fi
-  fi
-
-  # ── Shared skill docs (feature-spec, diagnose-bug) ──
-  if [ -d "$SDD_HOME/skills/shared" ]; then
-    if [ -e "$target/skills/shared" ] || [ -L "$target/skills/shared" ]; then
-      warn "Skipped skills/shared/ (already exists)"
-    else
-      link_or_copy "$SDD_HOME/skills/shared" "$target/skills/shared" "$mode"
-      ok "Shared skill docs installed (skills/shared/)"
     fi
   fi
 
@@ -393,18 +384,22 @@ cmd_update() {
     fi
   fi
 
-  # ── Shared skill docs: refresh symlink ──
-  if [ -d "$SDD_HOME/skills/shared" ]; then
-    if [ -L "$target/skills/shared" ]; then
-      ln -sfn "$SDD_HOME/skills/shared" "$target/skills/shared"
-      ok "Updated skills/shared/"
-    elif [ ! -e "$target/skills/shared" ]; then
-      mkdir -p "$target/skills"
-      ln -sfn "$SDD_HOME/skills/shared" "$target/skills/shared"
-      ok "Created skills/shared symlink (was absent)"
-    else
-      warn "Skipped skills/shared (not a symlink — likely --copy install or local override)"
-    fi
+  # ── Legacy cleanup: skills/shared was previously linked at the project root.
+  # Now feature-spec and diagnose-bug live under .claude/skills/ (global CORE_SKILLS).
+  # Remove the legacy symlink if it points into SDD_HOME, and remove skills/ if empty.
+  if [ -L "$target/skills/shared" ]; then
+    local legacy_target
+    legacy_target="$(readlink "$target/skills/shared")"
+    case "$legacy_target" in
+      "$SDD_HOME"/*)
+        rm "$target/skills/shared"
+        ok "Removed legacy skills/shared symlink (now lives under .claude/skills/)"
+        ;;
+    esac
+  fi
+  if [ -d "$target/skills" ] && [ ! -L "$target/skills" ] && [ -z "$(ls -A "$target/skills" 2>/dev/null)" ]; then
+    rmdir "$target/skills"
+    ok "Removed empty skills/ directory"
   fi
 
   # ── CLAUDE.md: refresh symlink or migrate pre-symlink copy ──
@@ -520,7 +515,7 @@ cmd_doctor() {
   # Check project structure
   echo ""
   log "Project ($target):"
-  for dir in .claude .claude/skills .claude/rules .specify .specify/memory specs research docs skills/shared; do
+  for dir in .claude .claude/skills .claude/rules .specify .specify/memory specs research docs; do
     if [ -d "$target/$dir" ]; then
       ok "  $dir/"
     else

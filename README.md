@@ -37,7 +37,7 @@ Esto escanea el codebase y auto-genera:
 
 ```bash
 sdd doctor   # Verifica que todo esté en orden
-sdd update   # Re-sincroniza skills, templates, memory, shared, CLAUDE.md y agents después de un pull
+sdd update   # Re-sincroniza skills, templates, memory, CLAUDE.md y agents; prune orphans
 ```
 
 ## Workflow
@@ -168,15 +168,14 @@ La constitución vive en `.specify/memory/constitution.md` (8 principios). Los m
     archive-feature/           # Cerrar y archivar feature
     architecture-map/          # Mapa de arquitectura (auto-generado)
     build-registry/            # Compila skills de proyecto en compact rules
+    feature-spec/              # Doc-mirror del flow Pocock (no invocable; ref para humanos)
+    diagnose-bug/              # Skill discoverable: el modelo la invoca al toparse con bugs duros
 .specify/
   memory/
     constitution.md            # 8 principios del repo
   templates/                   # spec-template, plan-template, tasks-template,
                                # quick-spec-template, fix-spec-template, research-template
   scripts/                     # Scripts helper
-skills/shared/                 # Skill docs de referencia (no son slash commands)
-  feature-spec/SKILL.md        # Mirror del flow Pocock para /new-feature
-  diagnose-bug/SKILL.md        # Investigación disciplinada de bugs y regresiones
 specs/                         # Features en curso
   NNN-name/
     clarify.md                 # Q&A crudas (full-flow, salida de /new-feature)
