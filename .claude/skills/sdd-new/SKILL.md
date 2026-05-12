@@ -1,6 +1,6 @@
 ---
 name: sdd-new
-description: Start a new feature — orchestrator entry point that runs the new-feature conversational flow
+description: Start a new feature — alias that runs the new-feature adversarial interview inline
 user-invocable: true
 disable-model-invocation: true
 arguments: idea or request description
@@ -8,27 +8,18 @@ arguments: idea or request description
 
 # Start new SDD feature
 
-You are the **orchestrator**. The user wants to start a new feature.
+User's input: `$ARGUMENTS`
 
-User's input:
-
-`$ARGUMENTS`
+This skill is an **alias** for `/new-feature`. The two are equivalent.
 
 ## What to do
 
-1. Invoke the native agent `sdd-new-feature` via the Agent tool:
+**Main Claude executes this inline.** Do NOT launch a sub-agent.
 
-   ```
-   Agent(
-     subagent_type: "sdd-new-feature",
-     prompt: "<idea: $ARGUMENTS>\n\n<shared rules: sdd-phase-common.md + engram-protocol.md>"
-   )
-   ```
+1. Read `.claude/skills/new-feature/SKILL.md` from the project (or `~/.claude/skills/new-feature/SKILL.md` if not present locally).
+2. Execute its body **inline in this conversation**, substituting `$ARGUMENTS` as the feature idea.
+3. The body runs the Pocock-style adversarial interview turn-by-turn with the user (8 categories, 1-3 questions per turn, wait for answer before advancing).
 
-   The agent runs in opus (executor, `disallowedTools: [Agent]`) and handles the conversational spec intake (confirm → trigger → happy path → domains → edge cases → GWT criteria → rollback → success criterion).
+**CRITICAL — why this skill must NOT delegate to a sub-agent**: the adversarial interview requires multi-turn dialogue with the user. Sub-agents run one-shot and return; they cannot pause to ask the user mid-flow. If you delegate, the agent will silently auto-fill answers with assumptions and surface them only as "Open Questions" in its final envelope — defeating the entire purpose of the interview.
 
-   **Fallback** — if `subagent_type: "sdd-new-feature"` is not recognized by the runtime:
-   - Read the body of `.claude/agents/sdd-new-feature.md` and execute inline (degrade path — loses context isolation and model-per-frontmatter).
-
-2. When the spec is generated, output the result envelope from the agent.
-3. After the envelope, tell the user: "Para continuar con plan + tasks, escribí `/sdd-next`"
+4. When `new-feature` produces its result envelope, relay it to the user and append: "Para continuar con plan + tasks, escribí `/sdd-next`".
