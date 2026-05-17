@@ -1,7 +1,5 @@
 node_modules
-specs
-research
-docs
 .claude/CLAUDE.md.backup
-.claude/CLAUDE.md
 specs/**/.parent-branch
+.engram/engram.db
+.engram/cloud.json

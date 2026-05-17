@@ -45,7 +45,7 @@ Initialize a **per-task retry tracker**: a map of `task-id → retry_count`, sta
 
 Repeat until pipeline is complete, blocked, or escalated:
 
-1. **Detect phase** — same logic as `/sdd-next` Step 2.
+1. **Detect phase** — same logic as `/sdd-next` Step 2, including both full-flow (`spec.md` + `plan.md` + `tasks.md`) and fast-lane (`quick-spec.md`) features.
 2. **Launch phase** — known-orchestrator guard, then filesystem-side branch detection.
 
    **Known-orchestrator guard (D-001/D-003 invariant — feature 017)**:
@@ -114,22 +114,33 @@ Repeat until pipeline is complete, blocked, or escalated:
    - **Artifacts exist** — `ls` each path listed in the `Artifacts` field of the return envelope.
    - **Envelope complete** — verify the return envelope contains all required fields: Status, Summary, Artifacts, Next, Risks.
    - **Lint/tests pass** — run lint, typecheck, and tests in parallel Bash calls (skip if the phase produces no code, e.g., spec or plan phases).
+   - For `implement-task`, extract `Task attempted` from the result envelope and parse the first task ID (`Tnnn`). Cache this as `last_attempted_task_id` for retry handling.
 4. **On validation success**:
    - If `status: success` or `partial` → show a one-line summary, continue to next iteration.
 5. **On validation failure** — re-launch the sub-agent with the original prompt **plus** error context (which check(s) failed, error output, retry attempt number).
    - For **non-implement-task phases**: max 2 retries per phase invocation. If exhausted → ESCALATE and STOP.
    - For **implement-task phases**: use per-task tracking (see below).
-6. **For implement-task**: The skill handles batching internally (SMALL features = all tasks at once, MEDIUM/LARGE = one phase at a time). Launch implement-task once per batch — it will implement multiple tasks and return a single result envelope.
-   - **Per-batch retry tracking**: when a batch fails validation, increment `retry_tracker[batch-id]`. If `retry_tracker[batch-id] >= 2` → ESCALATE and **STOP the entire loop**.
-   - On retry, re-launch with the same batch context plus the error output from the failed attempt.
-   - After each successful batch, re-detect remaining unchecked tasks. If more remain, launch implement-task again for the next batch.
+6. **For implement-task**: The skill implements one unlocked `[AFK]` vertical slice per invocation. Launch implement-task once per slice; it will return a single result envelope.
+   - **Per-slice retry tracking**: when a slice fails validation, use `last_attempted_task_id` from `Task attempted`. If it is missing or cannot be parsed, ESCALATE and **STOP the entire loop**; do not risk selecting the next unlocked task.
+   - Increment `retry_tracker[last_attempted_task_id]`. If `retry_tracker[last_attempted_task_id] >= 2` → ESCALATE and **STOP the entire loop**.
+   - On retry, re-launch `/implement-task` with the original prompt plus:
+     ```
+     RETRY VALIDATION FAILURE
+     FORCE_TASK_ID=<last_attempted_task_id>
+     Previous Task attempted: <verbatim Task attempted field>
+     Validation failure:
+     <which check(s) failed + concrete error output>
+     Retry attempt: <retry_tracker value>/2
+     ```
+   - After each successful slice, re-detect remaining unchecked tasks. If more remain, launch implement-task again for the next unlocked slice.
 
 ## Step 2b: Evaluator-optimizer loop (review→fix→re-review)
 
 After the pipeline loop (Step 2) launches `/review-feature` and validation passes (Step 2, item 3), check the review result:
 
-- **PASS or PASS WITH WARNINGS** → continue the pipeline loop (back to phase detection).
-- **FAIL** → enter the fix loop below.
+- **Verdict: PASS or PASS WITH WARNINGS** → continue the pipeline loop (back to phase detection).
+- **Verdict: FAIL** → enter the fix loop below.
+- **Verdict: BLOCKED-JUDGMENT-DAY-HIGH** or `Status: blocked` → STOP and report the judge findings for human decision.
 
 ### Fix loop (max 2 cycles)
 
@@ -145,13 +156,14 @@ Initialize `review_cycle = 1`.
 3. **Validate implement-task result**: Apply Step 2 item 3 validation (artifacts exist, envelope complete, lint/tests pass). If validation fails, follow item 5 retry logic.
 4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.simplified`, so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 2 item 2 pattern).
 5. **Validate simplify-code result**: Apply Step 2 item 3 validation. If simplify-code returns `Status: blocked` (regression revert or baseline red), **STOP** the fix loop and report the blocked status — the human must resolve the regression before the loop can continue.
-6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 2 item 2 pattern) to re-review the updated implementation. If `has_minimal_flag = true`, pass `Feature-id: <feature-id> --minimal` (same tier as the original review — AC5 / EC7).
+6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 2 item 2 pattern) to re-review the updated implementation. If `has_minimal_flag = true`, pass `Feature-id: <feature-id> --minimal` (same review mode as the original review).
 7. **Validate review result**: Apply Step 2 item 3 validation to the review result.
 8. **Check verdict**:
-   - **PASS or PASS WITH WARNINGS** → exit loop, continue the pipeline (back to phase detection in Step 2).
-   - **FAIL** → increment `review_cycle`. If `review_cycle > 2`, **STOP** with `Status: ESCALATED` and include a diagnostic showing the failed criteria from each review cycle so the human can intervene.
+   - **Verdict: PASS or PASS WITH WARNINGS** → exit loop, continue the pipeline (back to phase detection in Step 2).
+   - **Verdict: BLOCKED-JUDGMENT-DAY-HIGH** or `Status: blocked` → STOP and report the judge findings for human decision.
+   - **Verdict: FAIL** → increment `review_cycle`. If `review_cycle > 2`, **STOP** with `Status: ESCALATED` and include a diagnostic showing the failed criteria from each review cycle so the human can intervene.
 
-> **Note**: The review cycle counter is separate from the per-batch retry tracker. Per-batch retries handle validation failures (lint/tests); review cycles handle the evaluator-optimizer feedback loop after review-feature returns FAIL.
+> **Note**: The review cycle counter is separate from the per-slice retry tracker. Per-slice retries handle validation failures (lint/tests); review cycles handle the evaluator-optimizer feedback loop after review-feature returns FAIL.
 
 ## Step 3: Final summary
 
@@ -179,14 +191,14 @@ If Engram tools are unavailable, skip this step.
 
 ## Rules
 - You are the ORCHESTRATOR — never read source code, never edit code.
-- You may only read state files: `spec.md`, `plan.md`, `tasks.md`, `decisions.md`.
+- You may only read state files: `spec.md`, `quick-spec.md`, `plan.md`, `tasks.md`, `decisions.md`.
 - Do NOT skip phases — run them in order.
 - **Never ask for user confirmation** — run all phases and advance automatically.
 - Always validate sub-agent results using the Post-Phase Validation Protocol (section F of `sdd-phase-common.md`).
-- If implement-task returns `partial` or has remaining tasks, re-launch for the next batch.
-- Show progress between batches: "Batch done: 5/12 tasks (Phase 1 + 2). Launching next batch..."
+- If implement-task returns `partial` or has remaining tasks, re-launch for the next unlocked slice.
+- Show progress between slices: "Slice done: T003 (5/12 tasks). Launching next unlocked slice..."
 - If any phase returns `blocked`, STOP immediately and show the reason.
 - If validation exhausts retries (`ESCALATED`), show the diagnostic and STOP.
 - Include matched compact rules (from Step 1b) when launching each phase.
-- Per-batch retry budget is **2 attempts** — tracked across the entire pipeline run.
+- Per-slice retry budget is **2 attempts** — tracked across the entire pipeline run.
 - **Review cycle cap**: After `/review-feature` returns FAIL, the evaluator-optimizer loop (Step 2b) allows at most **2 fix→re-review cycles**. If the review still fails after 2 cycles, ESCALATE.

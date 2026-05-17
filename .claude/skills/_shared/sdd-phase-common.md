@@ -136,7 +136,7 @@ If an orchestrator launched you, it already did this — skip session init.
 
 ### Quick Reference
 
-1. **Phase start**: Call `mem_search` with query `sdd/{feature-id}` + broader domain keywords, `project: "{project}"`, to recover prior context and related knowledge.
+1. **Phase start**: Call `mem_search` with query `sdd/{feature-id}` + 2-4 broader domain keywords, `project: "{project}"`, to recover prior context and related knowledge.
 2. **During phase**: Call `mem_save` immediately when you discover a gotcha, the user makes a trade-off, or you learn something non-obvious. Don't wait until the end.
 3. **Phase end**: Save anything not yet saved before returning. You have the freshest context — don't rely on the orchestrator to save for you.
 
@@ -152,17 +152,21 @@ If you called `mem_session_start` (i.e., running standalone):
 - Gotchas and unexpected behaviors discovered
 - Cross-feature patterns useful for future work
 - User preferences specific to this project
+- Sparse lifecycle events that help recover from compaction (verdicts, blockers, unresolved human decisions)
 
 ### What NOT to save
 
 - Summaries of files created (that's in git)
 - Restating spec/plan content (that's in the files)
 - "Feature archived" notifications (that's in the archive folder)
+- Secrets, credentials, private URLs, PII, copied specs, or raw logs
 
 ### Rules
 - Engram complements file-based persistence (section C) — it does NOT replace spec.md, plan.md, etc.
+- Authority order is: current user input, repo state files, current codebase, then Engram. Memory can suggest a question or pattern, never override files or skip SDD gates.
 - Keep entries concise: 2-5 sentences. Exception: `/archive-feature` saves a longer snapshot (see archive skill).
 - Topic key patterns: `sdd/{feature-id}/{phase-name}` for feature-specific, `sdd/research/{topic}` for research, `project/{topic}` for cross-feature.
+- Before saving, ask: would this help someone starting a new feature in this project 3 months from now, is it still true after checking files, and is it safe to persist?
 - If Engram tools are unavailable, skip all memory calls and continue normally.
 
 ---
@@ -181,7 +185,7 @@ Context compaction may occur mid-session, erasing working memory. Follow these r
 
 ## I. Fast-Lane Resolution
 
-Fast-lane features (created via `/new-quick-feature` or `/new-fix`) use a single `quick-spec.md` artifact instead of separate `spec.md` + `plan.md` + `tasks.md`. Skills that read spec artifacts MUST resolve the lane in their pre-flight using this canonical pattern:
+Fast-lane features (created via `/sdd-new`, `/new-quick-feature`, or `/new-fix`) use a single `quick-spec.md` artifact instead of separate `spec.md` + `plan.md` + `tasks.md`. Skills that read spec artifacts MUST resolve the lane in their pre-flight using this canonical pattern:
 
 ```
 Resolve lane:
@@ -210,10 +214,22 @@ Resolve lane:
 - `/review-feature`
 - `/archive-feature`
 
-### Out of scope
+### Orchestrator support
 
-`/sdd-next` and `/sdd-auto` do NOT support fast-lane. The result envelope of `/new-quick-feature` and `/new-fix` includes a `Next` field guiding the user to the next phase command (manual invocation only).
+`/sdd-next` and `/sdd-auto` support fast-lane by detecting `quick-spec.md`, reading the `## Tasks` section, and skipping `/plan-feature`.
 
 ### Tasks section format
 
-The `## Tasks` section in `quick-spec.md` uses the SAME `- [ ]` / `- [x]` checkbox format as `tasks.md`, allowing skills to reuse existing iteration logic without parsing changes — only the file target changes.
+The `## Tasks` section in `quick-spec.md` uses the SAME vertical-slice checkbox format as `tasks.md`; only the file target changes.
+
+```markdown
+- [ ] **T001 [AFK] Title**: thin independently verifiable slice
+  - blocked_by: none
+  - verifies: AC1
+  - touches: api, ui, tests
+```
+
+- `[AFK]` means `/implement-task` may execute it.
+- `[HITL]` means human decision checkpoint; record the decision in `decisions.md`, then mark the task `[x]`.
+- `blocked_by` is `none` or comma-separated task IDs.
+- Downstream all-done gates still count only top-level `- [ ]` / `- [x]` task bullets.

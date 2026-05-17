@@ -1,0 +1,83 @@
+# Technical Plan — 014 Fast-lane visibility
+
+## Inputs
+- Spec: `specs/014-fast-lane-visibility/spec.md`
+- Clarifications: planner risks (description cap ~200; ASCII 80-col); AC-3 symlink verification.
+- Research inputs: inline discovery (no `discovery.md`; no high-impact findings).
+
+## Domain analysis
+| Domain | Complexity | Notes |
+|---|---|---|
+| docs / skill-metadata | SMALL | Single file `.claude/CLAUDE.md` + 3 SKILL.md frontmatters; no behavior change. |
+
+Strategy: **SMALL** — direct sequential execution, no checkpoints.
+
+## Current state
+- `.claude/CLAUDE.md` — 285 lines, regular file (`-rw-r--r--`, `readlink -f` unchanged → **NOT symlinked** in this project).
+- Pipeline ASCII diagram lives at lines 66–112; max width 133 cols (line 98). Project does not enforce strict 80-col wrap.
+- Skill routing table at lines 198–214 lists `/new-feature` (line 202) **above** fast-lane entries (203, 204).
+- `Fast-lane note` callout at line 216; further mentions at lines 91, 118, 285. Total: 7 fast-lane / quick-spec sites.
+- Skill descriptions today: `new-feature` 68 chars, `new-quick-feature` 90, `new-fix` 89.
+- Documented frontmatter cap: `≤1024 chars` (`_shared/agent-frontmatter.md` line 67); empirical project usage 51–97 chars.
+- No `.claude/skills/skill-registry.md` — no compact rules to inject.
+
+## Proposed design
+Three coordinated edits making the fast-lane the visually default lane.
+
+1. **New "Choosing a lane" decision rule in `.claude/CLAUDE.md`**, inserted **before** the existing `## SDD Commands` table, anchoring with the verbatim rule and tie-breaker required by AC-1/AC-2.
+2. **Reorder Skill routing table** so `/new-quick-feature` and `/new-fix` rows appear above `/new-feature`. Re-label `/new-feature` row to signal "use only when fast-lane criteria don't fit".
+3. **Refit the Phase Pipeline ASCII** to a vertical "branch from top" layout: a common `idea` head splits into a `fast-lane` branch and a `full-lane` branch, both first-class. Stays ≤120 cols (matches existing peak); avoids side-by-side blow-out (planner risk #2).
+4. **Rewrite `description:` of `new-feature`, `new-quick-feature`, `new-fix`** to encode the lane criteria (AC-5). Hard cap 200 chars; target 120–180.
+5. **Reconcile all 7 fast-lane mentions** (lines 91, 118, 203–204, 216, 285 plus diagram) so `grep -n -i 'fast-lane\|quick-spec' .claude/CLAUDE.md` reads as a coherent narrative (AC-4). Manual-only constraint preserved verbatim at line 216.
+
+### Verbatim text to land
+- Decision rule literal: `single-domain, no deps, ≤2 GWT → fast-lane`.
+- Tie-breaker literal: `when in doubt, start with /new-quick-feature; escalating mid-flow is cheap`.
+- `/new-feature` description: must include `use only when fast-lane criteria don't fit`.
+- Fast-lane skill descriptions: must include `use for small changes (single-domain, no deps, ≤2 GWT)`.
+
+## Touched areas
+- Files: `.claude/CLAUDE.md`; `.claude/skills/{new-feature,new-quick-feature,new-fix}/SKILL.md` (frontmatter only).
+- APIs/contracts: none.
+- DB/schema: none.
+- Jobs/workers: none.
+- UI surfaces: skill listing UI (rendered from `description:`).
+
+## Data flow
+None — text-only changes.
+
+## Migration / rollout
+- **Backfill**: not applicable.
+- **Compatibility**: zero behavior change; SDD pipeline detection logic untouched.
+- **Feature flags**: none.
+- **Rollback**: `git revert <commit-sha>`; granular fallback per spec § Rollback (revert 3 SKILL.md files independently from CLAUDE.md edits).
+
+## Symlink-target verification (AC-3)
+Pre-edit gate the implementer MUST execute on the implementing machine:
+```bash
+test -L .claude/CLAUDE.md && echo "SYMLINK" || echo "REGULAR"
+readlink -f .claude/CLAUDE.md
+```
+- If `REGULAR` (current state in this repo): edit `.claude/CLAUDE.md` in place.
+- If `SYMLINK`: edit the resolved target inside SDD_HOME, NOT the symlink path; otherwise next `bin/sdd update` byte-diff clobbers the change. Record state in `decisions.md`.
+
+## Observability
+- **Logs**: n/a.
+- **Metrics**: post-merge audit — count `quick-spec.md` vs `spec.md` files created in the 4 weeks following merge under `specs/` (and `specs/archive/`); compare to trailing 4-week ratio. Target ≥ 2:1 absolute, ≥ 2× trailing ratio.
+- **Alerts**: none.
+
+## Test strategy
+- **Unit**: n/a (no code).
+- **Integration / lint**:
+  - `grep -n 'single-domain, no deps, ≤2 GWT → fast-lane' .claude/CLAUDE.md` → exactly one hit, before line of `/new-feature` table row.
+  - `grep -n -i 'fast-lane\|quick-spec' .claude/CLAUDE.md` → coherent top-to-bottom reading.
+  - For each of the 3 SKILL.md: `awk '/^description:/{sub(/^description: */,""); print length; exit}'` → ≤200.
+  - Markdown render sanity check (any local preview) for the ASCII diagram width.
+- **Manual**: read CLAUDE.md top-to-bottom as a new team member; confirm AC-1 visual order.
+
+## Risks and mitigations
+- **R1 — Description rendering surprise (~200 char soft cap unverified)**: bound to ≤200 chars hard, target 120–180. Empirical existing 51–97. Low impact.
+- **R2 — ASCII diagram column blow-out**: vertical branch-from-top layout, ≤120 cols. Tasks include width check.
+- **R3 — Future symlinking of `CLAUDE.md`**: AC-3 verification gate added to implement task; abort + escalate if state changes.
+- **R4 — Success metric small-N noise**: spec acknowledges; metric is directional.
+- **R5 — Scattered consistency**: AC-4 coherence task scans all 7 known sites.

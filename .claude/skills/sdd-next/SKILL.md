@@ -41,21 +41,27 @@ Check which artifacts exist in `specs/<feature-id>/`:
 
 | Check | How |
 |-------|-----|
+| Has `quick-spec.md`? | File exists and is not empty/template |
 | Has `spec.md`? | Read file — verify it's not empty/template |
 | Has `plan.md`? | File exists |
 | Has `tasks.md`? | File exists |
-| All tasks checked? | Read `tasks.md`, count `- [ ]` vs `- [x]` |
+| All tasks checked? | Full-flow: read `tasks.md`; fast-lane: read `quick-spec.md` `## Tasks` section; count `- [ ]` vs `- [x]` |
 | Has **fresh** `.simplified` sentinel? | File exists AND `git-head:` line in the sentinel equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch) is treated as absent — it will be cleaned up by `/simplify-code`'s pre-flight. |
 
 Apply the decision table:
 
-| spec.md | plan.md + tasks.md | All tasks [x] | Fresh `.simplified`? | → Action |
-|:---:|:---:|:---:|:---:|---|
-| No | — | — | — | STOP: "Run `/sdd-new` first." |
-| Yes | No | — | — | Launch `/plan-feature` |
-| Yes | Yes | No | — | Launch `/implement-task` |
-| Yes | Yes | Yes | No | Launch `/simplify-code` |
-| Yes | Yes | Yes | Yes | Launch `/review-feature` |
+| Lane | Artifacts | All tasks [x]? | Fresh `.simplified`? | → Action |
+|---|---|:---:|:---:|---|
+| none | no `spec.md`, no `quick-spec.md` | — | — | STOP: "Run `/sdd-new` first." |
+| full | `spec.md`, missing `plan.md` or `tasks.md` | — | — | Launch `/plan-feature` |
+| full | `spec.md` + `plan.md` + `tasks.md` | No | — | Launch `/implement-task` |
+| full | `spec.md` + `plan.md` + `tasks.md` | Yes | No | Launch `/simplify-code` |
+| full | `spec.md` + `plan.md` + `tasks.md` | Yes | Yes | Launch `/review-feature` |
+| fast | `quick-spec.md` and no `plan.md` | No | — | Launch `/implement-task` |
+| fast | `quick-spec.md` and no `plan.md` | Yes | No | Launch `/simplify-code` |
+| fast | `quick-spec.md` and no `plan.md` | Yes | Yes | Launch `/review-feature` |
+
+If both `quick-spec.md` and `plan.md`/`tasks.md` exist, treat this as an invalid mixed lane and STOP with `Status: blocked`; ask the user to archive one lane or normalize the feature folder.
 
 ## Step 2b: Load skill registry
 
@@ -152,7 +158,20 @@ When the sub-agent returns, apply the **Post-Phase Validation Protocol** from `s
 If **all checks pass**, proceed to Step 5.
 
 If **any check fails**:
-- Re-launch the sub-agent with the original prompt **plus** error context (which step(s) failed, error output, retry attempt number).
+- If the failed phase is `implement-task`, pin the retry to the same slice:
+  - Extract the `Task attempted` field from the previous result envelope.
+  - Parse the first task ID in that field (`Tnnn`).
+  - If `Task attempted` is missing or no task ID can be parsed, STOP with `Status: ESCALATED`; do not risk selecting the next unlocked task.
+  - Re-launch `/implement-task` with the original prompt **plus**:
+    ```
+    RETRY VALIDATION FAILURE
+    FORCE_TASK_ID=Tnnn
+    Previous Task attempted: <verbatim Task attempted field>
+    Validation failure:
+    <which check(s) failed + concrete error output>
+    Retry attempt: <n>/2
+    ```
+- If the failed phase is not `implement-task`, re-launch the sub-agent with the original prompt **plus** error context (which step(s) failed, error output, retry attempt number).
 - **Max 2 retries** per phase invocation.
 - If 2 retries are exhausted without passing, **STOP** and report with `Status: ESCALATED`, including a diagnostic with the error output from each attempt.
 
@@ -162,8 +181,9 @@ After validation passes in Step 4, check if the phase that just ran was `/review
 
 1. **If the phase was NOT `/review-feature`** — skip this step, go to Step 6.
 2. **If the phase was `/review-feature`** — inspect the result envelope:
-   - **PASS or PASS WITH WARNINGS** → skip this step, go to Step 6.
-   - **FAIL** → enter the fix loop:
+   - **Verdict: PASS or PASS WITH WARNINGS** → skip this step, go to Step 6.
+   - **Verdict: FAIL** → enter the fix loop.
+   - **Verdict: BLOCKED-JUDGMENT-DAY-HIGH** or `Status: blocked` → STOP and report the judge findings for human decision.
 
 ### Fix loop (max 2 cycles)
 
@@ -182,8 +202,9 @@ Initialize `review_cycle = 1`.
 6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 3 pattern) to re-review the updated implementation.
 7. **Validate review result**: Apply Step 4 validation to the review result.
 8. **Check verdict**:
-   - **PASS or PASS WITH WARNINGS** → exit loop, go to Step 6.
-   - **FAIL** → increment `review_cycle`. If `review_cycle > 2`, **STOP** with `Status: ESCALATED` and include a diagnostic showing the failed criteria from each review cycle so the human can intervene.
+   - **Verdict: PASS or PASS WITH WARNINGS** → exit loop, go to Step 6.
+   - **Verdict: BLOCKED-JUDGMENT-DAY-HIGH** or `Status: blocked` → STOP and report the judge findings for human decision.
+   - **Verdict: FAIL** → increment `review_cycle`. If `review_cycle > 2`, **STOP** with `Status: ESCALATED` and include a diagnostic showing the failed criteria from each review cycle so the human can intervene.
 
 ## Step 6: Present result and advance
 
@@ -202,7 +223,7 @@ If Engram tools are unavailable, skip this step.
 
 ## Rules
 - You are the ORCHESTRATOR — never read source code, never edit code.
-- You may only read state files: `spec.md`, `plan.md`, `tasks.md`, `decisions.md`.
+- You may only read state files: `spec.md`, `quick-spec.md`, `plan.md`, `tasks.md`, `decisions.md`.
 - Never ask for user confirmation — launch phases and advance automatically.
 - Always validate sub-agent results using the Post-Phase Validation Protocol (section F of `sdd-phase-common.md`).
 - If a phase returns `blocked` or validation exhausts retries (`ESCALATED`), show the diagnostic and STOP.

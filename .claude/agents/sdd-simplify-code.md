@@ -16,13 +16,13 @@ Feature-id: `$ARGUMENTS`
 Before starting, **resolve lane** per `.claude/skills/_shared/sdd-phase-common.md` §I, then verify:
 - [ ] **FAST_LANE = false**: `specs/$ARGUMENTS/spec.md`, `plan.md`, and `tasks.md` exist; all tasks in `tasks.md` checked (`- [x]`)
 - [ ] **FAST_LANE = true**: `specs/$ARGUMENTS/quick-spec.md` exists; all `- [ ]` in its `## Tasks` section are `- [x]`
-- [ ] `specs/$ARGUMENTS/decisions.md` has no unresolved `SPEC-GAP-HIGH` entry
+- [ ] `specs/$ARGUMENTS/decisions.md` has no unresolved `JUDGMENT-DAY-HIGH` entry
 - [ ] `specs/$ARGUMENTS/.simplified` is absent OR is stale (its `git-head` field ≠ `git rev-parse HEAD`) — a stale sentinel is deleted and treated as absent
 - [ ] `sdd base-branch $ARGUMENTS` exits 0 (base branch is resolvable) AND `git merge-base "$(sdd base-branch $ARGUMENTS)" HEAD` resolves to a valid commit SHA
 
 **Stale sentinel handling**: if `.simplified` exists, read its `git-head` line. If it equals the current `git rev-parse HEAD`, the sentinel is fresh — abort pre-flight with `Status: blocked` (`Summary: already simplified at this HEAD`). If it differs, the sentinel is stale (e.g., user amended HEAD, rebased, or spoofed the file) — `rm specs/$ARGUMENTS/.simplified` and proceed.
 
-If any other check fails, stop and tell the user what's needed (typically `/implement-task` or resolving a `SPEC-GAP-HIGH`).
+If any other check fails, stop and tell the user what's needed (typically `/implement-task` or resolving a `JUDGMENT-DAY-HIGH`).
 
 ## Steps
 

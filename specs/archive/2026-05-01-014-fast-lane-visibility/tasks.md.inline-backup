@@ -1,0 +1,43 @@
+# Tasks — 014 Fast-lane visibility
+
+## Execution order
+
+### 1. Foundation
+
+- [ ] **T1 — Symlink-target verification (AC-3).** Run `test -L .claude/CLAUDE.md && echo SYMLINK || echo REGULAR` and `readlink -f .claude/CLAUDE.md`. Record outcome in `decisions.md` under `## Symlink check`. If `SYMLINK`, edit the resolved SDD_HOME path; if `REGULAR`, edit `.claude/CLAUDE.md` in place.
+
+- [ ] **T2 — Inventory fast-lane sites (AC-4 baseline).** `grep -n -i 'fast-lane\|quick-spec' .claude/CLAUDE.md`. Capture the 7 hits (lines 91, 118, 203, 204, 216, 285 + diagram 88–99) as a `decisions.md` checklist for T6.
+
+### 2. Core implementation
+
+- [ ] **T3 — Insert "Choosing a lane" decision rule (AC-1, AC-2).** Add a new `## Choosing a lane` section in `.claude/CLAUDE.md` placed **before** `### SDD Commands`. Must contain literally `single-domain, no deps, ≤2 GWT → fast-lane` AND `when in doubt, start with /new-quick-feature; escalating mid-flow is cheap`.
+
+- [ ] **T4 — Reorder Skill routing table (AC-1).** In `## Skill routing`, move `/new-quick-feature` and `/new-fix` rows **above** the `/new-feature` row. Update the `/new-feature` `Need` cell to "Full-spec feature (use when fast-lane criteria don't fit)" or equivalent.
+
+- [ ] **T5 — Refit Phase Pipeline ASCII (AC-1, planner risk #2).** In `### Phase Pipeline` (lines 66–112), reshape head: one `idea` source splits into two co-equal vertical branches — `fast-lane` (`/new-quick-feature` or `/new-fix` → quick-spec.md) and `full-lane` (`/new-feature` → spec.md) — both reconverging at `plan-feature`. Keep downstream lines. Width ≤120 cols.
+
+- [ ] **T6 — Reconcile fast-lane mentions (AC-4).** Walk the 7 T2 sites: line 216 manual-only callout preserved **verbatim**; line 118 callout re-pointed to "Choosing a lane"; diagram review-tier text (`fast-lane (quick-spec.md only)`) stays consistent. Re-run T2 grep and read top-to-bottom.
+
+- [ ] **T7 — Rewrite skill `description:` frontmatter (AC-5).** Edit the 3 SKILL.md files. Hard cap 200 chars (target 120–180). Required tokens:
+  - `new-feature` → "use only when fast-lane criteria don't fit".
+  - `new-quick-feature` → "use for small changes (single-domain, no deps, ≤2 GWT)" + "enhancement/refactor".
+  - `new-fix` → same fast-lane criteria phrase + "Kiro-style Current/Expected/Unchanged".
+  Verify: `awk '/^description:/{sub(/^description: */,""); print length; exit}' <file>` ≤ 200.
+
+### 3. Validation
+
+- [ ] **T8 — AC grep suite.** From repo root, confirm:
+  - `grep -nF 'single-domain, no deps, ≤2 GWT → fast-lane' .claude/CLAUDE.md` → ≥1 hit, BEFORE the `/new-feature` routing row.
+  - `grep -nF 'when in doubt, start with /new-quick-feature' .claude/CLAUDE.md` → ≥1 hit.
+  - `grep -n -i 'fast-lane\|quick-spec' .claude/CLAUDE.md` → coherent narrative.
+  - Each fast-lane SKILL.md description contains "single-domain, no deps, ≤2 GWT"; `new-feature` description contains "fast-lane criteria don't fit".
+
+- [ ] **T9 — Diagram width sanity.** `awk 'NR>=<start> && NR<=<end> {print length, NR}' .claude/CLAUDE.md | sort -rn | head -3` → top ≤120 cols.
+
+- [ ] **T10 — Manual read-through (AC-1).** Open `.claude/CLAUDE.md` from line 1; confirm "Choosing a lane" lands BEFORE first `/new-feature` mention in the routing table.
+
+- [ ] **T11 — Decisions log.** Append symlink outcome, final pipeline line range, final description char counts, deviations from spec verbatim phrases (justify or revert).
+
+## Notes
+- Out of scope: `README.md`, `skill-map.md`, `.claude/agents/sdd-*.md`, `/init-project`.
+- Success metric (≥ 2:1 quick-spec : spec, 4 weeks post-merge) is observed, not gated.

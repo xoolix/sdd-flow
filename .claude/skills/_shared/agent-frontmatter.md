@@ -1,19 +1,21 @@
 # Agent + skill router pattern — canonical shape
 
-Referencia para los 13 native sub-agents de `.claude/agents/sdd-*.md` y los 9 skill routers de `.claude/skills/<phase>/SKILL.md`. Patrón validado en T3 pilot (2026-04-23) y alineado con gentle-ai v1.23. Pattern partially walked back in feature 015 for orchestrator phases — see D-001/D-003.
+Referencia para los 10 native sub-agents de `.claude/agents/sdd-*.md` y los skill routers/comandos de `.claude/skills/<phase>/SKILL.md`. Patrón validado en T3 pilot (2026-04-23) y alineado con gentle-ai v1.23. Pattern partially walked back in feature 015 for orchestrator phases and in the Pocock cleanup for conversational intake phases.
 
-## Por qué dos archivos por fase
+## Por qué algunas fases tienen dos archivos
 
 La topología es **asimétrica** tras feature 015:
 
-- **Mayoría de fases** (research-spike, new-feature, new-quick-feature, new-fix, implement-task, simplify-code, archive-feature): el slash command → skill router (~10 líneas) → `Agent(subagent_type="sdd-<phase>")` → agent nativo corre aislado con su modelo. Así: `/archive-feature 008` → skill router → main Claude invoca el agent nativo.
+- **Leaf phases** (research-spike, implement-task, simplify-code, archive-feature): el slash command → skill router (~10 líneas) → `Agent(subagent_type="sdd-<phase>")` → agent nativo corre aislado con su modelo. Así: `/archive-feature 008` → skill router → main Claude invoca el agent nativo.
 
-- **Fases orquestadoras** (plan-feature, review-feature): el slash command → SKILL.md con la lógica completa de orquestación ejecutada **inline por main Claude** — no existe agent nativo para estas fases. Main Claude invoca los sub-agents internos directamente (sdd-explore-agent, sdd-reviewer-voter, etc.).
+- **Conversational intake** (sdd-new, new-feature, new-quick-feature, new-fix): el slash command → SKILL.md inline por main Claude. No existe agent nativo porque la fase necesita diálogo real con el usuario, una pregunta por turno.
 
-- **Skill** = router de ~10 líneas (fases leaf) **o** cuerpo completo de orquestación (fases orchestrator)
+- **Fases orquestadoras** (plan-feature, review-feature): el slash command → SKILL.md con la lógica completa de orquestación ejecutada **inline por main Claude** — no existe agent nativo para estas fases. Main Claude invoca los sub-agents internos directamente (sdd-explore-agent, sdd-reviewer, sdd-judge, etc.).
+
+- **Skill** = router de ~10 líneas (fases leaf) **o** cuerpo completo inline (intakes conversacionales y fases orchestrator)
 - **Agent** = executor con la lógica de la fase en su body + frontmatter declarando model/tools (solo para fases leaf e internos)
 
-**Rationale de la asimetría**: Claude Code force-strips `Agent` tool de sub-agents spawneados → agents orquestadores no pueden delegar a sus propios sub-agents. Solución: los orquestadores viven en SKILL.md y corren en main Claude (que conserva `Agent`). Referencia: feature 015 + D-001/D-003.
+**Rationale de la asimetría**: los intakes necesitan diálogo real con el usuario, así que viven inline. Claude Code force-strips `Agent` tool de sub-agents spawneados → agents orquestadores no pueden delegar a sus propios sub-agents, así que también viven inline. El trabajo pesado no conversacional sí corre en agents aislados.
 
 ## Agent shape
 
@@ -36,10 +38,10 @@ Feature-id: `$ARGUMENTS`
 ### Claves del agent
 
 - **NO incluir `skills: [<phase>]`**: si el skill ahora es un router, el preload cargaría "Launch agent sdd-X..." y provocaría recursión. La lógica vive en el body del agent directamente.
-- **`disallowedTools: [Agent]`** en los 13 native agents para impedir recursión. No hay excepciones — `sdd-plan-feature` y `sdd-review-feature` ya no existen como agents nativos (son SKILLs inline).
+- **`disallowedTools: [Agent]`** en los 10 native agents para impedir recursión. No hay excepciones — `sdd-new-feature`, `sdd-new-quick-feature`, `sdd-new-fix`, `sdd-plan-feature` y `sdd-review-feature` no existen como agents nativos (son SKILLs inline).
 - **`$ARGUMENTS`** sigue funcionando: el orquestador (o el router skill) pasa el feature-id en el `prompt` del Agent tool call, y el body del agent lo resuelve por literal string substitution.
 
-## Skill router shape
+## Leaf skill router shape
 
 ```markdown
 ---
@@ -63,6 +65,15 @@ If `.claude/agents/sdd-<phase>.md` is not present (agents directory not deployed
 - **Body ~10 líneas**: directiva en prosa + fallback. Main Claude lee esto y, siguiendo la instrucción, invoca el agent.
 - **No duplica lógica**: la lógica verdadera vive en `.claude/agents/sdd-<phase>.md`. El skill es únicamente el puente slash→agent.
 
+## Inline intake skill shape
+
+`sdd-new`, `new-feature`, `new-quick-feature` y `new-fix` NO usan router ni agent nativo. El `SKILL.md` contiene la lógica completa y debe incluir:
+
+- `Main Claude executes this skill body inline`
+- `Do NOT launch a sub-agent`
+- Preguntas de a una, esperando respuesta del usuario
+- Result envelope final
+
 ## Field reference (agent frontmatter)
 
 | Field | Obligatorio | Valores | Comentario |
@@ -70,7 +81,7 @@ If `.claude/agents/sdd-<phase>.md` is not present (agents directory not deployed
 | `name` | ✅ | kebab-case, único, prefix `sdd-` | Usado en `Agent(subagent_type="sdd-<name>")` |
 | `description` | ✅ | ≤1024 chars | Una línea describiendo el trigger de la fase |
 | `model` | ⭕ | `opus` \| `sonnet` \| `haiku` \| `inherit` | Default `inherit`. Ver mapping en plan 008 |
-| `disallowedTools` | ⭕ | ej. `[Agent]` | Presente en todos los 13 native agents sin excepción |
+| `disallowedTools` | ⭕ | ej. `[Agent]` | Presente en todos los 10 native agents sin excepción |
 | `mcpServers` | ⭕ | ej. `[engram]` | Default: hereda de `.claude/settings.json` |
 | `context` | ⭕ | `fork` | Solo para `sdd-research-spike` (aislamiento fuerte) |
 
@@ -78,9 +89,11 @@ If `.claude/agents/sdd-<phase>.md` is not present (agents directory not deployed
 
 ## Naming convention
 
-**7 public native agents** (con skill router que delega via `Agent(subagent_type=...)`): `sdd-<phase>` donde phase = research-spike, new-feature, new-quick-feature, new-fix, implement-task, simplify-code, archive-feature. (`plan-feature` y `review-feature` son SKILLs inline — no tienen agent nativo.)
+**4 public native agents** (con skill router que delega via `Agent(subagent_type=...)`): `sdd-<phase>` donde phase = research-spike, implement-task, simplify-code, archive-feature.
 
-**6 internal native agents** (no skill router, spawneados por main Claude ejecutando plan-feature/SKILL.md o review-feature/SKILL.md): `sdd-explore-agent`, `sdd-discovery-evaluator`, `sdd-designer`, `sdd-task-planner`, `sdd-reviewer-voter`, `sdd-adversarial-reviewer`.
+**4 conversational inline intakes** (sin agent nativo): `sdd-new`, `new-feature`, `new-quick-feature`, `new-fix`.
+
+**6 internal native agents** (no skill router, spawneados por main Claude ejecutando plan-feature/SKILL.md o review-feature/SKILL.md): `sdd-explore-agent`, `sdd-discovery-evaluator`, `sdd-designer`, `sdd-task-planner`, `sdd-reviewer`, `sdd-judge`.
 
 ## Invocación desde orquestadores
 

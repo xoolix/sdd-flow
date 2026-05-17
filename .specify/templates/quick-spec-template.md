@@ -44,10 +44,16 @@
 ---
 
 ## Tasks
-<!-- Change list as `- [ ]` checkboxes. Each item = one concrete change, independently verifiable.
+<!-- Vertical slice change list as `- [ ]` checkboxes.
+     Format:
+     - [ ] **T001 [AFK] Title**: demoable behavior
+       - blocked_by: none
+       - verifies: AC1
+       - touches: modules/files/domains
      `/implement-task` flips these to `- [x]` upon completion (writes back to THIS file, NOT to a separate tasks.md).
      WARNING: the `## Tasks` header is IMMUTABLE — it is parsed by 4 downstream skills
      (implement-task, simplify-code, review-feature, archive-feature). Do NOT rename or nest it. -->
-- [ ]
-- [ ]
-- [ ]
+- [ ] **T001 [AFK] <title>**: <thin independently verifiable slice>
+  - blocked_by: none
+  - verifies: AC1
+  - touches: <modules/files/domains>

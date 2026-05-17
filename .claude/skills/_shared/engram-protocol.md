@@ -6,6 +6,21 @@ This file defines how SDD phases interact with Engram persistent memory. All pha
 
 ---
 
+## Authority Model
+
+Engram is supporting context, not source of truth.
+
+Precedence order:
+
+1. Current user message and explicit decisions in this conversation.
+2. State files in the repo (`spec.md`, `quick-spec.md`, `plan.md`, `tasks.md`, `decisions.md`, ADRs).
+3. Current codebase.
+4. Engram memories.
+
+Memory can suggest a question, warning, or candidate pattern. It can never override a spec, skip an SDD gate, silently fill user answers, or authorize a behavior that is not in current repo files.
+
+---
+
 ## Project Name Convention
 
 All `mem_save` and `mem_search` calls MUST use the correct `project` parameter:
@@ -39,6 +54,24 @@ The orchestrator resolves the project name ONCE at session start and passes it t
 | `discovery` | Unexpected findings, gotchas, edge cases |
 | `learning` | Lessons learned, what worked or didn't |
 | `preference` | User preferences, constraints, or working style |
+| `event` | Sparse lifecycle marker with a verdict/status that helps recovery |
+
+---
+
+## Retrieval Policy
+
+Search memory at phase start, but keep it bounded:
+
+- Feature-specific search: `sdd/{feature-id}`.
+- Domain search: 2-4 concrete keywords from the spec/code domain.
+- Project search: only when looking for reusable patterns or quality history.
+
+Use retrieved context as hints:
+
+- Good: "A previous feature used middleware X here — should this one follow it?"
+- Bad: "Memory says use X, so I implemented X without checking current code/spec."
+
+If memory conflicts with files or current user input, trust files/user and optionally save a new `learning` explaining the superseded memory.
 
 ---
 
@@ -52,6 +85,7 @@ The orchestrator resolves the project name ONCE at session start and passes it t
 - **User preferences per project**: "User prefers integration tests over unit tests here"
 - **Why something was done a certain way**: The reasoning behind a choice, not the choice itself (the choice is in the code)
 - **Context that would help the next feature**: "The payments module is fragile, avoid touching it"
+- **Sparse lifecycle events**: phase verdicts, blockers, unresolved human decisions that help recover after compaction
 
 ### Don't save — things already captured elsewhere
 
@@ -59,10 +93,41 @@ The orchestrator resolves the project name ONCE at session start and passes it t
 - "Feature X was archived" (that's in the archive folder)
 - Restating what's in the spec or plan (that's in the files)
 - Generic observations without actionable insight
+- Raw command output unless the exact output explains a reusable gotcha
+- Temporary session-management details, prompt instructions, or "the user said skip questions"
+
+### Never save
+
+- Secrets, credentials, tokens, keys, connection strings, private URLs, or customer/user PII.
+- Full proprietary documents, large code snippets, or copied specs.
+- Sensitive production data or logs.
+- Anything that would be unsafe if reused in another repo.
 
 ### Quality check before saving
 
 Before calling `mem_save`, ask: **"Would this help someone starting a new feature in this project 3 months from now?"** If no, don't save.
+
+Also ask:
+
+- Is it still true after checking current files?
+- Is it specific enough to act on?
+- Is it safe to persist?
+
+If any answer is no, don't save.
+
+---
+
+## Save Granularity
+
+Prefer small facts over broad summaries.
+
+| Scope | Topic key | Content |
+|---|---|---|
+| Feature-local | `sdd/{feature-id}/{phase}` | Decisions, blockers, gotchas for this feature |
+| Cross-feature | `project/{topic}` | Reusable repo pattern, recurring quality issue, durable user preference |
+| Research | `sdd/research/{topic-kebab}` | Recommendation, rejected alternatives, constraints |
+
+Do not duplicate the same fact into multiple topic keys unless it has both feature-local and cross-feature value. If you do duplicate, make the cross-feature version shorter and more general.
 
 ---
 
@@ -71,7 +136,7 @@ Before calling `mem_save`, ask: **"Would this help someone starting a new featur
 At the START of every phase, before doing any work:
 
 1. Call `mem_search` with query `sdd/{feature-id}` and `project: "{project}"` to recover prior context for this feature.
-2. Call `mem_search` with broader keywords from the feature domain (e.g., "auth", "payments", "chat") to find relevant cross-feature knowledge.
+2. Call `mem_search` with 2-4 broader keywords from the feature domain (e.g., "auth", "payments", "chat") to find relevant cross-feature knowledge.
 3. If results exist, read them to understand decisions and discoveries from prior phases or related work.
 
 ---

@@ -1,13 +1,13 @@
 ---
 name: feature-spec
-description: "Reference doc for the Pocock-style adversarial interview methodology that produces clarify.md + spec.md (+ ADRs). The canonical executor is the /new-feature command — this file documents the workflow."
+description: "Reference doc for the grill-style technical interview methodology that produces clarify.md + spec.md (+ ADRs). The canonical executor is the /new-feature command — this file documents the workflow."
 disable-model-invocation: true
 ---
 
 # Purpose
-Convertir una idea o pedido en `clarify.md` (Q&A crudas) y `spec.md` (formal) a través de un interrogatorio profundo que cubre todas las ramas del árbol de decisión.
+Convertir una idea o pedido en `clarify.md` (Q&A crudas) y `spec.md` (formal) a través de una entrevista técnica: una pregunta por turno, con recomendación concreta y anclada en código real.
 
-> **Note**: este SKILL.md es la referencia metodológica. El ejecutor real es `/new-feature` (delega a `.claude/agents/sdd-new-feature.md`).
+> **Note**: este SKILL.md es la referencia metodológica. El ejecutor real es `/new-feature`, que corre inline porque necesita diálogo multi-turn con el usuario.
 
 # Use when
 - Empieza una feature nueva.
@@ -21,57 +21,34 @@ Convertir una idea o pedido en `clarify.md` (Q&A crudas) y `spec.md` (formal) a 
 
 # Workflow
 1. Identificar feature ID. Crear folder `specs/<feature-id>/` (con `create-feature.sh` si está disponible) e inicializar `clarify.md` y `decisions.md`.
-2. Conducir la entrevista en bloques pequeños (1-3 preguntas relacionadas por turno). Esperar respuesta antes de seguir. **No** mandar el cuestionario entero de una.
-3. Cubrir las siguientes categorías **en orden**, sin avanzar a la próxima sin cerrar la actual:
+2. Hacer un mini-scan silencioso del codebase: archivos, símbolos, rutas, tests o contratos que puedan responder preguntas sin molestar al usuario.
+3. Conducir la entrevista en 5 bloques, **una pregunta por turno**. Cada pregunta incluye `Recomendación: <opción concreta + razón>`. Si el código responde la duda, no preguntarla.
 
-   **Problema**
-   - ¿Qué problema concreto resuelve? ¿Síntoma o causa raíz?
-   - ¿Qué pasa hoy si no hacemos esto? ¿Qué cambia mañana cuando esté?
-   - ¿Por qué ahora?
+   **Comportamiento**
+   - Qué cambia para el usuario/sistema y qué variantes existen.
 
-   **Usuarios y stakeholders**
-   - ¿Quién lo usa? ¿En qué momento del flujo?
-   - ¿Frecuencia de uso? ¿Volumen?
-   - ¿Hay roles distintos con expectativas distintas?
+   **Scope técnico**
+   - Archivos, módulos, tipos, rutas o servicios tocados. Qué se reutiliza vs qué se crea.
 
-   **Scope**
-   - ¿Qué está adentro? Para cada cosa, preguntar por qué.
-   - ¿Qué está afuera? Para cada cosa, preguntar por qué afuera y no adentro.
-   - ¿Hay algo que el usuario podría esperar que NO vamos a hacer? Listarlo explícito.
+   **Contrato / datos**
+   - API/evento/schema/request/response. Compatibilidad y shape esperado.
 
-   **Supuestos**
-   - ¿Qué se asume sobre datos, performance, escala, infra, costos?
-   - Si una respuesta es vaga ("rápido", "muchos"), repreguntar para obtener números o referencias concretas.
-   - Listar supuestos explícito.
+   **Riesgos técnicos**
+   - Upstream, estados intermedios, edge cases, degradación o falla dura.
 
-   **Edge cases y modos de falla**
-   - ¿Qué pasa con inputs vacíos, malformados, extremos?
-   - ¿Qué pasa si el sistema upstream falla? ¿Si la base está caída? ¿Si el modelo se cuelga?
-   - ¿Cómo se detecta cuando algo sale mal?
-   - ¿Hay degradación elegante o falla dura?
+   **Acceptance + rollback**
+   - Cómo se verifica, qué test prueba el cambio, cómo se revierte o desactiva.
 
-   **Alineación de dominio**
-   - ¿Cómo se relaciona con conceptos existentes del codebase?
-   - ¿Hay conflictos de naming con código actual?
-   - ¿Conviene crear un término nuevo o reusar uno existente?
-
-   **Decisiones duras**
-   - Identificar 2-5 decisiones técnicas con tradeoffs reales (no triviales).
-   - Para cada una: pedir la elección, el porqué, y la alternativa rechazada.
-   - Para cada decisión arquitectural persistente, ofrecer crear un ADR en `docs/adr/` en el momento. Si el usuario confirma, crear el archivo en el mismo paso.
-
-   **Acceptance criteria**
-   - ¿Cómo sabemos que está listo? Criterios verificables.
-   - ¿Cómo se testea cada criterio?
-
-4. Mientras conversa, ir actualizando `clarify.md` incrementalmente con las respuestas **literales** del usuario. No parafrasear las decisiones del usuario; pegar lo que dijo.
-5. Cerradas las 8 categorías, el agente **redacta solo** los bloques que requieren formato (acceptance en Given/When/Then, rollback plan, success metric medible) y los presenta al usuario para validación. El usuario confirma o corrige; el agente no avanza hasta que cada bloque esté validado.
+4. Mientras conversa, ir actualizando `clarify.md` incrementalmente con las respuestas **literales** del usuario y la recomendación propuesta. No parafrasear las decisiones del usuario; pegar lo que dijo.
+5. Cerrados los 5 bloques, el agente **redacta solo** los bloques que requieren formato (acceptance en Given/When/Then, rollback plan, success metric medible) y los presenta al usuario para validación. El usuario confirma o corrige; el agente no avanza hasta que cada bloque esté validado.
 6. Formalizar el contenido de clarify.md + bloques validados en `spec.md` siguiendo `.specify/templates/spec-template.md`. spec.md es **transformación**, no contenido nuevo.
 7. Cerrar listando: open questions que quedaron, ADRs creados, y recomendación sobre si abrir `/research-spike` cuando hay incertidumbre técnica que no se resolvió en la entrevista.
 
 # Rules
 - NO asumir respuestas. Si una respuesta es vaga, repreguntar con un caso concreto.
-- NO avanzar a la próxima categoría sin cerrar la actual.
+- Preguntar de a una. No mandar baterías de preguntas.
+- Toda pregunta lleva recomendación concreta.
+- NO avanzar al próximo bloque sin cerrar el actual.
 - NO inventar contenido en spec.md que no esté en clarify.md o en los bloques validados.
 - Pegar respuestas literales del usuario en clarify.md, no parafrasear sus decisiones.
 - GWT, rollback y success metric los redacta el agente y los valida el usuario — no se le pide al usuario que los escriba en formato estructurado.

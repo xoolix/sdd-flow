@@ -1,0 +1,4 @@
+git-head: 3cecae1398c28693bd43becf1d2e377ca9d1bcbf
+simplified: 2026-04-21T00:01:00Z
+files:
+- .claude/skills/simplify-code/SKILL.md (scope-rule refinement, not a KISS/DRY simplification)

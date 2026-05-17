@@ -9,8 +9,8 @@ If feasibility, scalability, security, model choice, or user experience is uncle
 ## 3. Plans must be executable
 Technical plans should mention touched modules, contracts, data model impact, migration impact, observability, and test strategy.
 
-## 4. Tasks must be atomic
-Each task should be small enough to implement and validate in one focused iteration.
+## 4. Tasks are vertical slices
+Each task should be a small AFK/HITL vertical slice with explicit dependencies, acceptance mapping, and enough scope to validate one behavior end-to-end when applicable.
 
 ## 5. Decisions must remain traceable
 When implementation changes direction, update `decisions.md` or publish an ADR.

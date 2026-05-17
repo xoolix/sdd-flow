@@ -17,4 +17,4 @@
 
 | Role | Skill / Context | Model |
 |------|----------------|-------|
-| Review agents | internal worker for review-feature phase (Agent-A/B/C) | haiku |
+| Review agent | internal worker for review-feature phase (sdd-reviewer) | haiku |

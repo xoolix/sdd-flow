@@ -42,30 +42,51 @@ sdd update   # Re-sincroniza skills, templates, memory, CLAUDE.md y agents; prun
 
 ## Workflow
 
+El camino feliz es deliberadamente corto:
+
+```
+/sdd-new "idea"   # decide fix/quick/full y crea el artefacto correcto
+/sdd-next NNN     # corre la proxima fase
+/sdd-next NNN     # repetir hasta archive
+```
+
+El resto de los comandos existe para control fino, debugging o power users.
+
 Un feature en SDD tiene **tres dimensiones**: por dónde entrás, qué artefacto escribís, y cómo avanzás las fases.
 
-### Entry points (3)
+### Entry point principal
 
 | Entry | Cuándo | Artefacto inicial |
 |---|---|---|
-| `/new-feature "idea"` | Feature grande, multi-domain, varias GWT | `clarify.md` + `spec.md` (+ después `plan.md` + `tasks.md`; ADRs en `docs/adr/` si aplica) |
-| `/new-quick-feature "idea"` | Enhancement/refactor chico: single-domain, sin deps nuevas, ≤2 GWT | `quick-spec.md` (combinado spec+plan+tasks) |
-| `/new-fix "bug"` | Bugfix chico con formato Kiro Current/Expected/Unchanged | `quick-spec.md` (variante fix) |
+| `/sdd-new "idea"` | Siempre por default. Decide fix vs quick vs full. | `quick-spec.md` para fix/quick, o `clarify.md` + `spec.md` para full |
 
-`/new-feature` corre una **entrevista adversarial estilo Pocock** en 8 categorías (problema → usuarios → scope → supuestos → edge cases → dominio → decisiones duras → acceptance), pegando las respuestas literales en `clarify.md` y formalizando en `spec.md`. Los bloques estructurados (Given/When/Then, rollback, success metric) los redacta el agente y el usuario los valida.
+### Lanes internas
 
-Los dos fast-lane corren un **entry gate** de 3 preguntas antes del intake; si no califica, te redirige a `/new-feature`.
+| Lane | Cuándo | Artefacto inicial |
+|---|---|---|
+| `fix` | Bug chico con Current/Expected/Unchanged claro | `quick-spec.md` (variante fix) |
+| `quick` | Enhancement/refactor chico: single-domain, sin deps nuevas, ≤2 GWT | `quick-spec.md` (combinado spec+plan+tasks) |
+| `full` | Feature grande, multi-domain, deps nuevas, alta incertidumbre, varias GWT | `clarify.md` + `spec.md` (+ después `plan.md` + `tasks.md`; ADRs en `docs/adr/` si aplica) |
+
+La lane `full` corre una **entrevista técnica estilo grill-me**: una pregunta por turno, cada pregunta con recomendación concreta, y anclada en código real cuando el codebase puede responder. Produce `clarify.md` con respuestas literales y formaliza en `spec.md`. Los bloques estructurados (Given/When/Then, rollback, success metric) los redacta el agente y el usuario los valida.
+
+`/sdd-new` usa una **fast-lane confidence gate**: bug existente → candidato `fix`; cambio chico → candidato `quick`; pero solo queda fast-lane si es single-domain, sin deps, ≤2 GWT y sin risk trigger. Schema/data migration, auth/permissions, billing/payments, public API/integration contracts, background jobs, concurrency, security/privacy, perf-critical paths, rollback-hard behavior o scope incierto → `full`. Si una fast-lane no califica, escala a full sin pedirte correr otro comando.
+
+En full-flow, `new-feature` puede marcar `PROTOTYPE-REQUIRED` cuando hay una pregunta empírica barata de UI/state/business logic. En ese caso el `Next` pasa a ser `/prototype "NNN-feature: pregunta"` y `/plan-feature` bloquea hasta que `decisions.md` tenga `PROTOTYPE-RESULT` o `PROTOTYPE-DISMISSED`.
 
 ### Avanzar las fases: automático vs manual
 
-Después del entry hay 5 fases: `plan-feature` → `implement-task` (loop) → `simplify-code` → `review-feature` → `archive-feature`. Podés correrlas de dos formas:
+Después del entry, full-flow pasa por `plan-feature` → `implement-task` (loop) → `simplify-code` → `review-feature` → `archive-feature`. Fast-lane saltea `plan-feature` porque `quick-spec.md` ya incluye plan + tasks. Podés avanzar de dos formas:
 
-**Automático** (solo full-flow):
+**Automático**:
 ```
 /sdd-next         ← detecta en qué fase estás y lanza la próxima
 /sdd-auto               ← fast-forward, encadena todas las fases restantes
 ```
-El orchestrator maneja retries (2 por fase), validaciones post-fase, y pausa solo en checkpoints reales (ambigüedades en spec, discovery findings, SPEC-GAP-HIGH del adversarial, ESCALATED).
+El orchestrator maneja retries (2 por fase), validaciones post-fase, y pausa solo en checkpoints reales (ambigüedades en spec, discovery findings, JUDGMENT-DAY-HIGH del judge, ESCALATED).
+Si se desbloquea una task `[HITL]`, corrés `/sdd-hitl NNN T003 "decision"` para registrar la decisión y destrabar el próximo `/sdd-next`.
+
+El judge no bloquea por gustos o checklist genérico: `JUDGMENT-DAY-HIGH` requiere un finding high que sea scoped, plausible y actionable. Medium/low se registra como warning y el flujo puede seguir.
 
 **Manual** (full-flow o fast-lane):
 ```
@@ -75,7 +96,9 @@ El orchestrator maneja retries (2 por fase), validaciones post-fase, y pausa sol
 /review-feature NNN-name
 /archive-feature NNN-name
 ```
-Cada envelope de cada fase incluye un campo `Next` que te dice qué invocar. `/sdd-next` y `/sdd-auto` **NO soportan fast-lane** — si tu feature tiene `quick-spec.md`, solo podés avanzar manual.
+Cada envelope de cada fase incluye un campo `Next` que te dice qué invocar. `/sdd-next` y `/sdd-auto` soportan full-flow y fast-lane; en fast-lane simplemente saltean `/plan-feature` porque `quick-spec.md` ya contiene plan + tasks.
+
+Las tareas son **vertical slices** estilo tracer bullet, no tareas horizontales por capa. Cada tarea tiene ID estable, tipo `[AFK]` o `[HITL]`, dependencias `blocked_by`, acceptance `verifies`, y `touches`. `/implement-task` ejecuta una sola slice AFK desbloqueada por invocación; `/sdd-next` y `/sdd-auto` relanzan la siguiente slice con contexto limpio. Las `[HITL]` se resuelven con `/sdd-hitl`, que escribe `decisions.md` y marca la task.
 
 ### Herramienta transversal: research-spike
 
@@ -87,13 +110,11 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
 ### Resumen visual
 
 ```
-                                       ┌─ /sdd-next  (auto, solo full-flow)
-/new-feature ──clarify.md + spec.md ──┤
-                                       └─ /plan-feature → /implement-task → /simplify-code → /review-feature → /archive-feature  (manual)
-
-/new-quick-feature ┐
-                   ├── quick-spec.md ── /implement-task → /simplify-code → /review-feature → /archive-feature  (solo manual)
-/new-fix ──────────┘
+/sdd-new ─┬─ fix/quick ──quick-spec.md──────────────┐
+          │                                          ├─ /sdd-next → /implement-task → /simplify-code → /review-feature → /archive-feature
+          └─ full ──────clarify.md + spec.md────────┘
+                              ├─ optional /prototype if PROTOTYPE-REQUIRED
+                              └─ /sdd-next → /plan-feature → /implement-task → /simplify-code → /review-feature → /archive-feature
 
 /research-spike  (ad-hoc, transversal)
 ```
@@ -103,30 +124,36 @@ Standalone, no pertenece a ninguna feature. Corré esto cuando hay incertidumbre
 | Skill | Qué hace |
 |---|---|
 | `/init-project` | Escanea el codebase, genera architecture-map y conventions |
-| `/sdd-new "idea"` | Entry point full-flow (delega a `/new-feature`) |
+| `/sdd-new "idea"` | Entry point universal: decide fix/quick/full y corre el intake correcto |
 | `/sdd-next [NNN]` | Detecta la fase actual y corre la próxima |
 | `/sdd-auto [NNN]` | Fast-forward: encadena todas las fases restantes |
-| `/new-feature "idea"` | Adversarial interview Pocock-style (8 categorías) → `clarify.md` + `spec.md` (+ ADRs si aplica) |
-| `/new-quick-feature "idea"` | Fast-lane: enhancement/refactor → quick-spec.md |
-| `/new-fix "bug"` | Fast-lane: bugfix (C/E/U) → quick-spec.md |
+| `/sdd-hitl [NNN] [Tnnn] ["decision"]` | Lista o resuelve checkpoints humanos `[HITL]` |
+| `/new-feature "idea"` | Control explícito: full-spec grill-style → `clarify.md` + `spec.md` |
+| `/new-quick-feature "idea"` | Control explícito: fast-lane enhancement/refactor → quick-spec.md |
+| `/new-fix "bug"` | Control explícito: fast-lane bugfix (C/E/U) → quick-spec.md |
 | `/plan-feature NNN-name` | spec.md → plan.md + tasks.md (con discovery checkpoint) |
 | `/implement-task NNN-name` | Ejecuta la próxima tarea con test-first gate + self-review pre-cierre + validación con output real; acepta Review-Feedback para fix cycles |
 | `/simplify-code NNN-name` | Aplica KISS/DRY/YAGNI al diff; revierte si rompe tests |
 | `/research-spike "topic"` | Investiga incertidumbre técnica en paralelo |
-| `/review-feature NNN-name` | 3-agent voting + adversarial spec review |
+| `/review-feature NNN-name` | Reviewer + judge adversarial review |
 | `/archive-feature NNN-name` | Merge deltas al spec + mueve a `specs/archive/` |
 | `/build-registry` | Compila skills de proyecto en compact rules |
+| `/tdd` | Red-green-refactor vertical por comportamiento y public interfaces |
+| `/grill-me` | Entrevista de diseño/plan: una pregunta por vez con recomendación |
+| `/prototype` | Prototipo throwaway para validar UI, state machine o modelo; si es feature-bound escribe `PROTOTYPE-RESULT` en `decisions.md` |
 
 ### Cuándo usar cada combinación
 
 | Situación | Entry | Modo |
 |---|---|---|
 | No estás seguro si una lib/patrón sirve | `/research-spike` | — (standalone) |
-| Feature grande, querés que Claude maneje todo | `/new-feature` | Automático (`/sdd-next` o `/sdd-auto`) |
-| Feature grande, querés checkpoints entre fases | `/new-feature` | Manual (invocar cada fase) |
-| Cambio chico single-domain, sin deps nuevas, ≤2 GWT | `/new-quick-feature` | Manual (único modo) |
-| Bug chico con Current/Expected/Unchanged claros | `/new-fix` | Manual (único modo) |
-| Cambio chico pero tocás 2+ dominios o agregás dep | `/new-feature` | El entry gate del fast-lane te redirige automáticamente |
+| No sabés qué lane corresponde | `/sdd-new` | Automático (`/sdd-next` o `/sdd-auto`) |
+| Feature grande, querés checkpoints entre fases | `/sdd-new` | Manual (invocar cada fase) |
+| Se desbloqueó una task `[HITL]` | `/sdd-hitl NNN Tnnn "decision"` | Desbloqueo puntual, después `/sdd-next` |
+| UI/state/business logic incierto antes de planear | `/prototype "NNN-feature: pregunta"` | Standalone o prerequisito marcado por `new-feature` |
+| Querés forzar full-spec | `/new-feature` | Automático o manual |
+| Querés forzar fast-lane enhancement/refactor | `/new-quick-feature` | Automático o manual |
+| Querés forzar fast-lane bugfix | `/new-fix` | Automático o manual |
 
 ## Principios
 
@@ -135,7 +162,7 @@ La constitución vive en `.specify/memory/constitution.md` (8 principios). Los m
 1. **Specs drive changes** — todo cambio material arranca de una spec o research recommendation.
 2. **Research before architecture when uncertainty is high** — abrí `/research-spike` antes de comprometer arquitectura.
 3. **Plans must be executable** — el plan menciona módulos, contratos, data, migración, observabilidad y estrategia de testing.
-4. **Tasks must be atomic** — cada task se implementa y valida en una iteración.
+4. **Tasks are vertical slices** — cada task debe ser AFK/HITL, tener dependencias explícitas y validar un comportamiento end-to-end cuando aplica.
 5. **Decisions must remain traceable** — divergencias van a `decisions.md` o ADR.
 6. **Done means verified** — sin acceptance checkeado y validación registrada, no está hecho.
 7. **Test-first cuando aplica** — si el cambio tiene comportamiento testeable, el test va antes que el código (`/implement-task` lo enforce con un test-first gate).
@@ -154,22 +181,26 @@ La constitución vive en `.specify/memory/constitution.md` (8 principios). Los m
   skills/                      # Skills de Claude Code (routers de slash commands)
     _shared/                   # Protocolo común + lane resolution (§I)
     init-project/              # Inicialización automática
-    sdd-new/                   # Entry point full-flow
+    sdd-new/                   # Entry point universal (fix/quick/full)
     sdd-next/                  # Orchestrator: detecta y corre próxima fase
     sdd-auto/                  # Orchestrator: fast-forward
-    new-feature/               # Full-flow: adversarial interview Pocock
+    sdd-hitl/                  # Resolver checkpoints humanos [HITL]
+    new-feature/               # Full-flow: grill-style technical interview
     new-quick-feature/         # Fast-lane: enhancement/refactor
     new-fix/                   # Fast-lane: bugfix (C/E/U)
     plan-feature/              # Spec → plan + tasks
     implement-task/            # Ejecutar tarea (test-first + self-review)
     simplify-code/             # KISS/DRY/YAGNI post-implement
     research-spike/            # Investigar incertidumbre
-    review-feature/            # 3-agent voting + adversarial
+    review-feature/            # Reviewer + judge adversarial review
     archive-feature/           # Cerrar y archivar feature
     architecture-map/          # Mapa de arquitectura (auto-generado)
     build-registry/            # Compila skills de proyecto en compact rules
     feature-spec/              # Doc-mirror del flow Pocock (no invocable; ref para humanos)
     diagnose-bug/              # Skill discoverable: el modelo la invoca al toparse con bugs duros
+    tdd/                       # Red-green-refactor vertical por comportamiento
+    grill-me/                  # Entrevista agresiva de planes/disenos
+    prototype/                 # Prototipos throwaway para decidir rapido
 .specify/
   memory/
     constitution.md            # 8 principios del repo
@@ -191,19 +222,35 @@ docs/architecture/             # Documentación de arquitectura
 
 ## Uso de agentes
 
-Desde la feature 008, SDD usa **native sub-agents** de Claude Code. Cada fase (9 públicas + 6 internas = 15 archivos) vive en `.claude/agents/sdd-*.md` con frontmatter que declara `model`, `disallowedTools`, `context`, y `mcpServers`. Los skills en `.claude/skills/*/SKILL.md` son routers finos (~10 líneas) que delegan al native agent cuando el user invoca `/plan-feature`, `/implement-task`, etc.
+El patrón correcto es **orquestador inline + sub-agents leaf**.
 
-**Modelo por fase**: no hay tabla hardcoded — cada `.claude/agents/sdd-<phase>.md` declara su `model:` en frontmatter (fuente única de verdad). Para cambiar el modelo de una fase, editá solo ese archivo.
+SDD usa native sub-agents de Claude Code solo para fases leaf no conversacionales. Hoy hay 10 agents:
 
-**Contexto aislado**: los agents corren en context window separado del padre, por lo que las fases no se contaminan entre sí. El user puede invocar directamente con `/phase <id>` (router delega al agent) o con `@agent-sdd-<phase> <id>` (mention directo).
+- 4 públicos: `research-spike`, `implement-task`, `simplify-code`, `archive-feature`.
+- 6 internos: `explore-agent`, `discovery-evaluator`, `designer`, `task-planner`, `reviewer`, `judge`.
 
-**Orchestrators** (`/sdd-next` para paso a paso, `/sdd-auto` para auto-chain): lanzan cada fase vía Agent tool nativo apuntando al nombre del agent (`subagent_type: "sdd-<phase>"`). Fallback inline si el runtime no reconoce el agent (ej. instalación desactualizada).
+`sdd-new`, `new-feature`, `new-quick-feature`, `new-fix`, `plan-feature` y `review-feature` corren inline en el `SKILL.md`: los intakes necesitan diálogo multi-turn con el usuario, `sdd-new` decide lane, y `plan-feature`/`review-feature` necesitan lanzar sub-agents. Claude Code quita `Agent` a sub-agents spawneados, por eso esos orquestadores no pueden ser agents nativos.
+
+**Modelo por fase**: los agents leaf declaran `model:` en `.claude/agents/sdd-<phase>.md`. Las fases inline (`sdd-new`, intakes, `plan-feature`, `review-feature`) corren en el contexto principal y el model routing vive en `.claude/CLAUDE.md` / `.claude/rules/model-overrides.md`.
+
+**Contexto aislado**: las fases leaf corren en context window separado del padre, por lo que no contaminan la conversación principal. Las fases inline hacen conversación/coordinación; cuando hay trabajo pesado, lanzan workers y reciben solo envelopes.
+
+**Orchestrators** (`/sdd-next` para paso a paso, `/sdd-auto` para auto-chain): detectan si la fase tiene `.claude/agents/sdd-<phase>.md`. Si existe, lanzan el agent leaf. Si no existe, ejecutan el `SKILL.md` inline.
+
+## Engram
+
+Engram se usa como memoria auxiliar, no como source of truth. La prioridad es: mensaje actual del usuario → state files del repo → código actual → memoria.
+
+- Se consulta al inicio de cada fase con `sdd/{feature-id}` y 2-4 keywords del dominio.
+- Sirve para mejores preguntas, gotchas y patrones reutilizables; no puede saltar gates, rellenar `clarify.md` ni contradecir la spec.
+- Se guarda solo conocimiento durable: tradeoffs, decisiones humanas, gotchas, patrones cross-feature, blockers y verdicts útiles para recuperación.
+- No se guardan secretos, PII, URLs privadas, specs copiadas, logs crudos, listas de archivos ni detalles de manejo de sesión.
 
 ## Adopción progresiva
 
-1. **Día 1**: `sdd init` + `/init-project`. Ya podés usar `/new-feature` y `/research-spike`. `.claude/CLAUDE.md` queda como symlink a SDD_HOME — los updates propagan vía `git pull` sin acción tuya.
+1. **Día 1**: `sdd init` + `/init-project`. Ya podés usar `/sdd-new` y `/research-spike`. `.claude/CLAUDE.md` queda como symlink a SDD_HOME — los updates propagan vía `git pull` sin acción tuya.
 2. **Proyecto pre-symlink**: si ya tenías SDD instalado antes de esta migración, `sdd update` convierte `.claude/CLAUDE.md` de copy a symlink (con backup a `.claude/CLAUDE.md.backup`). Si editaste el CLAUDE.md con overrides custom, muévelos a `.claude/rules/model-overrides.md` (auto-cargado por Claude Code). Ambos archivos se agregan automáticamente a `.gitignore` — los symlinks absolutos no portan entre máquinas.
 3. **Con código**: Revisar y ajustar los archivos en `.claude/rules/` a medida que el proyecto define convenciones.
-4. **Primer cambio chico**: Probá el fast-lane con `/new-fix "<bug>"` o `/new-quick-feature "<mejora>"`. El entry gate te va a redirigir a `/new-feature` si el cambio no califica.
+4. **Primer cambio chico**: Probá `/sdd-new "<bug o mejora>"`. El entry gate decide fix/quick/full y escala si no califica.
 5. **Con arquitectura**: Correr `/init-project` de nuevo si la arquitectura cambió significativamente.
 6. **Con skills de stack** (React, Python, etc.): Instalar en `.claude/skills/`, correr `/build-registry` para compilar compact rules que se inyectan automáticamente en sub-agents.

@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Programar en 2026: The Human in the Loop</title>
+
+<!-- Fonts: Cormorant (elegant serif display) + IBM Plex Sans (clean body) -->
+<link href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,400;0,600;0,700;1,400;1,600&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+/* ===========================================
+   CSS CUSTOM PROPERTIES (THEME)
+   Dark Botanical — Green Accent (#6de144)
+   =========================================== */
+:root {
+    /* Colors */
+    --bg-primary: #0f0f0f;
+    --bg-card: #181818;
+    --bg-card-alt: #1e1e1e;
+    --text-primary: #e8e4df;
+    --text-secondary: #9a9590;
+    --text-muted: rgba(232, 228, 223, 0.25);
+    --accent: #6de144;
+    --accent-dim: rgba(109, 225, 68, 0.15);
+    --accent-glow: rgba(109, 225, 68, 0.08);
+    --accent-soft: #8beb6a;
+    --accent-dark: #4a9e2e;
+    --divider: rgba(232, 228, 223, 0.08);
+
+    /* Typography — MUST use clamp() */
+    --font-display: 'Cormorant', serif;
+    --font-body: 'IBM Plex Sans', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --title-size: clamp(1.8rem, 5vw, 4rem);
+    --h2-size: clamp(1.3rem, 3.5vw, 2.5rem);
+    --h3-size: clamp(1rem, 2.2vw, 1.5rem);
+    --body-size: clamp(0.7rem, 1.3vw, 1rem);
+    --small-size: clamp(0.6rem, 0.9vw, 0.8rem);
+    --mono-size: clamp(0.6rem, 0.85vw, 0.75rem);
+
+    /* Spacing */
+    --slide-padding: clamp(1.5rem, 5vw, 5rem);
+    --content-gap: clamp(0.75rem, 2vw, 2rem);
+    --element-gap: clamp(0.3rem, 1vw, 0.75rem);
+
+    /* Animation */
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --duration-normal: 0.7s;
+}
+
+/* ===========================================
+   BASE RESET
+   =========================================== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ===========================================
+   VIEWPORT FITTING: MANDATORY BASE STYLES
+   =========================================== */
+html, body {
+    height: 100%;
+    overflow-x: hidden;
+}
+html {
+    scroll-snap-type: y mandatory;
+    scroll-behavior: smooth;
+}
+body {
+    background: var(--bg-primary);
+    font-family: var(--font-body);
+    color: var(--text-primary);
+}
+
+.slide {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    scroll-snap-align: start;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.slide-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    max-height: 100%;
+    overflow: hidden;
+    padding: var(--slide-padding);
+}
+
+.card, .container, .content-box {
+    max-width: min(90vw, 1000px);
+    max-height: min(80vh, 700px);
+}
+
+.feature-list, .bullet-list { gap: clamp(0.4rem, 1vh, 1rem); }
+.feature-list li, .bullet-list li { font-size: var(--body-size); line-height: 1.4; }
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+    gap: clamp(0.5rem, 1.5vw, 1rem);
+}
+
+img, .image-container {
+    max-width: 100%;
+    max-height: min(50vh, 400px);
+    object-fit: contain;
+}
+
+/* Short viewports */
+@media (max-height: 700px) {
+    :root {
+        --slide-padding: clamp(0.75rem, 3vw, 2rem);
+        --content-gap: clamp(0.4rem, 1.5vw, 1rem);
+        --title-size: clamp(1.4rem, 4.5vw, 2.5rem);
+        --h2-size: clamp(1.1rem, 3vw, 1.75rem);
+    }
+}
+@media (max-height: 600px) {
+    :root {
+        --slide-padding: clamp(0.5rem, 2.5vw, 1.5rem);
+        --content-gap: clamp(0.3rem, 1vw, 0.75rem);
+        --title-size: clamp(1.1rem, 4vw, 2rem);
+        --body-size: clamp(0.65rem, 1.1vw, 0.9rem);
+    }
+    .nav-dots, .keyboard-hint, .decorative { display: none; }
+}
+@media (max-height: 500px) {
+    :root {
+        --slide-padding: clamp(0.4rem, 2vw, 1rem);
+        --title-size: clamp(1rem, 3.5vw, 1.5rem);
+        --h2-size: clamp(0.9rem, 2.5vw, 1.25rem);
+        --body-size: clamp(0.6rem, 1vw, 0.8rem);
+    }
+}
+@media (max-width: 600px) {
+    :root { --title-size: clamp(1.25rem, 7vw, 2.5rem); }
+    .grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.2s !important;
+    }
+    html { scroll-behavior: auto; }
+}
+
+/* ===========================================
+   ANIMATIONS
+   =========================================== */
+.reveal {
+    opacity: 0;
+    transform: translateY(25px);
+    transition: opacity var(--duration-normal) var(--ease-out-expo),
+                transform var(--duration-normal) var(--ease-out-expo);
+}
+.slide.visible .reveal {
+    opacity: 1;
+    transform: translateY(0);
+}
+.reveal:nth-child(1) { transition-delay: 0.05s; }
+.reveal:nth-child(2) { transition-delay: 0.15s; }
+.reveal:nth-child(3) { transition-delay: 0.25s; }
+.reveal:nth-child(4) { transition-delay: 0.35s; }
+.reveal:nth-child(5) { transition-delay: 0.45s; }
+.reveal:nth-child(6) { transition-delay: 0.55s; }
+
+/* ===========================================
+   PROGRESS BAR
+   =========================================== */
+.progress-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 2px;
+    background: var(--accent);
+    width: 0%;
+    z-index: 1000;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* ===========================================
+   NAVIGATION DOTS
+   =========================================== */
+.nav-dots {
+    position: fixed;
+    right: clamp(0.8rem, 2vw, 1.5rem);
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: clamp(6px, 0.8vh, 10px);
+    z-index: 100;
+}
+.nav-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: none;
+    padding: 0;
+}
+.nav-dot.active {
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(109, 225, 68, 0.4);
+    transform: scale(1.4);
+}
+
+/* ===========================================
+   SHARED SLIDE ELEMENTS
+   =========================================== */
+
+/* Slide counter — top right */
+.slide-counter {
+    position: absolute;
+    top: clamp(1.2rem, 3vh, 2rem);
+    right: clamp(2rem, 5vw, 4rem);
+    font-size: var(--small-size);
+    letter-spacing: 0.2em;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+/* Thin vertical accent line */
+.v-line {
+    position: absolute;
+    left: clamp(1.5rem, 4vw, 4rem);
+    top: 15%;
+    height: 70%;
+    width: 1px;
+    background: linear-gradient(to bottom, transparent, rgba(109, 225, 68, 0.2), transparent);
+}
+
+/* Abstract background shapes */
+.shape {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(60px);
+    pointer-events: none;
+}
+.shape-1 {
+    top: -15%;
+    right: -8%;
+    width: clamp(200px, 35vw, 450px);
+    height: clamp(200px, 35vw, 450px);
+    background: radial-gradient(circle at 30% 40%, rgba(109, 225, 68, 0.1) 0%, transparent 70%);
+}
+.shape-2 {
+    bottom: -20%;
+    left: -10%;
+    width: clamp(180px, 30vw, 400px);
+    height: clamp(180px, 30vw, 400px);
+    background: radial-gradient(circle at 60% 50%, rgba(109, 225, 68, 0.06) 0%, transparent 70%);
+}
+
+/* Eyebrow label */
+.eyebrow {
+    font-size: var(--small-size);
+    text-transform: uppercase;
+    letter-spacing: 0.35em;
+    color: var(--accent);
+    font-weight: 500;
+    font-family: var(--font-body);
+}
+
+/* Section title */
+.section-title {
+    font-family: var(--font-display);
+    font-size: var(--title-size);
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+}
+.section-title em {
+    font-style: italic;
+    color: var(--accent-soft);
+}
+
+/* Body paragraph */
+.body-text {
+    font-size: var(--body-size);
+    font-weight: 300;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+/* Callout box — bottom emphasis */
+.callout {
+    background: var(--bg-card);
+    border-left: 2px solid var(--accent);
+    padding: clamp(0.6rem, 1.5vw, 1.2rem) clamp(1rem, 2vw, 1.5rem);
+    font-size: var(--body-size);
+    color: var(--text-secondary);
+    line-height: 1.5;
+    font-weight: 300;
+    border-radius: 0 6px 6px 0;
+    max-width: 900px;
+}
+.callout strong {
+    color: var(--accent-soft);
+    font-weight: 500;
+}
+
+/* Two-column split */
+.split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(1.5rem, 4vw, 4rem);
+    align-items: start;
+    width: 100%;
+    max-width: 1000px;
+}
+@media (max-width: 700px) {
+    .split { grid-template-columns: 1fr; gap: clamp(1rem, 2vw, 1.5rem); }
+}
+
+/* Column panel */
+.panel {
+    background: var(--bg-card);
+    border-radius: 8px;
+    padding: clamp(1rem, 2.5vw, 2rem);
+    border: 1px solid var(--divider);
+}
+.panel-title {
+    font-family: var(--font-display);
+    font-size: var(--h3-size);
+    font-weight: 600;
+    margin-bottom: clamp(0.5rem, 1vh, 1rem);
+    color: var(--text-primary);
+}
+
+/* Versus divider */
+.vs-symbol {
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 5vw, 4.5rem);
+    font-weight: 700;
+    color: var(--text-muted);
+    text-align: center;
+    line-height: 1;
+    align-self: center;
+}
+
+/* Table styling */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--body-size);
+    max-width: 900px;
+}
+.data-table th {
+    font-family: var(--font-display);
+    font-size: var(--h3-size);
+    font-weight: 600;
+    text-align: left;
+    padding: clamp(0.4rem, 1vh, 0.8rem) clamp(0.5rem, 1.5vw, 1rem);
+    border-bottom: 1px solid var(--divider);
+    color: var(--text-primary);
+}
+.data-table td {
+    padding: clamp(0.4rem, 0.8vh, 0.7rem) clamp(0.5rem, 1.5vw, 1rem);
+    border-bottom: 1px solid var(--divider);
+    color: var(--text-secondary);
+    font-weight: 300;
+    line-height: 1.4;
+    vertical-align: top;
+}
+.data-table .label-col {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--small-size);
+    white-space: nowrap;
+    width: 1%;
+}
+.data-table .highlight-col {
+    background: var(--accent-dim);
+    color: var(--text-primary);
+    font-weight: 400;
+}
+.data-table .highlight-col strong {
+    color: var(--accent-soft);
+    font-weight: 500;
+}
+
+/* Timeline */
+.timeline {
+    display: flex;
+    align-items: flex-start;
+    gap: clamp(0.5rem, 2vw, 2rem);
+    position: relative;
+    width: 100%;
+    max-width: 950px;
+}
+.timeline::before {
+    content: '';
+    position: absolute;
+    top: clamp(14px, 2vw, 20px);
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--divider);
+}
+.timeline-item {
+    flex: 1;
+    text-align: center;
+    position: relative;
+    padding-top: clamp(1.5rem, 3vh, 2.5rem);
+}
+.timeline-item::before {
+    content: '';
+    position: absolute;
+    top: clamp(10px, 1.5vw, 16px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    border: 2px solid var(--bg-primary);
+}
+.timeline-item:last-child::before {
+    background: var(--accent);
+    box-shadow: 0 0 10px rgba(109, 225, 68, 0.5);
+}
+.timeline-year {
+    font-family: var(--font-mono);
+    font-size: var(--small-size);
+    color: var(--accent);
+    letter-spacing: 0.1em;
+    margin-bottom: clamp(0.3rem, 0.5vh, 0.5rem);
+}
+.timeline-title {
+    font-family: var(--font-display);
+    font-size: clamp(0.85rem, 1.4vw, 1.1rem);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: clamp(0.2rem, 0.4vh, 0.4rem);
+}
+.timeline-desc {
+    font-size: var(--small-size);
+    color: var(--text-secondary);
+    font-weight: 300;
+    line-height: 1.4;
+}
+
+/* Cycle diagram */
+.cycle {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    grid-template-rows: auto auto;
+    gap: clamp(0.8rem, 1.5vw, 1.5rem);
+    max-width: 850px;
+    width: 100%;
+    align-items: center;
+}
+.cycle-step {
+    background: var(--bg-card);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    padding: clamp(0.7rem, 1.5vw, 1.2rem);
+}
+.cycle-step .step-num {
+    font-family: var(--font-mono);
+    font-size: var(--small-size);
+    color: var(--accent);
+    margin-bottom: 0.3rem;
+}
+.cycle-step .step-title {
+    font-family: var(--font-display);
+    font-size: clamp(0.85rem, 1.3vw, 1.1rem);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.cycle-step .step-desc {
+    font-size: var(--small-size);
+    color: var(--text-secondary);
+    font-weight: 300;
+    margin-top: 0.2rem;
+}
+.cycle-center {
+    grid-row: 1 / 3;
+    grid-column: 2;
+    width: clamp(100px, 14vw, 160px);
+    height: clamp(100px, 14vw, 160px);
+    border-radius: 50%;
+    background: var(--accent-dim);
+    border: 1px solid rgba(109, 225, 68, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: clamp(0.5rem, 1vw, 1rem);
+}
+.cycle-center span {
+    font-size: var(--small-size);
+    color: var(--accent-soft);
+    font-weight: 400;
+    line-height: 1.4;
+}
+
+/* Code block */
+.code-block {
+    background: #1a1a1a;
+    border: 1px solid var(--divider);
+    border-radius: 6px;
+    padding: clamp(0.6rem, 1.5vw, 1.2rem);
+    font-family: var(--font-mono);
+    font-size: var(--mono-size);
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow: hidden;
+}
+.code-block .comment { color: rgba(109, 225, 68, 0.5); }
+.code-block .keyword { color: var(--accent-soft); }
+.code-block .string { color: #e8b4b8; }
+.code-block .line-num {
+    color: var(--text-muted);
+    user-select: none;
+    display: inline-block;
+    width: 2.5em;
+    text-align: right;
+    margin-right: 1em;
+}
+
+/* Step list (numbered) */
+.step-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(0.4rem, 0.8vh, 0.7rem);
+}
+.step-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: clamp(0.5rem, 1vw, 0.8rem);
+    font-size: var(--body-size);
+    color: var(--text-secondary);
+    font-weight: 300;
+    line-height: 1.5;
+}
+.step-list .num {
+    font-family: var(--font-mono);
+    font-size: var(--small-size);
+    color: var(--accent);
+    font-weight: 500;
+    flex-shrink: 0;
+    margin-top: 0.15em;
+}
+
+/* Three-column cards */
+.three-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: clamp(0.8rem, 1.5vw, 1.5rem);
+    width: 100%;
+    max-width: 950px;
+}
+@media (max-width: 700px) {
+    .three-cards { grid-template-columns: 1fr; }
+}
+.mini-card {
+    background: var(--bg-card);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    padding: clamp(0.7rem, 1.5vw, 1.2rem);
+}
+.mini-card h4 {
+    font-family: var(--font-display);
+    font-size: clamp(0.85rem, 1.3vw, 1.1rem);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: clamp(0.3rem, 0.5vh, 0.5rem);
+}
+.mini-card .case-label {
+    font-size: var(--small-size);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    margin-bottom: 0.3rem;
+}
+.mini-card p {
+    font-size: var(--small-size);
+    color: var(--text-secondary);
+    font-weight: 300;
+    line-height: 1.4;
+}
+.mini-card .fail {
+    color: #e88b8b;
+    font-weight: 400;
+}
+
+/* Concentric circles */
+.circles-container {
+    position: relative;
+    width: clamp(220px, 30vw, 320px);
+    height: clamp(220px, 30vw, 320px);
+    flex-shrink: 0;
+}
+.circle-ring {
+    position: absolute;
+    border-radius: 50%;
+    border: 1px solid;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.circle-outer {
+    width: 100%;
+    height: 100%;
+    border-color: rgba(109, 225, 68, 0.2);
+    background: var(--accent-glow);
+}
+.circle-mid {
+    width: 66%;
+    height: 66%;
+    top: 17%;
+    left: 17%;
+    border-color: rgba(109, 225, 68, 0.3);
+    background: rgba(109, 225, 68, 0.05);
+}
+.circle-inner {
+    width: 33%;
+    height: 33%;
+    top: 33.5%;
+    left: 33.5%;
+    border-color: rgba(109, 225, 68, 0.4);
+    background: rgba(109, 225, 68, 0.1);
+}
+.circle-label {
+    position: absolute;
+    font-size: var(--small-size);
+    color: var(--text-secondary);
+    font-weight: 300;
+    white-space: nowrap;
+}
+
+/* Spectrum bar */
+.spectrum {
+    display: flex;
+    width: 100%;
+    max-width: 800px;
+    height: clamp(50px, 8vh, 80px);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.spectrum-left {
+    flex: 1;
+    background: var(--accent-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 2px solid var(--bg-primary);
+}
+.spectrum-right {
+    flex: 1;
+    background: rgba(109, 225, 68, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.spectrum-label {
+    font-family: var(--font-display);
+    font-size: clamp(0.75rem, 1.2vw, 1rem);
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.3;
+}
+
+/* Stages list (vertical) */
+.stages {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(0.3rem, 0.6vh, 0.5rem);
+    position: relative;
+    padding-left: clamp(1rem, 2vw, 1.5rem);
+}
+.stages::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--accent), #e88b8b);
+    border-radius: 1px;
+}
+.stage {
+    font-size: var(--body-size);
+    color: var(--text-secondary);
+    font-weight: 300;
+    line-height: 1.5;
+}
+.stage strong {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+/* ===========================================
+   SLIDE-SPECIFIC STYLES
+   =========================================== */
+
+/* --- Slide 1: Title --- */
+.title-slide .slide-content {
+    align-items: center;
+    text-align: center;
+    gap: clamp(1rem, 2.5vh, 2.5rem);
+}
+.title-slide h1 {
+    font-family: var(--font-display);
+    font-size: clamp(2.5rem, 7vw, 6rem);
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+}
+.title-slide h1 em {
+    font-style: italic;
+    color: var(--accent-soft);
+}
+.title-slide .subtitle {
+    font-size: clamp(0.85rem, 1.3vw, 1.1rem);
+    font-weight: 300;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    max-width: 600px;
+}
+.title-slide .tag {
+    font-size: var(--small-size);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+/* --- Slide 15: Closing --- */
+.closing-slide .slide-content {
+    align-items: center;
+    text-align: center;
+    gap: clamp(1.5rem, 3vh, 3rem);
+}
+.closing-slide .big-quote {
+    font-family: var(--font-display);
+    font-size: clamp(1.8rem, 5vw, 4rem);
+    font-weight: 600;
+    line-height: 1.15;
+    max-width: 850px;
+}
+.closing-slide .big-quote em {
+    font-style: italic;
+    color: var(--accent-soft);
+}
+.closing-hr {
+    width: clamp(80px, 15vw, 200px);
+    height: 2px;
+    background: var(--accent);
+    border: none;
+}
+.closing-slide .closing-body {
+    font-size: var(--body-size);
+    font-weight: 300;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    max-width: 550px;
+}
+</style>
+</head>
+<body>
+
+<!-- Progress bar -->
+<div class="progress-bar" id="progressBar"></div>
+
+<!-- Navigation dots -->
+<nav class="nav-dots" id="navDots"></nav>
+
+<!-- ===========================================
+     SLIDE 1: TITLE
+     =========================================== -->
+<section class="slide title-slide" id="slide-1">
+    <div class="shape shape-1"></div>
+    <div class="shape shape-2"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">01 / 16</span>
+    <div class="slide-content">
+        <div class="eyebrow reveal">Engineering Beyond Code</div>
+        <h1 class="reveal">Programar en 2026:<br><em>The Human in the Loop</em></h1>
+        <p class="subtitle reveal">Por qué ya no escribimos código<br>(y por qué nuestro valor acaba de multiplicarse).</p>
+        <span class="tag reveal">Basado en mis aprendizajes rompiendo xoolix</span>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 2: LA PARADOJA
+     =========================================== -->
+<section class="slide" id="slide-2">
+    <div class="shape shape-1" style="top:-10%;right:auto;left:-8%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">02 / 16</span>
+    <div class="slide-content" style="gap: var(--content-gap);">
+        <div class="eyebrow reveal">La Paradoja</div>
+        <div class="split reveal" style="transition-delay:0.15s">
+            <div class="panel">
+                <div style="font-family:var(--font-mono);font-size:var(--small-size);color:var(--accent);margin-bottom:clamp(0.3rem,0.5vh,0.5rem)">Diciembre 2023</div>
+                <div class="panel-title">Spotify</div>
+                <p class="body-text">El CEO anuncia que sus mejores desarrolladores no han escrito una sola línea de código en meses. Las acciones suben un <strong style="color:var(--accent-soft)">14%</strong>.</p>
+            </div>
+            <div class="panel" style="border-color:rgba(232,139,139,0.2)">
+                <div style="font-family:var(--font-mono);font-size:var(--small-size);color:#e88b8b;margin-bottom:clamp(0.3rem,0.5vh,0.5rem)">Presente</div>
+                <div class="panel-title">Amazon</div>
+                <p class="body-text">Reuniones de emergencia por picos de incidentes críticos (<em>downtime severo</em>). La causa raíz: código generado por <strong style="color:#e88b8b">IA sin supervisión</strong>.</p>
+            </div>
+        </div>
+        <div class="callout reveal" style="transition-delay:0.3s">
+            Si la IA escribe el código, ¿estamos todos despedidos o estamos al borde del colapso de nuestros sistemas? <strong>Ambas realidades coexisten.</strong>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 3: MECÁNICO VS ARTE
+     =========================================== -->
+<section class="slide" id="slide-3">
+    <div class="shape shape-2" style="bottom:auto;top:-15%;left:auto;right:-10%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">03 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="section-title reveal" style="text-align:center">El Nuevo Mapa del Valor</div>
+
+        <div class="reveal" style="display:flex;gap:clamp(1rem,3vw,3rem);width:100%;max-width:850px;justify-content:center;transition-delay:0.15s">
+            <div style="flex:1;text-align:center">
+                <div style="font-family:var(--font-mono);font-size:var(--small-size);color:var(--text-muted);letter-spacing:0.15em;margin-bottom:0.5rem">MECÁNICO</div>
+            </div>
+            <div style="flex:1;text-align:center">
+                <div style="font-family:var(--font-mono);font-size:var(--small-size);color:var(--text-muted);letter-spacing:0.15em;margin-bottom:0.5rem">ARTE Y ARQUITECTURA</div>
+            </div>
+        </div>
+
+        <div class="spectrum reveal" style="transition-delay:0.25s">
+            <div class="spectrum-left">
+                <span class="spectrum-label" style="color:var(--text-secondary)">Territorio IA<br><span style="font-size:0.8em;font-weight:300">Más rápido, más barato, imbatible</span></span>
+            </div>
+            <div class="spectrum-right">
+                <span class="spectrum-label" style="color:var(--text-primary)">Territorio Humano<br><span style="font-size:0.8em;font-weight:300">El nuevo multiplicador de valor</span></span>
+            </div>
+        </div>
+
+        <div class="split reveal" style="max-width:850px;transition-delay:0.35s">
+            <div style="text-align:center">
+                <p class="body-text">Traducir tickets a sintaxis<br>Trabajo repetitivo<br>Sin pensamiento crítico</p>
+            </div>
+            <div style="text-align:center">
+                <p class="body-text">Modelado de dominio<br>Decisiones a 5 años vista<br>Diseño de sistemas</p>
+            </div>
+        </div>
+
+        <div class="callout reveal" style="transition-delay:0.45s">
+            La IA no reemplaza al ingeniero; <strong>comprime el trabajo mecánico</strong> para que todo tu tiempo se invierta en diseño crítico.
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 4: CÓDIGO ≠ PRODUCTO
+     =========================================== -->
+<section class="slide" id="slide-4">
+    <div class="shape shape-1"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">04 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="split reveal" style="max-width:900px;align-items:center">
+            <div style="text-align:center">
+                <div class="section-title" style="font-size:var(--h2-size);margin-bottom:clamp(0.5rem,1vh,1rem)">Generar código<br>sintácticamente perfecto</div>
+                <p class="body-text">El mejor autocompletado del mundo.</p>
+            </div>
+            <div class="vs-symbol reveal" style="transition-delay:0.2s">≠</div>
+            <div style="text-align:center">
+                <div class="section-title" style="font-size:var(--h2-size);margin-bottom:clamp(0.5rem,1vh,1rem)">Construir un producto<br>de software funcional</div>
+                <p class="body-text">Un ecosistema vivo lleno de restricciones operativas.</p>
+            </div>
+        </div>
+        <div class="callout reveal" style="transition-delay:0.35s">
+            Los LLMs no tienen curiosidad. No entienden tu arquitectura completa, por qué un servicio devuelve un 207 en lugar de un 200, ni las decisiones de hace 6 meses.
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 5: 3 PUNTOS CIEGOS
+     =========================================== -->
+<section class="slide" id="slide-5">
+    <div class="shape shape-2"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">05 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="section-title reveal" style="text-align:center">Los 3 Puntos Ciegos <em>de la IA</em></div>
+
+        <div class="three-cards reveal" style="transition-delay:0.15s">
+            <div class="mini-card">
+                <h4>Falta de Contexto de Negocio</h4>
+                <div class="case-label">Caso: App Sounds conectada a Spotify</div>
+                <p><strong style="color:var(--text-primary)">Acción de la IA:</strong> Elimina la feature entera en lugar de corregirla.</p>
+                <p style="margin-top:0.4rem" class="fail">Estadísticamente correcto para cumplir políticas, pero un desastre a nivel producto.</p>
+            </div>
+            <div class="mini-card">
+                <h4>Falta de Contexto Técnico</h4>
+                <div class="case-label">Caso: Vista de playlist generada por IA</div>
+                <p><strong style="color:var(--text-primary)">Acción de la IA:</strong> Asume 30 canciones. Colapsa la memoria al recibir 700.</p>
+                <p style="margin-top:0.4rem" class="fail">Falta de curiosidad. No preguntó por límites ni implementó virtualización.</p>
+            </div>
+            <div class="mini-card">
+                <h4>Incapacidad ante la Deuda Técnica</h4>
+                <div class="case-label">Caso: Refactor core a Fluid Functions</div>
+                <p><strong style="color:var(--text-primary)">Acción de la IA:</strong> Ignora los side effects a pesar de instrucciones explícitas.</p>
+                <p style="margin-top:0.4rem" class="fail">El contexto era demasiado sucio. La IA se pierde y se equivoca con confianza aterradora.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 6: EDITORIAL ENGINEERING MANUAL
+     =========================================== -->
+<section class="slide" id="slide-6">
+    <div class="shape shape-1" style="opacity:0.7"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">06 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="eyebrow reveal">Editorial Engineering Manual</div>
+        <div class="reveal" style="display:flex;align-items:center;gap:clamp(2rem,5vw,5rem);transition-delay:0.15s">
+
+            <!-- Concentric circles -->
+            <div class="circles-container">
+                <div class="circle-ring circle-outer">
+                    <div class="circle-ring circle-mid">
+                        <div class="circle-ring circle-inner">
+                            <div style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Labels positioned around circles -->
+                <span class="circle-label" style="top:50%;left:calc(-1 * clamp(2rem, 4vw, 4rem));transform:translateY(-50%)">El Código Base<br><span style="font-size:0.85em;color:var(--text-muted)">(Abstracciones, tipos,<br>patrones actuales)</span></span>
+                <span class="circle-label" style="top:15%;right:calc(-1 * clamp(2rem, 5vw, 5rem))">El Prompt<br><span style="font-size:0.85em;color:var(--text-muted)">(Instrucción inmediata)</span></span>
+                <span class="circle-label" style="bottom:10%;right:calc(-1 * clamp(2rem, 6vw, 7rem))">El Contexto Humano<br><span style="font-size:0.85em;color:var(--text-muted)">(Reglas de negocio,<br>restricciones técnicas,<br>decisiones históricas)</span></span>
+            </div>
+        </div>
+        <div class="callout reveal" style="transition-delay:0.3s">
+            Contexto no es escribir un prompt muy largo. Es todo el conocimiento del sistema que vive en la cabeza del ingeniero. <strong>La calidad de este contexto condiciona absolutamente la calidad del output.</strong>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 7: LA MÉTRICA CRÍTICA (IMAGE)
+     =========================================== -->
+<section class="slide" id="slide-7">
+    <div class="shape shape-2" style="bottom:auto;top:-10%;left:-5%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">07 / 16</span>
+    <div class="slide-content" style="align-items:center;justify-content:center;">
+        <img src="assets/metrica-contexto.png" alt="La Métrica Crítica: Ingeniería de Contexto — medidor con Smart Zone, Degradation y Dumb Zone, más las 3 reglas del contexto" style="max-width:min(90vw, 950px);max-height:min(80vh, 600px);object-fit:contain;border-radius:10px;border:1px solid var(--divider);box-shadow:0 8px 40px rgba(0,0,0,0.4);" class="reveal">
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 8: GPS VS LABERINTO
+     =========================================== -->
+<section class="slide" id="slide-8">
+    <div class="shape shape-2" style="bottom:auto;top:-10%;left:50%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">08 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="split reveal" style="max-width:900px">
+            <div class="panel" style="border-color:rgba(109,225,68,0.2)">
+                <div class="panel-title" style="color:var(--accent-soft)">El GPS del Código Limpio</div>
+                <p class="body-text"><span style="color:var(--accent-soft)">Abstracciones claras</span>, <span style="color:var(--accent-soft)">responsabilidades segregadas</span>, <span style="color:var(--accent-soft)">tipos definidos</span>.</p>
+                <p class="body-text" style="margin-top:0.5rem">La IA lee esto y navega del punto A al B perfectamente.</p>
+                <!-- Visual: ascending line made with CSS -->
+                <div style="margin-top:clamp(0.5rem,1vh,1rem);height:clamp(30px,5vh,50px);position:relative;overflow:hidden">
+                    <div style="position:absolute;bottom:0;left:0;width:100%;height:100%;background:linear-gradient(to right bottom, transparent 49%, var(--accent) 49%, var(--accent) 51%, transparent 51%);opacity:0.3"></div>
+                </div>
+            </div>
+            <div class="panel" style="border-color:rgba(232,139,139,0.2)">
+                <div class="panel-title" style="color:#e88b8b">El Laberinto de la Deuda</div>
+                <p class="body-text">Archivos de <span style="color:#e88b8b">3000 líneas</span>, nombres crípticos (<code style="font-family:var(--font-mono);font-size:0.9em">aux_foo</code>). La IA entra al laberinto y <span style="color:#e88b8b">perpetúa el caos</span>, construyendo más deuda técnica.</p>
+                <!-- Visual: tangled lines -->
+                <div style="margin-top:clamp(0.5rem,1vh,1rem);height:clamp(30px,5vh,50px);position:relative;overflow:hidden">
+                    <div style="position:absolute;width:100%;height:100%;border:2px solid rgba(232,139,139,0.2);border-radius:50%;top:-20%;left:-10%"></div>
+                    <div style="position:absolute;width:80%;height:120%;border:2px solid rgba(232,139,139,0.15);border-radius:50%;top:10%;left:30%"></div>
+                    <div style="position:absolute;width:60%;height:90%;border:2px solid rgba(232,139,139,0.1);border-radius:50%;top:-10%;left:50%"></div>
+                </div>
+            </div>
+        </div>
+        <div class="callout reveal" style="transition-delay:0.25s">
+            Tu código antiguo es el contexto del próximo prompt. <strong>La IA se adaptará a la calidad estructural que encuentre.</strong>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 9: ENVENENAMIENTO DE CONTEXTO
+     =========================================== -->
+<section class="slide" id="slide-9">
+    <div class="shape shape-1" style="top:auto;bottom:-10%;right:-5%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">09 / 16</span>
+    <div class="slide-content" style="gap:var(--content-gap);">
+        <div class="section-title reveal">Envenenamiento de Contexto<br><em>(Vibe Coding)</em></div>
+
+        <div class="reveal" style="display:flex;gap:clamp(2rem,4vw,4rem);align-items:flex-start;transition-delay:0.15s">
+            <div class="stages" style="flex:1">
+                <div class="stage"><strong>Stage 1:</strong> Delegar sin revisar.</div>
+                <div class="stage"><strong>Stage 2:</strong> Código basura entra a producción.</div>
+                <div class="stage"><strong>Stage 3:</strong> El código basura se convierte en contexto.</div>
+                <div class="stage"><strong>Stage 4:</strong> El siguiente prompt genera basura peor.</div>
+            </div>
+            <div class="panel reveal" style="flex:1;border-color:rgba(232,139,139,0.2);transition-delay:0.3s">
+                <p class="body-text">Imagina pedirle a una IA que añada un lunar a una cara. En 30 iteraciones ciegas, tienes un <strong style="color:#e88b8b">monstruo irreconocible</strong>.</p>
+            </div>
+        </div>
+
+        <div class="callout reveal" style="transition-delay:0.4s">
+            El Vibe Coding ciego (avanzar usando la IA sin revisar) es <strong>Envenenamiento de Contexto a escala industrial.</strong>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 10: EVOLUCIÓN QC
+     =========================================== -->
+<section class="slide" id="slide-10">
+    <div class="shape shape-2" style="left:auto;right:-10%;bottom:-15%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">10 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="section-title reveal" style="text-align:center;font-size:var(--h2-size)">Evolución del Control de Calidad:<br><em>De Humanos a Agentes</em></div>
+
+        <div class="timeline reveal" style="transition-delay:0.15s">
+            <div class="timeline-item">
+                <div class="timeline-year">1999</div>
+                <div class="timeline-title">The Pragmatic Programmer</div>
+                <div class="timeline-desc">Tracer Bullets (Prototipado rápido y validación).</div>
+            </div>
+            <div class="timeline-item">
+                <div class="timeline-year">2003</div>
+                <div class="timeline-title">Domain-Driven Design</div>
+                <div class="timeline-desc">Lenguaje Ubicuo (La IA necesita entender tu dominio para ser útil).</div>
+            </div>
+            <div class="timeline-item">
+                <div class="timeline-year">2008</div>
+                <div class="timeline-title">Clean Code</div>
+                <div class="timeline-desc">El código es la verdad (Los comentarios obsoletos confunden a la IA).</div>
+            </div>
+            <div class="timeline-item">
+                <div class="timeline-year">2026</div>
+                <div class="timeline-title">Agentes Autónomos</div>
+                <div class="timeline-desc">Mismas técnicas, nuevo objetivo: controlar a la máquina.</div>
+            </div>
+        </div>
+
+        <div class="callout reveal" style="transition-delay:0.35s">
+            Las técnicas creadas hace 20 años para evitar que los humanos generaran código basura (slop) son <strong>exactamente las mismas que necesitamos hoy para controlar a la máquina.</strong>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 11: NUEVO FLUJO DE TRABAJO
+     =========================================== -->
+<section class="slide" id="slide-11">
+    <div class="shape shape-1" style="top:-5%;right:auto;left:-5%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">11 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="section-title reveal" style="text-align:center;font-size:var(--h2-size)">El Nuevo Flujo de Trabajo:<br><em>Orquestación y Validación Humana</em></div>
+
+        <div class="cycle reveal" style="transition-delay:0.15s">
+            <div class="cycle-step">
+                <div class="step-num">01</div>
+                <div class="step-title">La Entrevista al Arquitecto</div>
+                <div class="step-desc">Planificación en Markdown</div>
+            </div>
+            <div class="cycle-center">
+                <span>El ingeniero se sitúa en el centro: orquestando, curando el contexto y validando.</span>
+            </div>
+            <div class="cycle-step">
+                <div class="step-num">02</div>
+                <div class="step-title">El Reset de Contexto</div>
+                <div class="step-desc">Eliminación de ruido</div>
+            </div>
+            <div class="cycle-step">
+                <div class="step-num">04</div>
+                <div class="step-title">La Nueva Revisión de Código</div>
+                <div class="step-desc">Tú como validador</div>
+            </div>
+            <!-- empty center placeholder for grid -->
+            <div></div>
+            <div class="cycle-step">
+                <div class="step-num">03</div>
+                <div class="step-title">Generación Aislada</div>
+                <div class="step-desc">Ejecución de tareas pequeñas</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 12: INTERFAZ DE ORQUESTACIÓN
+     =========================================== -->
+<section class="slide" id="slide-12">
+    <div class="shape shape-2" style="bottom:auto;top:-10%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">12 / 16</span>
+    <div class="slide-content" style="gap:var(--content-gap);">
+        <div class="eyebrow reveal">Interfaz de Orquestación</div>
+        <div class="section-title reveal" style="font-size:var(--h2-size);transition-delay:0.1s">Humano vs. Agente</div>
+
+        <div class="split reveal" style="max-width:900px;transition-delay:0.2s">
+            <div class="panel" style="border-color:rgba(109,225,68,0.2)">
+                <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:clamp(0.4rem,0.8vh,0.8rem)">
+                    <div style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></div>
+                    <span style="font-family:var(--font-mono);font-size:var(--small-size);color:var(--accent)">ENTRADA HUMANA (ARQUITECTO)</span>
+                </div>
+                <div class="code-block">
+                    <span style="color:var(--text-primary)">Eres un Arquitecto de Software.</span><br>
+                    <span style="color:var(--text-primary)">Explora el codebase. Hazme todas las</span><br>
+                    <span style="color:var(--text-primary)">preguntas de producto y casos</span><br>
+                    <span style="color:var(--text-primary)">límite que necesites antes de</span><br>
+                    <span style="color:var(--text-primary)">necesites escribir un solo</span><br>
+                    <span style="color:var(--text-primary)">plan en Markdown.</span><br><br>
+                    <span style="color:var(--accent-soft)">No escribas código aún.</span>
+                </div>
+            </div>
+            <div class="panel" style="border-color:rgba(232,228,223,0.1)">
+                <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:clamp(0.4rem,0.8vh,0.8rem)">
+                    <div style="width:8px;height:8px;border-radius:50%;background:var(--text-muted)"></div>
+                    <span style="font-family:var(--font-mono);font-size:var(--small-size);color:var(--text-secondary)">RESPUESTA DEL AGENTE (IA)</span>
+                </div>
+                <div class="code-block">
+                    <span class="keyword">Pregunta:</span><br><br>
+                    <span style="color:var(--text-primary)">Si el usuario añade una canción a la</span><br>
+                    <span style="color:var(--text-primary)">cola, pero tiene activado el modo</span><br>
+                    <span style="color:var(--text-primary)">Shuffle, ¿qué comportamiento</span><br>
+                    <span style="color:var(--text-primary)">esperas?</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="callout reveal" style="transition-delay:0.35s">
+            <strong>El objetivo de esta fase no es el código.</strong> Es forzar a la IA a hacer el modelado de dominio y descubrir requerimientos ocultos (como el Shuffle en Spotify) antes de construir.
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 13: CONTEXT MANAGEMENT
+     =========================================== -->
+<section class="slide" id="slide-13">
+    <div class="shape shape-1" style="top:auto;bottom:-15%;right:auto;left:-5%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">13 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="eyebrow reveal" style="font-family:var(--font-mono);letter-spacing:0.2em">Diagnostic Matrix: Context Management</div>
+
+        <!-- Terminal visual -->
+        <div class="reveal" style="transition-delay:0.1s;text-align:center">
+            <div style="background:var(--bg-card);border:1px solid var(--divider);border-radius:8px 8px 0 0;padding:clamp(0.3rem,0.5vw,0.5rem) clamp(0.8rem,1.5vw,1.2rem);display:inline-flex;gap:0.4rem;align-items:center">
+                <div style="width:8px;height:8px;border-radius:50%;background:#e88b8b"></div>
+                <div style="width:8px;height:8px;border-radius:50%;background:#e8d48b"></div>
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></div>
+            </div>
+            <div style="font-family:var(--font-mono);font-size:var(--h2-size);font-weight:500;color:var(--text-primary);background:var(--bg-card);padding:clamp(0.5rem,1vh,1rem) clamp(1.5rem,3vw,3rem);border:1px solid var(--divider);border-top:none;border-radius:0 0 8px 8px">
+                $ clear <span style="display:inline-block;width:2px;height:1em;background:var(--accent);animation:blink 1s step-end infinite;vertical-align:middle;margin-left:2px"></span>
+            </div>
+        </div>
+
+        <div class="section-title reveal" style="text-align:center;font-size:var(--h2-size);transition-delay:0.2s">
+            Una vez que apruebes el Plan en Markdown...<br><em>Cierra la sesión y borra el historial.</em>
+        </div>
+
+        <div class="three-cards reveal" style="transition-delay:0.3s">
+            <div class="mini-card">
+                <h4>El problema</h4>
+                <p>La sesión de diseño está llena de exploración, preguntas descartadas, correcciones y ruido.</p>
+            </div>
+            <div class="mini-card" style="border-color:rgba(232,139,139,0.2)">
+                <h4>El riesgo</h4>
+                <p>Si pides que programe en esa misma sesión, ese ruido se convierte en <strong style="color:#e88b8b">contexto tóxico</strong> y confunde al modelo.</p>
+            </div>
+            <div class="mini-card" style="border-color:rgba(109,225,68,0.2)">
+                <h4 style="color:var(--accent-soft)">La solución</h4>
+                <p>Abre una sesión limpia. Cárgale únicamente el Plan Markdown definitivo y el código base. <strong style="color:var(--accent-soft)">Cero alucinaciones por contexto arrastrado.</strong></p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 14: REVISIÓN = PR
+     =========================================== -->
+<section class="slide" id="slide-14">
+    <div class="shape shape-2" style="left:auto;right:-8%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">14 / 16</span>
+    <div class="slide-content" style="gap:var(--content-gap);">
+        <div class="eyebrow reveal">Interfaz de Revisión</div>
+        <div class="section-title reveal" style="font-size:var(--h2-size);transition-delay:0.1s">Flujo de Pull Request IA</div>
+
+        <div class="split reveal" style="max-width:900px;transition-delay:0.2s">
+            <div class="panel">
+                <div style="font-family:var(--font-mono);font-size:var(--small-size);color:var(--text-muted);margin-bottom:clamp(0.3rem,0.5vh,0.5rem)">FILE CHANGES: src/modules/core/ai_interaction.js</div>
+                <div class="code-block">
+                    <span class="line-num">112</span><span>const process_data = async (input) => {</span><br>
+                    <span class="line-num">113</span><span>  const result = await fetch('/api/process',</span><br>
+                    <span class="line-num">114</span><span>    { method: 'POST',</span><br>
+                    <span class="line-num">115</span><span>      body: JSON.stringify(input) });</span><br>
+                    <span class="line-num">116</span><span style="color:var(--accent)">+ </span><span class="comment">// Side-effect here</span><br>
+                    <span class="line-num">117</span><span style="color:var(--accent)">+ </span><span>state.latest_result = result;</span><br>
+                    <span class="line-num">118</span><span>  return result;</span><br>
+                    <span class="line-num">119</span><span>};</span>
+                </div>
+                <div style="margin-top:clamp(0.4rem,0.8vh,0.6rem);font-size:var(--small-size);color:#e88b8b">
+                    // ¿Esto qué es? Arregla este side-effect antes del commit.
+                </div>
+            </div>
+            <div>
+                <div style="font-family:var(--font-mono);font-size:var(--small-size);color:var(--accent);margin-bottom:clamp(0.5rem,1vh,1rem)">FLUJO DE REVISIÓN: TÚ VS. IA</div>
+                <ol class="step-list">
+                    <li><span class="num">1.</span> La IA implementa un bloque pequeño.</li>
+                    <li><span class="num">2.</span> Lo dejas en stage (no haces commit).</li>
+                    <li><span class="num">3.</span> Revisas el diff localmente.</li>
+                    <li><span class="num">4.</span> Dejas comentarios a la IA como si fuera un Junior Developer.</li>
+                    <li><span class="num">5.</span> La IA ajusta el código en base a tu feedback hasta que apruebes.</li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="callout reveal" style="transition-delay:0.35s">
+            Eres tú haciendo un PR contigo mismo. Cuando haces push, va bajo tu nombre. <strong>Tú eres el responsable del código de la máquina.</strong>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 15: MATRIZ DE TRANSFORMACIÓN
+     =========================================== -->
+<section class="slide" id="slide-15">
+    <div class="shape shape-1" style="top:auto;bottom:-10%"></div>
+    <div class="v-line"></div>
+    <span class="slide-counter">15 / 16</span>
+    <div class="slide-content" style="align-items:center;gap:var(--content-gap);">
+        <div class="section-title reveal" style="text-align:center">La Matriz de <em>Transformación</em></div>
+
+        <table class="data-table reveal" style="transition-delay:0.15s">
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>El Viejo Mundo (2020)</th>
+                    <th class="highlight-col">La Nueva Realidad (2026)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="label-col">1 &mdash; Velocidad</td>
+                    <td>Líneas de código tecleadas por día.</td>
+                    <td class="highlight-col">Ciclos de iteración y validación evaluados por día.</td>
+                </tr>
+                <tr>
+                    <td class="label-col">2 &mdash; Core Skill</td>
+                    <td>Memorización de sintaxis y librerías.</td>
+                    <td class="highlight-col">Modelado de dominio y diseño de sistemas.</td>
+                </tr>
+                <tr>
+                    <td class="label-col">3 &mdash; Calidad</td>
+                    <td>Un ejercicio estético para el equipo.</td>
+                    <td class="highlight-col"><strong>Contexto crítico de supervivencia</strong> para que la IA no colapse el sistema.</td>
+                </tr>
+                <tr>
+                    <td class="label-col">4 &mdash; Tu Rol</td>
+                    <td>Constructor mecánico.</td>
+                    <td class="highlight-col"><strong>Orquestador y curador de contexto.</strong></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div style="font-family:var(--font-mono);font-size:var(--small-size);color:var(--text-muted);letter-spacing:0.15em;text-align:center" class="reveal" style="transition-delay:0.3s">
+            SYSTEM OUTPUT: TRANSFORMATION MATRIX GENERATED
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 16: CIERRE
+     =========================================== -->
+<section class="slide closing-slide" id="slide-16">
+    <div class="shape shape-1" style="top:50%;right:auto;left:-10%;transform:translateY(-50%);opacity:0.5"></div>
+    <div class="shape shape-2" style="bottom:auto;top:50%;left:auto;right:-10%;transform:translateY(-50%);opacity:0.5"></div>
+    <span class="slide-counter">16 / 16</span>
+    <div class="slide-content">
+        <p class="big-quote reveal">La parte mecánica ha muerto.<br><em>La ingeniería nunca ha sido tan importante.</em></p>
+        <hr class="closing-hr reveal">
+        <p class="closing-body reveal">No te obsesiones con generar líneas de código. Entiende el problema, modela el dominio y haz las preguntas que la máquina ni siquiera sabe que ignora. Ese es el verdadero arte de programar en 2026.</p>
+    </div>
+</section>
+
+
+<script>
+/* ===========================================
+   SLIDE PRESENTATION CONTROLLER
+   =========================================== */
+class SlidePresentation {
+    constructor() {
+        this.slides = document.querySelectorAll('.slide');
+        this.currentSlide = 0;
+        this.isScrolling = false;
+
+        this.setupIntersectionObserver();
+        this.setupKeyboardNav();
+        this.setupTouchNav();
+        this.setupProgressBar();
+        this.setupNavDots();
+    }
+
+    /* --- Intersection Observer: trigger .visible on scroll --- */
+    setupIntersectionObserver() {
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    const index = Array.from(this.slides).indexOf(entry.target);
+                    if (index !== -1) {
+                        this.currentSlide = index;
+                        this.updateProgressBar();
+                        this.updateNavDots();
+                    }
+                }
+            });
+        }, { threshold: 0.5 });
+
+        this.slides.forEach(slide => observer.observe(slide));
+    }
+
+    /* --- Keyboard navigation --- */
+    setupKeyboardNav() {
+        document.addEventListener('keydown', (e) => {
+            if (['ArrowDown', 'ArrowRight', 'Space', 'PageDown'].includes(e.code)) {
+                e.preventDefault();
+                this.goToSlide(this.currentSlide + 1);
+            } else if (['ArrowUp', 'ArrowLeft', 'PageUp'].includes(e.code)) {
+                e.preventDefault();
+                this.goToSlide(this.currentSlide - 1);
+            } else if (e.code === 'Home') {
+                e.preventDefault();
+                this.goToSlide(0);
+            } else if (e.code === 'End') {
+                e.preventDefault();
+                this.goToSlide(this.slides.length - 1);
+            }
+        });
+    }
+
+    /* --- Touch / swipe support --- */
+    setupTouchNav() {
+        let startY = 0;
+        document.addEventListener('touchstart', (e) => {
+            startY = e.touches[0].clientY;
+        }, { passive: true });
+
+        document.addEventListener('touchend', (e) => {
+            const deltaY = startY - e.changedTouches[0].clientY;
+            if (Math.abs(deltaY) > 50) {
+                if (deltaY > 0) this.goToSlide(this.currentSlide + 1);
+                else this.goToSlide(this.currentSlide - 1);
+            }
+        }, { passive: true });
+    }
+
+    /* --- Progress bar --- */
+    setupProgressBar() {
+        this.progressBar = document.getElementById('progressBar');
+        this.updateProgressBar();
+    }
+
+    updateProgressBar() {
+        if (!this.progressBar) return;
+        const progress = ((this.currentSlide + 1) / this.slides.length) * 100;
+        this.progressBar.style.width = progress + '%';
+    }
+
+    /* --- Navigation dots --- */
+    setupNavDots() {
+        this.navDotsContainer = document.getElementById('navDots');
+        if (!this.navDotsContainer) return;
+        // Always clear before building to prevent duplicates
+        this.navDotsContainer.innerHTML = '';
+
+        this.slides.forEach((_, i) => {
+            const dot = document.createElement('button');
+            dot.className = 'nav-dot' + (i === 0 ? ' active' : '');
+            dot.setAttribute('aria-label', 'Ir a slide ' + (i + 1));
+            dot.addEventListener('click', () => this.goToSlide(i));
+            this.navDotsContainer.appendChild(dot);
+        });
+    }
+
+    updateNavDots() {
+        if (!this.navDotsContainer) return;
+        const dots = this.navDotsContainer.querySelectorAll('.nav-dot');
+        dots.forEach((dot, i) => {
+            dot.classList.toggle('active', i === this.currentSlide);
+        });
+    }
+
+    /* --- Navigate to slide --- */
+    goToSlide(index) {
+        if (index < 0 || index >= this.slides.length) return;
+        this.slides[index].scrollIntoView({ behavior: 'smooth' });
+    }
+}
+
+/* Initialize */
+new SlidePresentation();
+</script>
+
+<!-- Blink cursor animation (used in slide 12) -->
+<style>
+@keyframes blink { 50% { opacity: 0; } }
+</style>
+
+</body>
+</html>

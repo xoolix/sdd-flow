@@ -23,8 +23,11 @@ Before starting, verify the spec has all required elements:
 - [ ] Spec has at least **2 edge cases**
 - [ ] Spec has at least **2 acceptance criteria** (preferably in Given/When/Then format)
 - [ ] Spec has a **Rollback Plan**
+- [ ] If `spec.md` or `decisions.md` contains `PROTOTYPE-REQUIRED`, `decisions.md` also contains `PROTOTYPE-RESULT` or `PROTOTYPE-DISMISSED`
 
 If any check fails, tell the user what's missing and suggest running `/new-feature` again to complete the spec. Do NOT proceed with an incomplete spec.
+
+For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the user to run `/prototype "$ARGUMENTS: <question>"` or explicitly add `PROTOTYPE-DISMISSED` to `decisions.md` if they accept the risk.
 
 ## Discovery resume check
 
@@ -99,10 +102,11 @@ If any check fails, tell the user what's missing and suggest running `/new-featu
      - Risks and mitigations
      - **Size budget**: The generated `plan.md` MUST be under 800 words. Prefer tables over prose.
    - **`sdd-task-planner`**: Receives the spec + exploration findings (+ `discovery.md` content if resuming). Creates `specs/$ARGUMENTS/tasks.md` using `.specify/templates/tasks-template.md` as base. Fills in:
-     - Ordered, atomic tasks grouped by phase (foundation, core, validation)
-     - Each task should be implementable in one focused iteration
-     - Include test and documentation tasks
-     - For MEDIUM/LARGE features, add checkpoint tasks between phases
+     - Ordered vertical-slice tasks grouped by phase (foundation, core, validation)
+     - Each task has stable ID, `[AFK]` or `[HITL]`, `blocked_by`, `verifies`, and `touches` metadata
+     - Each AFK task should be implementable in one focused iteration and independently verifiable
+     - Include test, documentation, and observability work inside the relevant vertical slice; do not create standalone horizontal validation tasks unless no behavior slice exists
+     - For MEDIUM/LARGE features, add HITL checkpoint tasks only for real human decisions
      - **Size budget**: The generated `tasks.md` MUST be under 530 words. Keep tasks concise.
 
    **IMPORTANT**: Launch both agents in the same message to maximize parallelism. Do NOT wait for one to finish before launching the other.

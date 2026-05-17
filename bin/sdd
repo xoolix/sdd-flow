@@ -8,7 +8,7 @@ SDD_HOME="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")/..
 VERSION="2.0.0"
 
 # ─── Core SDD skills (these go to global ~/.claude/skills/) ──────
-CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto init-project build-registry feature-spec diagnose-bug _shared"
+CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto sdd-hitl init-project build-registry feature-spec diagnose-bug tdd grill-me prototype _shared"
 
 # ─── helpers ───────────────────────────────────────────────────────
 
@@ -318,6 +318,11 @@ cmd_update() {
 
   log "Updating SDD"
 
+  # Ensure base project folders exist. These are non-destructive and are required by
+  # `sdd doctor`; older projects may predate research/ or docs/architecture/.
+  mkdir -p "$target/specs" "$target/research" "$target/docs/adr" "$target/docs/architecture"
+  ok "Ensured specs/, research/, docs/adr/, docs/architecture/"
+
   # Update global core skills
   log "Updating global core skills..."
   for skill in $CORE_SKILLS; do
@@ -536,7 +541,9 @@ cmd_doctor() {
 
   # CLAUDE.md should be a symlink (auto-updates) unless --copy install
   local claude_md="$target/.claude/CLAUDE.md"
-  if [ -L "$claude_md" ] && [ -e "$claude_md" ]; then
+  if [ "$target" = "$SDD_HOME" ] && [ -f "$claude_md" ] && [ ! -L "$claude_md" ]; then
+    ok "  .claude/CLAUDE.md (source file in SDD_HOME)"
+  elif [ -L "$claude_md" ] && [ -e "$claude_md" ]; then
     ok "  .claude/CLAUDE.md (symlink → auto-updates)"
   elif [ -L "$claude_md" ]; then
     warn "  .claude/CLAUDE.md is a broken symlink (target missing) — run 'sdd update' to repair"
@@ -554,7 +561,7 @@ cmd_doctor() {
   fi
 
   # Warn if CLAUDE.md is git-tracked (absolute symlinks don't port across team machines)
-  if [ -e "$claude_md" ] && (cd "$target" && git ls-files --error-unmatch .claude/CLAUDE.md &>/dev/null); then
+  if [ "$target" != "$SDD_HOME" ] && [ -e "$claude_md" ] && (cd "$target" && git ls-files --error-unmatch .claude/CLAUDE.md &>/dev/null); then
     if [ -f "$target/.gitignore" ] && grep -Fxq ".claude/CLAUDE.md" "$target/.gitignore"; then
       warn "  .claude/CLAUDE.md is in .gitignore but still tracked — run: git rm --cached .claude/CLAUDE.md && git commit"
     else

@@ -1,0 +1,5 @@
+git-head: a4e9a0579a2983826b5577ea2d94725535252203
+simplified: 2026-04-24T00:00:00Z
+files:
+- bin/hello-world
+- bin/sdd

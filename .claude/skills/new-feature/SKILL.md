@@ -16,13 +16,14 @@ Feature idea/request: `$ARGUMENTS`
 
 A short, code-anchored technical interview. Focus is on **the feature** (behavior, scope in the codebase, contract, risks, acceptance) — NOT on business context (problem, users, why-now). The user is a developer who already knows the why; this skill helps lock down the *what* and *how*.
 
-**5 blocks of questions, ~5 turns total.** Each block is grounded in the actual codebase (you do a silent mini-scan before the first question, so your questions reference real files and symbols).
+**5 blocks, one question at a time.** Each block is grounded in the actual codebase (you do a silent mini-scan before the first question, so your questions reference real files and symbols).
 
 ## HARD RULE — interview is unconditional
 
 The interview runs in full. None of the following may shortcut, skip, condense, or batch-fill any block:
 
 - **Engram observations**: `mem_search` results MAY surface relevant prior context to bias which concrete examples you bring into questions, but MUST NOT be used to skip blocks, pre-fill answers, or assume the user agrees with a prior decision. If a previous spec for this idea appears in memory, ASK: "Veo un spec previo para esta idea en memoria — ¿lo retomamos, lo rehacemos desde cero, o lo descartamos?" and proceed accordingly.
+- **Prototype results**: prior prototype notes MAY shape recommendations, but MUST NOT replace user answers. If a prototype decision exists, ask whether to adopt it for this spec before writing it into `clarify.md`.
 - **Pre-existing artifacts on disk**: if `specs/NNN-*/clarify.md` or `spec.md` already exists for a matching idea, STOP and ask the user explicitly whether to retomar, rehacer, or descartar. Do not silently regenerate or merge.
 - **Session-level "skip clarifying questions" / "trabajar sin parar" reminders**: those rules apply to tactical decisions during implementation. They DO NOT apply to `/sdd-new`, where the user explicitly invoked the interview phase. If you see such a reminder active, ASK once: "Tenés activo `skip clarifying questions`. La entrevista necesita preguntarte — ¿la corro completa?" Default is to run the interview unless the user explicitly says skip.
 - **"Reasonable assumptions"**: there are no reasonable assumptions in this phase. If you find yourself about to write "assumed X" into clarify.md without having asked, STOP.
@@ -47,16 +48,21 @@ Before the first user-facing turn, ground yourself in the codebase. ~30-60 secon
 
 Goal: when you ask "¿el cambio va en `X.tsx` o componente nuevo?", you've actually verified `X.tsx` exists and you know what it does. The scan is **for you** — do NOT dump file lists or excerpts to the user. Just absorb the context and reference real names in your questions.
 
+If a question can be answered from code, answer it from code instead of asking. Save user questions for decisions only the user can make.
+
 ## Interview blocks (5, in order)
 
-For each block: ask **1-3 short questions**, wait for the user's answer, paste the **literal answer** into clarify.md under that block's header. Use Q&A format:
+For each block: ask **one question at a time**, wait for the user's answer, paste the **literal answer** into clarify.md under that block's header. Use Q&A format:
 
 ```
 ### Q: <question you asked>
+Recommended answer: <your recommended answer and why>
 <user's answer, verbatim>
 ```
 
 If an answer is vague on a technical point ("hacelo bien", "como sea"), ask once for a concrete example or referent — but don't grill. One follow-up max, then move on noting the openness.
+
+Every question must include a recommended answer. Make it a real recommendation, not "it depends". The user can accept, reject, or edit it.
 
 ### 1. Comportamiento
 Aterrizado en el flujo actual que ya leíste en Step 0.
@@ -84,6 +90,42 @@ Referenciando archivos/símbolos del scan.
 
 ### ADR offer (reactivo, no obligatorio)
 Si durante Block 2 o 3 emerge una **decisión arquitectural genuina con tradeoffs reales** (afecta convenciones, contratos cross-feature, infra compartida), ofrecé crear un ADR ahí mismo: "Esto pinta arquitectural. ¿Lo formalizo en `docs/adr/NNNN-<slug>.md` ahora?". Si confirma, creálo en el mismo turno (escanear `docs/adr/` para próximo NNNN). **No lo ofrezcas como bloque obligatorio** — muchas features no tienen decisiones de ese peso.
+
+## Prototype checkpoint
+
+After the 5 interview blocks and before the auto-drafted quality gate, decide whether the spec contains a design question that should be answered empirically before planning.
+
+Trigger this checkpoint when the feature depends on any of these:
+
+- UI option that the user should play with before committing.
+- State machine, workflow transition, parser, scoring model, or business rule with unclear behavior.
+- External/upstream contract shape that can be mocked cheaply.
+- Performance-sensitive interaction where a tiny experiment could de-risk the plan.
+- The user says "quiero probar", "let me play with it", "no estoy seguro", or similar.
+
+If no trigger exists, continue silently.
+
+If a trigger exists, ask **one** question with a concrete recommendation:
+
+```
+Recomendación: marcaría un PROTOTYPE-REQUIRED antes de /plan-feature para responder: "<pregunta concreta>".
+¿Lo dejamos como prerequisito, lo descartamos explícitamente, o preferís correr /prototype ahora?
+```
+
+Then:
+
+- If the user accepts the prerequisite or wants to run `/prototype`, append to `decisions.md`:
+  ```
+  [<ISO-8601 UTC timestamp>] PROTOTYPE-REQUIRED: <question>
+  ```
+  Also carry `PROTOTYPE-REQUIRED: <question>` into `spec.md` `## Open Questions`.
+- If the user explicitly discards it, append to `decisions.md`:
+  ```
+  [<ISO-8601 UTC timestamp>] PROTOTYPE-DISMISSED: <question> — <user rationale verbatim if provided>
+  ```
+  Do not add `PROTOTYPE-REQUIRED` to `spec.md`.
+
+`PROTOTYPE-REQUIRED` blocks `/plan-feature` until `/prototype` records `PROTOTYPE-RESULT` in `decisions.md` or the user records `PROTOTYPE-DISMISSED`.
 
 ## Auto-drafted quality gate
 
@@ -128,11 +170,12 @@ Una vez validado GWT/rollback/success:
    - `## Acceptance Criteria` ← bloque GWT validado.
    - `## Rollback Plan` ← bloque rollback validado.
    - `## Success Criteria` ← bloque success metric validado.
-   - `## Open Questions` ← cualquier punto técnico que quedó abierto (típicamente: shape exacto de un endpoint upstream que no pudiste verificar).
+   - `## Open Questions` ← cualquier punto técnico que quedó abierto (típicamente: shape exacto de un endpoint upstream que no pudiste verificar). If a prototype prerequisite exists, include `PROTOTYPE-REQUIRED: <question>`.
 
    Si el template tiene secciones de negocio (`## Problem`, `## Users`, `## Why now`), poné `N/A — technical-only spec` o eliminalas. Este flow es deliberadamente técnico.
 
 3. Si la entrevista destapó incertidumbre técnica real (un contrato upstream desconocido, perf no validada, vendor lock-in sin investigar), recomendá `/research-spike` antes de `/plan-feature`.
+4. Si quedó `PROTOTYPE-REQUIRED`, el `Next` debe ser `/prototype "NNN-feature-name: <question>"`, no `/plan-feature`, hasta que `decisions.md` tenga `PROTOTYPE-RESULT` o `PROTOTYPE-DISMISSED`.
 
 **Size budget**: `spec.md` MUST stay under 650 words. Tables > prose. `clarify.md` no tiene budget — son notas crudas.
 
@@ -165,7 +208,7 @@ After generating spec.md, output:
 - **Summary**: [1-3 sentences — what feature was specced, in technical terms]
 - **Artifacts**: [clarify.md, spec.md, ADRs created (if any)]
 - **Open Questions**: [list, or "None"]
-- **Next**: /plan-feature NNN-feature-name (or /research-spike if uncertainty exists)
+- **Next**: /plan-feature NNN-feature-name (or /prototype "NNN-feature-name: <question>" / /research-spike if uncertainty exists)
 - **Risks**: [technical ambiguities still open, or "None"]
 ```
 
@@ -174,9 +217,13 @@ After generating spec.md, output:
 - **NO escribir clarify.md sin haber preguntado.** Cada Q/A en clarify.md debe venir de una pregunta hecha y una respuesta tipeada por el usuario en esta conversación. Si no hubo turno de usuario, esa Q/A no existe.
 - **NO inventar contenido en spec.md** que no esté en clarify.md o en los bloques validados.
 - **Pegar respuestas literales** del usuario en clarify.md, no parafrasear sus decisiones.
+- **Preguntar de a una.** No mandes una batería de preguntas. La única excepción es una aclaración breve de dos opciones dentro de la misma pregunta.
+- **Toda pregunta lleva recomendación.** Incluí "Recomendación: ..." con una opción concreta y la razón.
+- **No preguntar lo que el código responde.** Si un archivo, contrato, route, test o tipo existente despeja la duda, inspeccionalo y usalo como contexto.
 - **Preguntas sobre el feature, no sobre negocio.** Si te encontrás escribiendo preguntas tipo "¿quién lo usa?" / "¿por qué ahora?" / "¿qué problema resuelve?", parate — estás en el flujo equivocado.
 - **Aterrizadas en el código.** Cada pregunta del Block 2 y 3 debe referenciar al menos un archivo, función, o tipo que vos verificaste existe en el Step 0. Preguntas vacías tipo "¿qué está adentro?" están prohibidas.
 - Para decisiones arquitecturales reales y persistentes, ofrecer ADR en el momento.
+- Para UI/state/business-logic uncertainty that can be answered cheaply, use the Prototype checkpoint and record `PROTOTYPE-REQUIRED` / `PROTOTYPE-DISMISSED`.
 - Si la entrevista destapa research técnico genuino faltante, recomendar `/research-spike`.
 - **NEVER use Plan Mode**: do NOT use `EnterPlanMode`.
 - Always output the result envelope at the end.
