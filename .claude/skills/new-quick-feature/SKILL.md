@@ -16,46 +16,63 @@ Intent:
 
 ## Approach
 
-Run an **entry gate** FIRST (4 questions, one at a time). If any answer fails, stop and suggest `/new-feature`. If the gate passes, run a minimal conversational intake and write `quick-spec.md`.
+`/sdd-new` already classified this as fast-lane — **do not re-interrogate the user to re-confirm the lane.** Instead:
 
-Do NOT restate the idea or run intake before the gate completes — gate first, intake second.
+1. **Scan the code first** (Step 0) so your questions are grounded and you can infer most answers.
+2. Run a **grill-me-style intake**: one question at a time, each with a recommendation, skipping anything the code or the idea already answers. Stop asking when remaining unknowns no longer change the implementation or verification strategy.
+3. **You draft** the acceptance criteria / rollback / success metric from the conversation and present them for confirmation — the user does not have to type Given/When/Then.
 
-## Entry gate (4 questions, one at a time)
+There is no user-facing entry gate. The only escalation is the silent guard inside Step 0.
 
-**Q1 (single-domain)**: Restate the intent in one sentence and ask:
-> "Is this change contained to a single domain — one module/folder/service? (If it touches multiple domains, we'll switch to `/new-feature`.)"
+## Step 0 — Silent mini-scan (before the first question)
 
-**Q2 (no new deps)**: Ask:
-> "Does this require adding any new library, package, or external service that isn't already in the project?"
+Ground yourself in the codebase. ~30-60 seconds:
 
-**Q3 (≤2 GWT)**: Ask:
-> "Can we capture acceptance in 2 or fewer Given/When/Then criteria? (If the definition of done is more complex, we'll use `/new-feature`.)"
+- `Glob` for paths the idea likely touches; `Grep` for symbols/strings from `$ARGUMENTS`; `Read` the top 2-3 most relevant files.
+- The scan is **for you** — do NOT dump file lists or excerpts to the user. Absorb context and reference real names in your questions.
+- If a question can be answered from code, answer it from code instead of asking.
 
-**Q4 (risk screen)**: Ask:
-> "Does this touch schema/data migration, auth/permissions, billing/payments, public API/integration contracts, background jobs, concurrency, security/privacy, perf-critical paths, or rollback-hard behavior?"
+**Silent escalation guard** (no questions): while scanning, if the change as understood genuinely requires a schema/data migration, auth/permission change, billing/payments, a public API/integration contract change, background jobs, concurrency, or other rollback-hard behavior, stop the fast lane and tell the user once:
+> "Esto toca `<concrete trigger found in code>` — lo trato como `/new-feature` para no subdimensionarlo."
+Then execute `/new-feature` inline with the same intent. Do NOT ask the four old gate questions; this guard fires only on a concrete trigger you actually found, otherwise stay fast-lane silently.
 
-**Exit rule**: If Q1 = multi-domain/unknown, OR Q2 = needs new deps/unknown, OR Q3 = >2 GWT/unknown, OR Q4 = any risk trigger/unknown, tell the user: "This sounds like a fuller feature — let me run `/new-feature` instead." Stop. Do NOT write `quick-spec.md`.
+## Grill-me intake (one question at a time)
 
-## Intake (only after the gate passes — one question at a time)
+Walk the decision tree in dependency order, but **only ask what the scan left open**:
 
-1. **Confirm**: Restate the intent. Ask: "Confirm before we proceed?"
-2. **Trigger**: "What triggers this? (user action, API call, cron, event)"
-3. **Happy path**: "Walk me through the main flow when everything goes right."
-4. **Acceptance criteria**: "Give me 1–2 criteria in **Given/When/Then** format."
-   - **Hard-stop**: GWT format only. If user gives free-form, rewrite into GWT and confirm. Never accept non-GWT criteria.
-5. **Rollback**: "If this goes wrong after deploy, how do we revert?"
-6. **Success criterion**: "What measurable indicator tells us it's working? (e.g., error rate < 0.1%)"
+1. **Behavior** — what changes from the user's/system's point of view? (Was X, now Y.)
+2. **Scope** — which file/module/symbol does it land in? Reuse vs new? (Reference what you found in Step 0; confirm rather than ask open-ended when the scan already suggests the answer.)
+3. **Trigger** — user action, API call, cron, event — if not obvious from the code.
+4. **Edge / failure modes** — only the 1-2 that actually affect this slice.
 
-## Quality gate (internal checklist before writing)
+Rules for the intake:
+- One question at a time. Wait for the answer.
+- Every question carries a concrete **recommendation** ("Recomendación: …, porque …") the user can accept, reject, or edit.
+- If the code answers it, do not ask it — state the inferred answer as part of your recommendation so the user can correct it.
+- Challenge fuzzy terms once with a concrete referent, then move on.
+- Stop when the remaining unknowns no longer change implementation or verification.
 
-Verify ALL of these:
-- [ ] Trigger clear
-- [ ] Happy path with numbered steps
-- [ ] 1–2 acceptance criteria in strict Given/When/Then format
-- [ ] Rollback plan
-- [ ] 1 measurable success criterion
+## Auto-drafted quality gate (you draft, user confirms)
 
-If anything is missing, ask one more targeted question. Do NOT write the spec until the gate passes.
+Once the intake has enough signal, **you write** the following from the conversation + code — do not make the user phrase them:
+
+```
+Antes de generar quick-spec.md, confirmá o corregí:
+
+ACCEPTANCE CRITERIA (G/W/T):
+- [ ] Given X, When Y, Then Z
+- [ ] Given A, When B, Then C   (máx 2)
+
+ROLLBACK:
+- <plan>
+
+SUCCESS METRIC:
+- <measurable indicator, e.g. error rate < 0.1%>
+```
+
+**Hard gate**: do NOT write `quick-spec.md` until the user confirms (or corrects) the three blocks. If they correct, rewrite and re-present. The artifact still carries strict Given/When/Then acceptance criteria — you authored them, the user only validated.
+
+If drafting the acceptance criteria forces you past 2 G/W/T to capture "done", that is a signal the change outgrew fast-lane — switch to `/new-feature` with the same intent.
 
 ## Generate quick-spec.md
 
@@ -103,9 +120,12 @@ Save immediately on:
 ```
 
 ## Rules
-- Ask ONE question at a time. Wait for the answer before moving on.
-- Entry gate runs **before** intake — do not restate the idea or ask any other question until Q1, Q2, Q3, and Q4 are all answered.
-- Hard-stop on GWT format for acceptance criteria.
+- **Scan before asking** (Step 0). Never ask what the code answers — infer it and let the user correct.
+- **No user-facing entry gate.** `/sdd-new` already chose the lane; trust it. The only escalation is the silent Step 0 guard, and it fires only on a concrete trigger found in code.
+- Ask ONE question at a time, each with a recommendation. Wait for the answer before moving on.
+- Stop asking when remaining unknowns no longer change implementation or verification.
+- **You draft** acceptance criteria (strict G/W/T), rollback, and success metric; the user confirms or corrects — they do not type G/W/T.
 - Do NOT create `plan.md` or `tasks.md` — `quick-spec.md` combines all three.
 - Do NOT launch sub-agents. This command owns the conversation inline.
+- **NEVER use Plan Mode**: do NOT use `EnterPlanMode`.
 - Always output the result envelope at the end.

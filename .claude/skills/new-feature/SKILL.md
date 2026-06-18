@@ -16,11 +16,13 @@ Feature idea/request: `$ARGUMENTS`
 
 A short, code-anchored technical interview. Focus is on **the feature** (behavior, scope in the codebase, contract, risks, acceptance) — NOT on business context (problem, users, why-now). The user is a developer who already knows the why; this skill helps lock down the *what* and *how*.
 
-**5 blocks, one question at a time.** Each block is grounded in the actual codebase (you do a silent mini-scan before the first question, so your questions reference real files and symbols).
+**5 blocks, walked in order, one question at a time — but adaptive.** Each block is grounded in the actual codebase (you do a silent mini-scan before the first question, so your questions reference real files and symbols). The blocks are a *coverage checklist*, not a fixed questionnaire: if Step 0 already resolves a block from code, confirm the inferred answer in one line instead of asking it open-ended, and move on. Stop drilling a block once the remaining unknowns no longer change implementation or verification.
+
+**The line that must not be crossed**: skipping a question because the *code* answered it is grill-me and encouraged. Filling an answer from *memory, prior artifacts, or assumption* without a user turn is the silent-bypass bug and is forbidden (see HARD RULE). Inference comes from code you read this session, never from memory.
 
 ## HARD RULE — interview is unconditional
 
-The interview runs in full. None of the following may shortcut, skip, condense, or batch-fill any block:
+Every block must be **covered** before writing the spec. Code from Step 0 may resolve a block (record it `code-resolved`, see Interview blocks) — that is the only allowed shortcut. None of the following may shortcut, skip, condense, or batch-fill any block:
 
 - **Engram observations**: `mem_search` results MAY surface relevant prior context to bias which concrete examples you bring into questions, but MUST NOT be used to skip blocks, pre-fill answers, or assume the user agrees with a prior decision. If a previous spec for this idea appears in memory, ASK: "Veo un spec previo para esta idea en memoria — ¿lo retomamos, lo rehacemos desde cero, o lo descartamos?" and proceed accordingly.
 - **Prototype results**: prior prototype notes MAY shape recommendations, but MUST NOT replace user answers. If a prototype decision exists, ask whether to adopt it for this spec before writing it into `clarify.md`.
@@ -59,6 +61,8 @@ For each block: ask **one question at a time**, wait for the user's answer, past
 Recommended answer: <your recommended answer and why>
 <user's answer, verbatim>
 ```
+
+If a block was fully resolved by the Step 0 scan, do not ask it open-ended. Record it as `code-resolved: <file/symbol> — <inferred answer>` and, when it matters, surface the inference for correction ("Por lo que vi en `<file>`, asumo <X>; corregime si no"). Memory never counts as resolution — only code you read this session.
 
 If an answer is vague on a technical point ("hacelo bien", "como sea"), ask once for a concrete example or referent — but don't grill. One follow-up max, then move on noting the openness.
 
@@ -232,7 +236,7 @@ After generating spec.md, output:
 
 Antes de copiar el template o escribir una sola línea de `spec.md`, verificá las 4. Si alguna es falsa, STOP y completá lo que falte preguntándole al usuario:
 
-- [ ] Cada uno de los 5 bloques tiene al menos un Q/A en `clarify.md` con respuesta del usuario en **esta conversación** (no derivada de memoria, no de artefactos previos).
+- [ ] Cada uno de los 5 bloques está **cubierto** en `clarify.md`: o con un Q/A respondido por el usuario en **esta conversación**, o anotado como `code-resolved: <archivo/símbolo>` cuando el código del Step 0 lo despejó sin ambigüedad. Lo que NO vale: un bloque rellenado desde memoria, artefactos previos o asunción sin turno del usuario ni evidencia de código.
 - [ ] Las preguntas del Block 2 y 3 referencian archivos/símbolos reales del codebase (verificados en Step 0).
 - [ ] El bloque auto-draft (GWT / rollback / success) fue **presentado al usuario** y este respondió OK o correcciones.
 - [ ] Ningún contenido de `clarify.md` fue levantado de un spec previo sin confirmación explícita del usuario en esta sesión.

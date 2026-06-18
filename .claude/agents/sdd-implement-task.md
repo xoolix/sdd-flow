@@ -47,19 +47,24 @@ Rules:
 - Default scope is **one unlocked AFK vertical slice** per invocation. `/sdd-next` and `/sdd-auto` will re-run you for the next unlocked slice, keeping each sub-agent context clean.
 - If the orchestrator passes `FORCE_TASK_ID=Tnnn`, select exactly that task for a validation retry. If it is currently checked (`- [x]`), reopen it (`- [ ]`) before retrying because the previous completion was invalidated. Still respect `blocked_by` dependencies and never implement `[HITL]` tasks.
 
-## TDD detection
+## TDD detection (hard rule)
 
-Check if this project uses TDD:
-1. Look for test framework configuration (jest.config, pytest.ini, vitest.config, .rspec, etc.)
-2. Check `.claude/rules/testing.md` for TDD conventions
-3. Look for existing test patterns (test files that match source files)
+Determine `TDD_MODE` deterministically. It is **ON** if ANY of these is true:
 
-**If TDD is detected**, execute each task using the RED → GREEN → REFACTOR cycle:
-1. **RED**: Write a failing test that captures the expected behavior for this task
-2. **GREEN**: Write the minimum code to make the test pass
-3. **REFACTOR**: Clean up the code while keeping tests green
+1. A test framework is configured (`jest.config*`, `vitest.config*`, `pytest.ini`/`pyproject.toml [tool.pytest]`, `.rspec`, `go.mod` with `_test.go` files, `cargo` with `#[test]`, etc.).
+2. Test files already exist (any `*.test.*`, `*.spec.*`, `*_test.*`, `test_*.*`, or files under `tests/`, `__tests__/`, `spec/`).
+3. `.claude/rules/testing.md` declares a TDD stance (e.g. a `tdd: strict` line or TDD conventions).
 
-**If TDD is not detected**, use the standard implementation flow below.
+**If the repo already has tests or a test framework, `TDD_MODE` is ON — it is not a judgment call.** Run `Glob`/`Bash` to check 1 and 2 before deciding; do not infer from memory.
+
+`.claude/rules/testing.md` provides explicit overrides that win over auto-detection: a `tdd: strict` line forces `TDD_MODE` ON (even with no tests yet — introduce the framework and write the failing test first); a `tdd: off` line forces it OFF (test-first stays preferred, not gated). Absent an explicit line, silence never turns `TDD_MODE` OFF when tests/framework exist.
+
+When `TDD_MODE` is ON, execute each task with testable behavior using the RED → GREEN → REFACTOR cycle:
+1. **RED**: Write a failing test that captures the expected behavior for this task. Run it; paste the real failure output.
+2. **GREEN**: Write the minimum code to make the test pass.
+3. **REFACTOR**: Clean up the code while keeping tests green.
+
+`TDD_MODE` OFF (greenfield repo with no tests and no framework yet): still write a test-first for any testable behavior when a framework can be added trivially; otherwise follow the standard flow and record why in `decisions.md`.
 
 ## TDD quality bar
 
@@ -116,7 +121,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
 4. **Implement the selected task**:
    a. Read and understand the relevant code paths.
    b. **Test-first gate** — before writing implementation code:
-      - **If the task has testable behavior**: write the test first, run it, paste the real failure output, only then implement. (Mandatory whenever TDD mode is detected; strongly preferred otherwise.)
+      - **If the task has testable behavior**: write the test first, run it, paste the real failure output, only then implement. **This is mandatory whenever `TDD_MODE` is ON (see TDD detection) — i.e. always, in any repo that already has tests or a test framework.** Implementing testable behavior without a preceding failing test in `TDD_MODE` is a gate violation: stop, write the test, and redo. When `TDD_MODE` is OFF it is strongly preferred.
       - The test must exercise the public interface that users/callers rely on. Do not couple the test to private functions, transient data shape, or implementation-only collaborators.
       - Write exactly one new behavior test at a time. Get it GREEN before adding the next behavior test.
       - **If the task is not testable** (infra, config, migration, exploration, prose docs): document the reason inline in `decisions.md` under a `## Test-skip rationale` heading for that task — one line is enough.

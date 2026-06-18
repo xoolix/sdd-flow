@@ -81,7 +81,7 @@ Do not launch a sub-agent. Intake phases are conversational and need multi-turn 
 - `quick`: read `.claude/skills/new-quick-feature/SKILL.md` from the project (or `~/.claude/skills/new-quick-feature/SKILL.md` if not present locally), and execute it inline with `$ARGUMENTS`.
 - `full`: read `.claude/skills/new-feature/SKILL.md` from the project (or `~/.claude/skills/new-feature/SKILL.md` if not present locally), and execute it inline with `$ARGUMENTS`.
 
-When executing `fix` or `quick`, preserve their entry gates. If the gate fails, switch to `full` by executing `/new-feature` inline with the same intent. Do not ask the user to re-run a different command.
+The fast lanes (`fix`, `quick`) no longer re-ask a 4-question entry gate — you already chose the lane here, and they trust that. Each fast lane scans the code first (its Step 0) and carries a **silent escalation guard**: if the scan reveals a concrete hard trigger (migration, auth/permissions, billing, public API/contract, concurrency, rollback-hard), it switches to `/new-feature` inline with the same intent on its own. Do not ask the user to re-run a different command.
 
 **CRITICAL — why this skill must NOT delegate to a sub-agent**: the adversarial interview requires multi-turn dialogue with the user. Sub-agents run one-shot and return; they cannot pause to ask the user mid-flow. If you delegate, the agent will silently auto-fill answers with assumptions and surface them only as "Open Questions" in its final envelope — defeating the entire purpose of the interview.
 

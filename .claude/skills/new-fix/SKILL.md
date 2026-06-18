@@ -16,48 +16,64 @@ Bug intent:
 
 ## Approach
 
-Run an **entry gate** FIRST (4 questions, one at a time). If any answer fails, stop and suggest `/new-feature`. If the gate passes, run a minimal Kiro-style intake (Current / Expected / Unchanged) and write `quick-spec.md`.
+`/sdd-new` already classified this as fast-lane — **do not re-interrogate the user to re-confirm the lane.** Instead:
 
-Do NOT restate the bug or run intake before the gate completes — gate first, intake second.
+1. **Scan the code first** (Step 0): try to locate the buggy code and infer the root cause before asking anything.
+2. Run a **grill-me-style intake** around Current / Expected / Unchanged: one question at a time, each with a recommendation, skipping anything the code already answers.
+3. **You draft** the acceptance criteria / rollback / success metric and present them for confirmation — the user does not have to type Given/When/Then.
 
-## Entry gate (4 questions, one at a time)
+There is no user-facing entry gate. The only escalation is the silent guard inside Step 0.
 
-**Q1 (single-domain)**: Restate the intent in one sentence and ask:
-> "Is this fix contained to a single domain — one module/folder/service? (If it touches multiple domains, we'll switch to `/new-feature`.)"
+## Step 0 — Silent mini-scan (before the first question)
 
-**Q2 (no new deps)**: Ask:
-> "Does this fix require adding any new library, package, or external service that isn't already in the project?"
+Ground yourself in the buggy code. ~30-60 seconds:
 
-**Q3 (≤2 GWT)**: Ask:
-> "Can we capture acceptance in 2 or fewer Given/When/Then criteria? (If the definition of done is more complex, we'll use `/new-feature`.)"
+- `Grep` for the error message, symbol, or route from `$ARGUMENTS`; `Read` the suspect file(s) and the surrounding flow.
+- Form a **root-cause hypothesis** from the code so your questions confirm a theory rather than start from zero.
+- The scan is **for you** — do NOT dump file lists or excerpts. Absorb context and reference real names.
 
-**Q4 (risk screen)**: Ask:
-> "Does this fix touch schema/data migration, auth/permissions, billing/payments, public API/integration contracts, background jobs, concurrency, security/privacy, perf-critical paths, or rollback-hard behavior?"
+**Silent escalation guard** (no questions): if the fix as understood genuinely requires a schema/data migration, auth/permission change, billing/payments, a public API/integration contract change, background jobs, concurrency, or other rollback-hard behavior, stop the fast lane and tell the user once:
+> "Esto toca `<concrete trigger found in code>` — lo trato como `/new-feature` para no subdimensionarlo."
+Then execute `/new-feature` inline with the same intent. Otherwise stay fast-lane silently.
 
-**Exit rule**: If Q1 = multi-domain/unknown, OR Q2 = needs new deps/unknown, OR Q3 = >2 GWT/unknown, OR Q4 = any risk trigger/unknown, tell the user: "This sounds like a fuller feature — let me run `/new-feature` instead." Stop. Do NOT write `quick-spec.md`.
+## Grill-me intake (one question at a time)
 
-## Intake (only after the gate passes — one question at a time)
+Walk Current / Expected / Unchanged in order, but **only ask what the scan left open**:
 
-1. **Confirm**: Restate the bug. Ask: "Confirm bug description before we proceed?"
-2. **Trigger**: "How is this bug reproduced? (steps or conditions)"
-3. **Current behavior**: "What happens today (the bug)?"
-4. **Expected behavior**: "What should happen instead?"
-5. **Unchanged behavior** (regression guard): "What MUST NOT change — what existing behavior do you want to guarantee stays the same?"
-6. **Acceptance criteria**: "Give me 1–2 criteria in **Given/When/Then** format. Ideally one criterion is a unit test that fails before the fix and passes after."
-   - **Hard-stop**: GWT format only. If user gives free-form, rewrite into GWT and confirm. Never accept non-GWT criteria.
-7. **Rollback**: "If the fix goes wrong after deploy, how do we revert?"
-8. **Success criterion**: "What measurable indicator tells us the bug is gone? (e.g., error rate, log absence)"
+1. **Repro / trigger** — how is it reproduced? (Confirm from code if you can already see the path.)
+2. **Current behavior** — what happens today. Lead with your code-derived hypothesis: "Por lo que vi en `<file:line>`, parece que <root cause>. ¿Coincide?"
+3. **Expected behavior** — what should happen instead.
+4. **Unchanged behavior** (regression guard) — what MUST NOT change. This one is rarely inferable; almost always ask. Non-empty is required.
 
-## Quality gate (internal checklist before writing)
+Rules for the intake:
+- One question at a time, each with a concrete **recommendation**. Wait for the answer.
+- If the code answers it, state the inferred answer instead of asking open-ended.
+- Stop when the remaining unknowns no longer change the fix or its verification.
 
-Verify ALL of these:
-- [ ] Trigger clear
-- [ ] Current Behavior, Expected Behavior, **Unchanged Behavior** all have >=1 entry each (Unchanged is the regression guard — non-empty required)
-- [ ] 1–2 acceptance criteria in strict Given/When/Then format
-- [ ] Rollback plan
-- [ ] 1 measurable success criterion
+## Auto-drafted quality gate (you draft, user confirms)
 
-If anything is missing, ask one more targeted question.
+Once the intake has enough signal, **you write** the following from the conversation + code:
+
+```
+Antes de generar quick-spec.md, confirmá o corregí:
+
+ACCEPTANCE CRITERIA (G/W/T):
+- [ ] Given X, When Y, Then Z   (ideally one is a unit test that fails before the fix, passes after)
+- [ ] Given A, When B, Then C   (máx 2)
+
+UNCHANGED (regression guard):
+- <what must stay the same>
+
+ROLLBACK:
+- <plan>
+
+SUCCESS METRIC:
+- <measurable indicator, e.g. error rate, log absence>
+```
+
+**Hard gate**: do NOT write `quick-spec.md` until the user confirms (or corrects) these blocks. The Unchanged list must be non-empty. The artifact still carries strict G/W/T acceptance criteria — you authored them, the user only validated.
+
+If capturing "done" needs more than 2 G/W/T, the fix outgrew fast-lane — switch to `/new-feature`.
 
 ## Generate quick-spec.md
 
@@ -105,10 +121,13 @@ Save immediately on:
 ```
 
 ## Rules
-- Ask ONE question at a time. Wait for the answer before moving on.
-- Entry gate runs **before** intake — do not restate the bug or ask any other question until Q1, Q2, Q3, and Q4 are all answered.
-- Hard-stop on GWT format for acceptance criteria.
+- **Scan before asking** (Step 0). Form a root-cause hypothesis from code; confirm it instead of asking from zero.
+- **No user-facing entry gate.** `/sdd-new` already chose the lane; trust it. The only escalation is the silent Step 0 guard, firing only on a concrete trigger found in code.
+- Ask ONE question at a time, each with a recommendation. Wait for the answer before moving on.
+- Stop asking when remaining unknowns no longer change the fix or its verification.
+- **You draft** acceptance criteria (strict G/W/T), rollback, and success metric; the user confirms or corrects.
 - Unchanged Behavior list is the regression guard — non-empty required.
 - Do NOT create `plan.md` or `tasks.md` — `quick-spec.md` combines all three.
 - Do NOT launch sub-agents. This command owns the conversation inline.
+- **NEVER use Plan Mode**: do NOT use `EnterPlanMode`.
 - Always output the result envelope at the end.
