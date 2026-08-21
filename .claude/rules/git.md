@@ -3,9 +3,22 @@
 <!-- TODO: Run /init-project to auto-detect these from your codebase -->
 
 ## Agent rules
-- **Create a branch** when starting `/implement-task` (e.g., `feature/NNN-description`).
-- **Never commit or push.** Leave all changes unstaged for manual review.
-- The human handles commits, merges, and PRs.
+- `/implement-task` calls `sdd branch <feature-id>` to create or switch to the feature branch (e.g., `feature/NNN-description`) — never a raw `git checkout -b`.
+- Phases commit their own work via `sdd commit-slice`: `/implement-task` makes one commit per validated slice, and `/simplify-code` and `/archive-feature` each commit their own work too. Commits happen only after validations pass.
+- **Nothing is pushed during development.** The branch stays local until a human confirms the PR gate.
+- The gate: `sdd open-pr <feature-id>` pushes and opens a **draft** PR, only on explicit human confirmation.
+- All git writes go through `bin/sdd` — agents never call `git commit` or `git push` directly. See `docs/adr/0002-sdd-git-write-boundary.md`.
+
+## Auto-commit
+
+`auto-commit: on|off` — default is **on**. Phases commit their own work automatically per the rules above; no declaration needed.
+
+Use the knob below only to **force** the stance explicitly:
+
+- `auto-commit: off` — disable automatic commits. Phases still validate and mark tasks complete, but leave the resulting changes unstaged for manual review — the pre-020 behavior.
+
+<!-- auto-commit: off -->
+<!-- Uncomment the line above to disable automatic commits. Absent line = auto-commit on (default). -->
 
 ## Branch naming
 <!-- e.g. feature/NNN-description, fix/NNN-description -->
@@ -40,6 +53,7 @@ The sidecar is gitignored (`specs/**/.parent-branch`) — it is a local machine 
 
 ## Commit style
 <!-- e.g. Conventional commits, imperative mood -->
+`sdd commit-slice` writes conventional commits: `<type>(<feature-id>): [Tnnn ]<title>`.
 
 ## Release / Rollout
 <!-- e.g. Docker, Kubernetes, Vercel, etc. -->

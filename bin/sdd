@@ -5,7 +5,7 @@ set -euo pipefail
 # Initializes any project with the SDD workflow for Claude Code.
 
 SDD_HOME="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")/.." && pwd)"
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 # ─── Core SDD skills (these go to global ~/.claude/skills/) ──────
 CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto sdd-hitl init-project build-registry feature-spec diagnose-bug tdd grill-me prototype _shared"
@@ -88,6 +88,14 @@ Usage:
   sdd doctor                     Verify SDD setup is healthy
   sdd base-branch [feature-id]   Resolve the base branch for scope computations
                                  (Layer 1: sidecar, Layer 2: git.md config, Layer 3: auto-detect)
+  sdd branch <feature-id>        Idempotently switch to feature/<feature-id> (create if missing)
+  sdd commit-slice <feature-id>  Stage --files plus the derived specs/<feature-id> dir and commit;
+                                 never pushes, never 'git add -A'
+                                 (--type <t> [--task Tnnn] --title "<s>" --files <p>... ; --files last)
+  sdd open-pr <feature-id>       Pre-flight (feature branch, gh on PATH, gh auth, remote), then
+                                 push + 'gh pr create --draft' with title/body built from spec.md +
+                                 decisions.md; writes .pr-opened on success only. Pre-flight failure
+                                 pushes nothing and prints the manual command to stderr.
   sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
   sdd help                       Show this help
 
@@ -736,6 +744,308 @@ cmd_base_branch() {
   return 3
 }
 
+# ─── branch ────────────────────────────────────────────────────────
+
+cmd_branch() {
+  local feature_id="${1:-}"
+
+  if [ -z "$feature_id" ]; then
+    printf 'error: usage: sdd branch <feature-id>\n' >&2
+    return 2
+  fi
+
+  local branch_name="feature/${feature_id}"
+  local current_branch
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+
+  if [ "$current_branch" = "$branch_name" ]; then
+    printf '%s\n' "$branch_name"
+    return 0
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/${branch_name}"; then
+    if ! git checkout "$branch_name"; then
+      return 4
+    fi
+  else
+    if ! git checkout -b "$branch_name"; then
+      return 4
+    fi
+  fi
+
+  printf '%s\n' "$branch_name"
+  return 0
+}
+
+# ─── commit-slice ──────────────────────────────────────────────────
+
+# Resolve a feature's directory: specs/<feature-id> if present, else the
+# archived specs/archive/*-<feature-id> match. Prints the resolved absolute
+# path on stdout and returns 0 on success; returns 1 with no output otherwise.
+# Shared by cmd_status and cmd_commit_slice (F2) so both stay in sync.
+resolve_feature_dir() {
+  local feature_id="$1" specs_dir="$2"
+
+  if [ -d "$specs_dir/$feature_id" ]; then
+    printf '%s\n' "$specs_dir/$feature_id"
+    return 0
+  fi
+
+  local archive_match
+  archive_match="$(find "$specs_dir/archive" -maxdepth 1 -type d -name "*-${feature_id}" 2>/dev/null | head -1)"
+  if [ -n "$archive_match" ]; then
+    printf '%s\n' "$archive_match"
+    return 0
+  fi
+
+  return 1
+}
+
+cmd_commit_slice() {
+  local usage_msg='usage: sdd commit-slice <feature-id> --type <t> [--task Tnnn] --title "<s>" --files <p>... (--files last)'
+
+  local feature_id="${1:-}"
+  [ $# -gt 0 ] && shift
+
+  if [ -z "$feature_id" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  local type="" task="" title=""
+  local -a files=()
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --type)
+        [ $# -ge 2 ] || { printf 'error: --type requires a value\n' >&2; return 2; }
+        type="$2"
+        shift 2
+        ;;
+      --task)
+        [ $# -ge 2 ] || { printf 'error: --task requires a value\n' >&2; return 2; }
+        task="$2"
+        shift 2
+        ;;
+      --title)
+        [ $# -ge 2 ] || { printf 'error: --title requires a value\n' >&2; return 2; }
+        title="$2"
+        shift 2
+        ;;
+      --files)
+        shift
+        while [ $# -gt 0 ] && [[ "$1" != --* ]]; do
+          files+=("$1")
+          shift
+        done
+        ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  if [ -z "$type" ] || [ -z "$title" ] || [ "${#files[@]}" -eq 0 ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  local specs_dir feature_dir
+  specs_dir="$(pwd)/specs"
+  if ! feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    return 3
+  fi
+
+  # Stage exactly the named files plus the derived feature dir. Never 'git add -A'.
+  if [ "${#files[@]}" -gt 0 ]; then
+    if ! git add -- "${files[@]}"; then
+      return 4
+    fi
+  fi
+  if ! git add -- "$feature_dir"; then
+    return 4
+  fi
+
+  if git diff --cached --quiet; then
+    printf 'error: nothing staged for commit\n' >&2
+    return 5
+  fi
+
+  local subject
+  if [ -n "$task" ]; then
+    subject="${type}(${feature_id}): ${task} ${title}"
+  else
+    subject="${type}(${feature_id}): ${title}"
+  fi
+
+  if ! git commit -q -m "$subject"; then
+    return 4
+  fi
+
+  local sha
+  sha="$(git rev-parse HEAD)"
+  printf '%s\n' "$sha"
+
+  # Post-commit safety net: warn (stderr only — stdout must stay $()-safe) if a
+  # tracked file was left dirty, e.g. an omitted --files entry.
+  local dirty
+  dirty="$(git status --porcelain 2>/dev/null | grep -v '^??' || true)"
+  if [ -n "$dirty" ]; then
+    printf 'warning: tracked files still dirty after commit:\n%s\n' "$dirty" >&2
+  fi
+
+  return 0
+}
+
+# ─── open-pr ───────────────────────────────────────────────────────
+
+# Lines between an exact "## <heading>" line and the next "## " heading (or EOF).
+extract_section() {
+  local file="$1" heading="## $2"
+  awk -v heading="$heading" '
+    $0 == heading { found=1; next }
+    found && /^## / { exit }
+    found { print }
+  ' "$file"
+}
+
+# PR title: the "# Feature: <title>" H1 from spec.md (or quick-spec.md for
+# fast-lane), else fall back to the raw feature-id.
+build_pr_title() {
+  local feature_dir="$1" feature_id="$2"
+  local spec_file="$feature_dir/spec.md"
+  [ -f "$spec_file" ] || spec_file="$feature_dir/quick-spec.md"
+
+  if [ -f "$spec_file" ]; then
+    local h1
+    h1="$(head -n1 "$spec_file" | sed 's/^# Feature: //')"
+    if [ -n "$h1" ]; then
+      printf '%s\n' "$h1"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$feature_id"
+}
+
+# PR body: Summary + Acceptance Criteria + Rollback Plan from spec.md, plus
+# decisions.md verbatim (human decision: built from spec.md + decisions.md,
+# not `gh pr create --fill`'s commit-derived title/body). Writes to a temp
+# file and prints its path — `gh pr create --body-file` wants a path, not stdin.
+build_pr_body_file() {
+  local feature_dir="$1"
+  local spec_file="$feature_dir/spec.md"
+  [ -f "$spec_file" ] || spec_file="$feature_dir/quick-spec.md"
+
+  local body_file
+  body_file="$(mktemp)"
+  {
+    if [ -f "$spec_file" ]; then
+      printf '## Summary\n'
+      extract_section "$spec_file" "Summary"
+      printf '\n## Acceptance Criteria\n'
+      extract_section "$spec_file" "Acceptance Criteria"
+      printf '\n## Rollback Plan\n'
+      extract_section "$spec_file" "Rollback Plan"
+    fi
+    if [ -f "$feature_dir/decisions.md" ]; then
+      printf '\n## Decisions\n'
+      cat "$feature_dir/decisions.md"
+    fi
+  } > "$body_file"
+
+  printf '%s\n' "$body_file"
+}
+
+# Written only on success — the durable PR record. NOT gitignored (T007);
+# unlike .simplified it carries no self-invalidation risk.
+write_pr_opened_sentinel() {
+  local feature_dir="$1" url="$2" branch="$3"
+  local head_sha
+  head_sha="$(git rev-parse HEAD)"
+  {
+    printf 'url: %s\n' "$url"
+    printf 'branch: %s\n' "$branch"
+    printf 'head: %s\n' "$head_sha"
+    printf 'date: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$feature_dir/.pr-opened"
+}
+
+cmd_open_pr() {
+  local feature_id="${1:-}"
+
+  if [ -z "$feature_id" ]; then
+    printf 'error: usage: sdd open-pr <feature-id>\n' >&2
+    return 2
+  fi
+
+  # Printed verbatim on any pre-flight failure so the gate stays resumable by hand.
+  local manual_cmd='git push -u origin HEAD && gh pr create --draft --title "<title>" --body-file <body-file>'
+
+  local specs_dir feature_dir
+  specs_dir="$(pwd)/specs"
+  if ! feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    printf 'manual: %s\n' "$manual_cmd" >&2
+    return 3
+  fi
+
+  # ── Pre-flight, in order: feature branch → gh on PATH → gh auth → remote ──
+  local branch_name="feature/${feature_id}"
+  local current_branch
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+  if [ "$current_branch" != "$branch_name" ]; then
+    printf 'error: not on %s (currently on %s)\n' "$branch_name" "${current_branch:-a detached HEAD}" >&2
+    printf 'manual: %s\n' "$manual_cmd" >&2
+    return 3
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    printf 'error: gh CLI not found on PATH\n' >&2
+    printf 'manual: %s\n' "$manual_cmd" >&2
+    return 3
+  fi
+
+  if ! gh auth status >/dev/null 2>&1; then
+    printf 'error: gh auth status failed — run "gh auth login"\n' >&2
+    printf 'manual: %s\n' "$manual_cmd" >&2
+    return 3
+  fi
+
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    printf 'error: no "origin" remote configured\n' >&2
+    printf 'manual: %s\n' "$manual_cmd" >&2
+    return 3
+  fi
+
+  # Reuse an already-open PR for this branch instead of creating a duplicate.
+  local existing_url
+  existing_url="$(gh pr view --json url --jq '.url' 2>/dev/null || true)"
+  if [ -n "$existing_url" ]; then
+    write_pr_opened_sentinel "$feature_dir" "$existing_url" "$branch_name"
+    printf '%s\n' "$existing_url"
+    return 0
+  fi
+
+  local pr_title body_file
+  pr_title="$(build_pr_title "$feature_dir" "$feature_id")"
+  body_file="$(build_pr_body_file "$feature_dir")"
+
+  if ! git push -u origin HEAD; then
+    return 4
+  fi
+
+  local pr_url
+  if ! pr_url="$(gh pr create --draft --title "$pr_title" --body-file "$body_file")"; then
+    return 4
+  fi
+
+  write_pr_opened_sentinel "$feature_dir" "$pr_url" "$branch_name"
+  printf '%s\n' "$pr_url"
+  return 0
+}
+
 # ─── status ────────────────────────────────────────────────────────
 
 cmd_status() {
@@ -760,16 +1070,8 @@ cmd_status() {
   local feature_dir=""
   local is_archived=false
 
-  if [ -d "$specs_dir/$feature_id" ]; then
-    feature_dir="$specs_dir/$feature_id"
-  else
-    # Scan specs/archive/ for *-<feature_id>
-    local archive_match
-    archive_match="$(find "$specs_dir/archive" -maxdepth 1 -type d -name "*-${feature_id}" 2>/dev/null | head -1)"
-    if [ -n "$archive_match" ]; then
-      feature_dir="$archive_match"
-      is_archived=true
-    fi
+  if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    [ "$feature_dir" = "$specs_dir/$feature_id" ] || is_archived=true
   fi
 
   if [ -z "$feature_dir" ]; then
@@ -781,7 +1083,11 @@ cmd_status() {
   local phase
 
   if $is_archived; then
-    phase="archived"
+    if [ -f "$feature_dir/.pr-opened" ]; then
+      phase="archived"
+    else
+      phase="ready-to-pr"
+    fi
   elif [ ! -f "$feature_dir/spec.md" ] && [ ! -f "$feature_dir/quick-spec.md" ]; then
     phase="missing"
   elif [ ! -f "$feature_dir/plan.md" ] || [ ! -f "$feature_dir/tasks.md" ]; then
@@ -875,6 +1181,7 @@ cmd_status() {
     ready-to-simplify) next_command="/simplify-code ${feature_id}" ;;
     ready-to-review)   next_command="/review-feature ${feature_id}" ;;
     archived)          next_command="(none — feature archived)" ;;
+    ready-to-pr)       next_command="sdd open-pr ${feature_id}" ;;
     *)                 next_command="(unknown)" ;;
   esac
 
@@ -904,6 +1211,9 @@ case "${1:-help}" in
   update)       cmd_update ;;
   doctor)       cmd_doctor ;;
   base-branch)  shift; cmd_base_branch "$@" ;;
+  branch)       shift; cmd_branch "$@" ;;
+  commit-slice) shift; cmd_commit_slice "$@" ;;
+  open-pr)      shift; cmd_open_pr "$@" ;;
   status)       shift; cmd_status "$@" ;;
   help|--help|-h) usage ;;
   version|--version|-v) echo "sdd v${VERSION}" ;;
