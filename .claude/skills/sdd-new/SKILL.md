@@ -73,15 +73,17 @@ Only ask more triage if the user's answer makes the lane impossible:
 - `quick` requires the fast-lane confidence gate above.
 - Anything else escalates to `full`.
 
-### Step 2 — Execute chosen intake inline
+### Step 2 — Execute chosen intake
 
-Do not launch a sub-agent. Intake phases are conversational and need multi-turn user dialogue.
+Do not launch a sub-agent. Intake phases are conversational and need multi-turn user dialogue — the Skill tool loads the skill body into the current context, so the conversation stays inline in main Claude.
 
-- `fix`: read `.claude/skills/new-fix/SKILL.md` from the project (or `~/.claude/skills/new-fix/SKILL.md` if not present locally), and execute it inline with `$ARGUMENTS`.
-- `quick`: read `.claude/skills/new-quick-feature/SKILL.md` from the project (or `~/.claude/skills/new-quick-feature/SKILL.md` if not present locally), and execute it inline with `$ARGUMENTS`.
-- `full`: read `.claude/skills/new-feature/SKILL.md` from the project (or `~/.claude/skills/new-feature/SKILL.md` if not present locally), and execute it inline with `$ARGUMENTS`.
+- `fix`: invoke the `new-fix` skill via the Skill tool, passing `$ARGUMENTS` as args.
+- `quick`: invoke the `new-quick-feature` skill via the Skill tool, passing `$ARGUMENTS` as args.
+- `full`: invoke the `new-feature` skill via the Skill tool, passing `$ARGUMENTS` as args.
 
-The fast lanes (`fix`, `quick`) no longer re-ask a 4-question entry gate — you already chose the lane here, and they trust that. Each fast lane scans the code first (its Step 0) and carries a **silent escalation guard**: if the scan reveals a concrete hard trigger (migration, auth/permissions, billing, public API/contract, concurrency, rollback-hard), it switches to `/new-feature` inline with the same intent on its own. Do not ask the user to re-run a different command.
+Do NOT re-implement or paraphrase the intake from memory — always load it via the Skill tool so the current SKILL.md body governs the flow.
+
+The fast lanes (`fix`, `quick`) no longer re-ask a 4-question entry gate — you already chose the lane here, and they trust that. Each fast lane scans the code first (its Step 0) and carries a **silent escalation guard**: if the scan reveals a concrete hard trigger (migration, auth/permissions, billing, public API/contract, concurrency, rollback-hard), it invokes the `new-feature` skill with the same intent on its own. Do not ask the user to re-run a different command.
 
 **CRITICAL — why this skill must NOT delegate to a sub-agent**: the adversarial interview requires multi-turn dialogue with the user. Sub-agents run one-shot and return; they cannot pause to ask the user mid-flow. If you delegate, the agent will silently auto-fill answers with assumptions and surface them only as "Open Questions" in its final envelope — defeating the entire purpose of the interview.
 

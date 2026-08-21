@@ -2,7 +2,6 @@
 name: review-feature
 description: Review implementation with one conformance reviewer plus one adversarial judge
 user-invocable: true
-disable-model-invocation: true
 arguments: feature-id
 ---
 
@@ -11,6 +10,8 @@ arguments: feature-id
 Feature-id: `$ARGUMENTS`
 
 **Main Claude executes this skill body inline. You orchestrate sub-agents and synthesize results.**
+
+**Invocation guard**: run this phase only when the user explicitly typed `/review-feature`, or an SDD orchestrator (`/sdd-next`, `/sdd-auto`) detected it as the next phase and invoked it (including fix→re-review cycles). Never start it on your own initiative — if a review seems warranted, suggest the command and let the user decide.
 
 > Sub-agents you launch MUST follow the executor boundary from `.claude/skills/_shared/sdd-phase-common.md` — they do the work themselves without re-delegating.
 
@@ -58,6 +59,8 @@ Read state files:
 - **FAST_LANE = false**: Read `specs/$ARGUMENTS/spec.md`, `plan.md`, `tasks.md`, and `decisions.md`.
 - **FAST_LANE = true**: Read `specs/$ARGUMENTS/quick-spec.md` and `decisions.md`.
 
+**Resolve implementing model** (for cross-review routing): search `decisions.md` for lines matching `implemented-by: <runtime>`. Take the LAST such line's value as the implementing model. If no `implemented-by` line exists, assume the current runtime (`claude`) and note that this was an assumption — it gets recorded in Step 6.6 if cross-review runs. `CROSS_REVIEW_MODEL` is the opposite of the implementing model (`claude` → `codex`; `codex` → `claude`).
+
 ### 2. Resolve review mode
 
 Parse `$ARGUMENTS` for flags.
@@ -81,18 +84,48 @@ Parse `$ARGUMENTS` for flags.
    [<ISO-8601 UTC timestamp>] review-mode=minimal (judgment-day skipped via --minimal)
    ```
 
+### 2.5. Detect cross-review availability
+
+Only run this step when mode is `judgment-day` (resolved in Step 2). Under `--minimal`, skip this step entirely — no detection, no audit line, no `CROSS_REVIEW_AVAILABLE`.
+
+Determine `CROSS_REVIEW_AVAILABLE`:
+
+1. Read `~/.claude/plugins/installed_plugins.json`. Its real shape is `{ "version": <int>, "plugins": { "<name>@<marketplace>": [ { "scope", "installPath", "version", "installedAt", "lastUpdated", "gitCommitSha" }, ... ] } }` — a registry of install records. **It does NOT carry an enabled/disabled flag.** Check `.plugins["codex@openai-codex"]` is a non-empty array.
+2. Read `~/.claude/settings.json`. The actual enable/disable state lives here, under `.enabledPlugins["codex@openai-codex"]` (a boolean). Check that value is exactly `true`.
+3. Check `command -v codex` resolves.
+4. Take the highest-`version` install record and resolve its `installPath`. If `installPath` is missing, empty, or does not exist on disk, `CROSS_REVIEW_AVAILABLE = false` with reason `skipped — codex plugin registry entry has no valid installPath` — never fall back to globbing `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` for an unregistered cache version. When `installPath` resolves, confirm the companion script exists at `<installPath>/scripts/codex-companion.mjs`.
+
+`CROSS_REVIEW_AVAILABLE = true` only if ALL of: the plugin is registered and non-empty in `installed_plugins.json`, `enabledPlugins["codex@openai-codex"]` is `true` in `settings.json` (an unreadable or absent `settings.json` counts as this check failing, identical to `enabledPlugins` being missing), the codex CLI resolves, AND the registry's own `installPath` resolves to an existing companion script. An unregistered cache directory is never a substitute for a valid `installPath` — trusting an orphaned cache entry would run a review the user turned off or uninstalled, defeating the kill-switch.
+
+If `CROSS_REVIEW_AVAILABLE = false`:
+- Record `Cross-Review: skipped — <reason>` for the result envelope (e.g., `skipped — codex plugin not active`, `skipped — codex plugin not installed`, `skipped — codex CLI not on PATH`).
+- Append one audit line to `specs/$ARGUMENTS/decisions.md` (create with `# Decisions\n` header if absent):
+  ```
+  [<ISO-8601 UTC timestamp>] Cross-Review: skipped — <reason>
+  ```
+
 ### 3. Launch review agents
 
 Launch `sdd-reviewer` always.
 
 If mode is `judgment-day`, also launch `sdd-judge` in parallel. Do not wait for one before launching the other.
 
+If mode is `judgment-day` AND `CROSS_REVIEW_AVAILABLE` is true, also launch `sdd-cross-reviewer` in the same parallel batch. Pass it the feature-id and a brief focus summary (acceptance criteria + touched files distilled from the state files read in Step 1.5). Do NOT compute scope (working-tree vs base-branch) for it — `sdd-cross-reviewer` determines that itself per its own protocol. `sdd-cross-reviewer` is excluded entirely under `--minimal` and whenever `CROSS_REVIEW_AVAILABLE` is false.
+
+**Cross-agent failure handling (fail-open, never blocks the phase)**: `sdd-cross-reviewer` is launched via the Agent tool alongside `sdd-reviewer`/`sdd-judge`, but its failures must never fail the phase or consume `review-feature`'s own retry budget (`sdd-phase-common.md` §F, max 2 retries). Treat all of the following the same way — record `Cross-Review: skipped — cross-agent failure: <detail>` and proceed to consolidate using only `sdd-reviewer` + `sdd-judge`:
+- The Agent tool fails to launch it (unregistered agent type, launch exception) — `<detail>` = the launch error.
+- It crashes or returns no usable output mid-run — `<detail>` = what was observed (e.g., `no response returned`).
+- It exceeds its own internal deadline and never returns to the orchestrator — `<detail>` = `timeout`.
+- Its response contains no `### Cross-Verdict:` line (malformed or truncated output) — `<detail>` = `no Cross-Verdict line in response`.
+
+None of these cases are retried by the orchestrator, and none of them count toward the 2-retry validation budget — the cross-reviewer is advisory-only, so an unusable result from it is equivalent to `CROSS_REVIEW_AVAILABLE = false` for consolidation purposes, just detected after launch instead of before.
+
 Each agent receives the same state context:
 
 - **FAST_LANE = false**: full `spec.md`, `plan.md`, `tasks.md`, and `decisions.md`.
 - **FAST_LANE = true**: full `quick-spec.md` and `decisions.md`.
 
-Prompt both agents to run real tests where relevant and return their exact output format. For `sdd-judge`, explicitly remind it that a high finding must be scoped, plausible, and actionable; otherwise it should be medium/low or omitted.
+Prompt `sdd-reviewer` and `sdd-judge` to run real tests where relevant and return their exact output format. For `sdd-judge`, explicitly remind it that a high finding must be scoped, plausible, and actionable; otherwise it should be medium/low or omitted. `sdd-cross-reviewer` follows its own agent protocol (companion invocation) — it does not run the repo's test suite itself.
 
 ### 4. Consolidate verdicts
 
@@ -115,6 +148,8 @@ Apply conservative consolidation:
 | PASS WITH WARNINGS | PASS/PASS WITH WARNINGS | PASS WITH WARNINGS | continue with warnings |
 | PASS | PASS WITH WARNINGS | PASS WITH WARNINGS | continue with warnings |
 | PASS | PASS or absent | PASS | continue |
+
+**Invariant**: `sdd-cross-reviewer`'s output NEVER enters this table and NEVER sets the Final verdict. It returns a `### Cross-Verdict:` field — a distinct, differently-named field precisely so it cannot be confused with `Verdict` by any consumer, including the fix loops in `sdd-next`/`sdd-auto`, which branch only on `Verdict`. A cross-review `FAIL` degrades to a warning line — `cross-review reported FAIL (advisory)` — appended to the result envelope's `Risks` field; it never changes the Final verdict computed above.
 
 ### 5. Invalidate simplify sentinel on conformance FAIL
 
@@ -152,6 +187,32 @@ Use `JUDGMENT-DAY-HIGH` if judge verdict is `FAIL`; otherwise use `JUDGMENT-DAY`
 
 If judge verdict is `FAIL`, return `Status: blocked`, `Verdict: BLOCKED-JUDGMENT-DAY-HIGH`, and include the findings plus `### Blocking Rationale` in `Spec-Gaps`. The human must decide whether to update the spec, accept the risk, or cancel/re-scope.
 
+### 6.6. Record cross-review findings
+
+If mode was `judgment-day`, `CROSS_REVIEW_AVAILABLE` was true, and `sdd-cross-reviewer` ran to a usable result (its response contains a `### Cross-Verdict:` line), append its output to `decisions.md`:
+
+```markdown
+## CROSS-REVIEW — $ARGUMENTS
+
+[paste the full ### Cross-Findings block (table, "None.", or the unparseable raw-output block) from sdd-cross-reviewer here]
+
+Cross-Verdict: [paste the ### Cross-Verdict: line]
+Source: sdd-cross-reviewer (codex), review-feature phase
+Date: [current date]
+```
+
+If the implementing model was assumed rather than read from a marker (Step 1.5 found no `implemented-by` line), add: `Implementing model assumed: claude (no implemented-by marker found)`.
+
+If `CROSS_REVIEW_AVAILABLE` was false, Step 2.5's audit line already covers the skip — do not duplicate an entry here. Under `--minimal`, skip this step entirely (no section, no audit).
+
+If the cross-agent failed per Step 3's fail-open handling (launch failure, crash, timeout, or no `### Cross-Verdict:` line), append one audit line instead of the full CROSS-REVIEW section:
+```
+[<ISO-8601 UTC timestamp>] Cross-Review: skipped — cross-agent failure: <detail>
+```
+Set the result envelope's `Cross-Review` field to the same value. This is audited exactly like a `CROSS_REVIEW_AVAILABLE = false` skip and is never treated as a phase failure — Step 4 consolidation proceeds using only `sdd-reviewer` + `sdd-judge`.
+
+If the cross-review verdict is `FAIL`, add `cross-review reported FAIL (advisory)` to the result envelope's `Risks` field — never to `Verdict` or the Step 4 consolidation table.
+
 ### 7. Engram memory (skip if Engram unavailable)
 
 - **On start**: `mem_search` query `sdd/$ARGUMENTS` + domain keywords, `project: "{project}"`.
@@ -173,17 +234,19 @@ After completing, output:
 - **Summary**: [1-3 sentences: reviewer verdict, judge verdict, key findings]
 - **Artifacts**: [decisions.md if updated, review report if written, .simplified if deleted]
 - **mode**: minimal | judgment-day
+- **Cross-Review** _(optional, judgment-day only)_: <verdict> (advisory, model: codex) | skipped — <razón>
 - **Next**: /archive-feature $ARGUMENTS (if PASS/PASS WITH WARNINGS) or /implement-task $ARGUMENTS with Review-Feedback (if FAIL) or human decision (if BLOCKED-JUDGMENT-DAY-HIGH)
-- **Risks**: [critical gaps or concerns, or "None"]
+- **Risks**: [critical gaps or concerns, or "None" — include `cross-review reported FAIL (advisory)` here if applicable]
 - **Review-Feedback**: [structured table from reviewer — include when reviewer verdict is FAIL or PASS WITH WARNINGS]
 - **Spec-Gaps**: [judge findings — include when Status is blocked due to BLOCKED-JUDGMENT-DAY-HIGH]
 ```
 
 ## Rules
 - **NEVER use Plan Mode**: Do NOT use `EnterPlanMode`.
-- **Delegate, don't execute**: Launch `sdd-reviewer` and, unless `--minimal`, `sdd-judge`.
+- **Delegate, don't execute**: Launch `sdd-reviewer` and, unless `--minimal`, `sdd-judge`; also launch `sdd-cross-reviewer` when judgment-day AND `CROSS_REVIEW_AVAILABLE`.
 - **Run real tests**: The reviewer must run actual tests; the judge may run tests when relevant.
 - **No voting**: There is no majority logic. Reviewer and judge are distinct signals.
+- **Cross-review is advisory only**: it never contributes to Step 4 consolidation and never sets `Verdict`. A cross `FAIL` is recorded as a warning in `Risks`, never as a blocker. Every skip or unparseable result is audited in `decisions.md`, never silent.
 - **Conservative consolidation**: Reviewer FAIL means code/test fix loop. Judge FAIL means human spec/risk decision, but judge FAIL requires a scoped, plausible, actionable high-severity finding.
 - **Structured feedback**: Review-Feedback must be actionable and map to task bullets.
 - Be specific — reference files and line numbers.

@@ -2,7 +2,6 @@
 name: new-feature
 description: "Run a short, code-anchored technical interview to produce clarify.md + spec.md for a feature (full-spec lane). For fast bugfixes/refactors use /new-fix or /new-quick-feature."
 user-invocable: true
-disable-model-invocation: true
 arguments: idea or request description
 ---
 
@@ -11,6 +10,8 @@ arguments: idea or request description
 Feature idea/request: `$ARGUMENTS`
 
 **Main Claude executes this skill body inline.** Do NOT launch a sub-agent — the interview requires turn-by-turn dialogue with the user, which sub-agents cannot do.
+
+**Invocation guard**: run this interview only when the user explicitly typed `/new-feature`, when `/sdd-new` classified the lane as `full` and routed here, or when a fast-lane intake escalated via its silent escalation guard. Never start it on your own initiative mid-conversation — if a spec seems warranted, suggest the command and let the user decide.
 
 ## What this skill does
 
