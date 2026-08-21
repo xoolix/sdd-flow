@@ -62,7 +62,7 @@
   - touches: .claude/agents/sdd-simplify-code.md, .gitignore
   - type: feat
 
-- [ ] **T008 [AFK] Wire `/archive-feature`**: after the folder move, one `sdd commit-slice` call on the derived path; no branching (haiku-safe); set `commit:`.
+- [x] **T008 [AFK] Wire `/archive-feature`**: after the folder move, one `sdd commit-slice` call on the derived path; no branching (haiku-safe); set `commit:`.
   - blocked_by: T002, T005
   - verifies: AC1, AC5
   - touches: .claude/agents/sdd-archive-feature.md

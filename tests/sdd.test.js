@@ -365,6 +365,36 @@ describe("sdd CLI smoke tests", () => {
     expect(gitignore).not.toContain(".pr-opened");
   });
 
+  test("archive-feature commits the archived folder as a single haiku-safe call, no branching (T008)", () => {
+    const archiveFeature = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"), "utf8");
+
+    // Step 3.5: exactly one commit-slice call, type chore, no --task flag (archive has no task id).
+    expect(archiveFeature).toContain("### 3.5. Commit the slice");
+    expect(archiveFeature).toContain("sdd commit-slice $ARGUMENTS --type chore");
+    expect(archiveFeature).toContain("no `--task` flag (an archive pass has no task ID)");
+
+    // Auto-commit knob, same grep-the-rules-file shape as implement-task/simplify-code.
+    expect(archiveFeature).toContain("auto-commit:\\s*off");
+    expect(archiveFeature).toContain("Commit: none");
+
+    // Derived-directory reasoning (F2): the folder already moved before this runs.
+    expect(archiveFeature).toContain("sdd commit-slice derives the feature directory");
+    expect(archiveFeature).toContain("F2 in `decisions.md`");
+
+    // On failure: blocked, stderr, no recovery logic invented on this tier.
+    expect(archiveFeature).toContain("Do not attempt recovery logic");
+
+    // The haiku / no-branching constraint must be spelled out so a future editor
+    // doesn't "improve" this into a decision tree.
+    expect(archiveFeature).toContain("model: haiku");
+    expect(archiveFeature).toContain("cheapest tier in the pipeline");
+    expect(archiveFeature).toContain("no conditional branching");
+    expect(archiveFeature).toContain("that branching lives in `bin/sdd`");
+
+    // Envelope gains the Commit field.
+    expect(archiveFeature).toContain("- **Commit**:");
+  });
+
   test("review-feature pipeline wires in the cross-reviewer as an advisory third agent", () => {
     const reviewFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/review-feature/SKILL.md"), "utf8");
 

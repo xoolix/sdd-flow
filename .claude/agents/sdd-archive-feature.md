@@ -41,6 +41,23 @@ If any check fails, stop and tell the user what's needed. Do NOT proceed.
    - Move `specs/$ARGUMENTS/` to `specs/archive/YYYY-MM-DD-$ARGUMENTS/` (using today's date).
    - Run `rm -f specs/archive/YYYY-MM-DD-$ARGUMENTS/.simplified` — silent no-op if absent (see CLAUDE.md `## Archive folder format`; sentinel has no value after archiving).
 
+### 3.5. Commit the slice
+
+Determine `AUTO_COMMIT`: grep `.claude/rules/git.md` for a line matching `^auto-commit:\s*off`. Found ⇒ skip this step and report `Commit: none`. Absent ⇒ `AUTO_COMMIT` is **on** (the default) — proceed below. Same knob resolution `/implement-task` Step 7.5 and `/simplify-code` Step 5.5 use.
+
+Call exactly one `sdd commit-slice`, no `--task` flag (an archive pass has no task ID):
+
+```
+sdd commit-slice $ARGUMENTS --type chore --files <spec files touched by the delta merge>
+```
+
+By the time this runs, the folder has already moved to `specs/archive/YYYY-MM-DD-$ARGUMENTS/`. This is exactly why sdd commit-slice derives the feature directory (F2 in `decisions.md`): it tries `specs/$ARGUMENTS` first, then falls back to `find specs/archive -maxdepth 1 -type d -name "*-$ARGUMENTS"`. The plain call above works with no path override — do not invent one.
+
+- **On success**: record the printed SHA as `Commit: <sha>` for the result envelope.
+- **On failure** (`sdd commit-slice` exits non-zero): return `Status: blocked` with the CLI's stderr pasted verbatim. Do not attempt recovery logic.
+
+**This agent runs on `model: haiku`** — the cheapest tier in the pipeline. Before this step it does pure filesystem `mv` with no git awareness at all. Keep this step to exactly one `sdd commit-slice` call with no conditional branching beyond the on/off knob above: complex conditional git-failure reasoning does not belong here — that branching lives in `bin/sdd`. Do not "improve" this into a decision tree.
+
 4. **Present summary** — Show the user what was archived and any deltas that were merged.
 
 5. **Engram memory — permanent feature snapshot** (skip if Engram unavailable):
@@ -65,6 +82,7 @@ After completing, output:
 - **Status**: success | partial | blocked
 - **Summary**: [1-3 sentences describing what was archived and deltas merged]
 - **Artifacts**: [archive location, updated spec if deltas merged]
+- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `AUTO_COMMIT` is off or the commit failed]
 - **Next**: Feature closed. Ready for next /new-feature.
 - **Risks**: [any concerns about merged deltas, or "None"]
 ```
@@ -75,4 +93,5 @@ After completing, output:
 - **Never archive with unchecked tasks** — all tasks must be complete or explicitly removed.
 - Preserve the full history: don't delete `decisions.md` content, just add the merge note.
 - The merged `spec.md` in the archive should reflect the final state of requirements.
+- **Step 3.5 stays one plain `sdd commit-slice` call** — this agent runs on `model: haiku`; do not add conditional git-failure recovery logic here, that branching belongs in `bin/sdd`.
 - Always output the result envelope at the end.
