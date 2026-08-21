@@ -68,7 +68,7 @@
   - touches: .claude/agents/sdd-archive-feature.md
   - type: feat
 
-- [ ] **T009 [AFK] Orchestrator PR gate**: `sdd-next` gains `ready-to-pr` + missing `archived` row; confirms with human, calls `sdd open-pr`; `sdd-auto` stops at gate (carve-out).
+- [x] **T009 [AFK] Orchestrator PR gate**: `sdd-next` gains `ready-to-pr` + missing `archived` row; confirms with human, calls `sdd open-pr`; `sdd-auto` stops at gate (carve-out).
   - blocked_by: T004, T006, T007, T008
   - verifies: AC5, AC6
   - touches: .claude/skills/sdd-next/SKILL.md, .claude/skills/sdd-auto/SKILL.md

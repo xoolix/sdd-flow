@@ -395,6 +395,48 @@ describe("sdd CLI smoke tests", () => {
     expect(archiveFeature).toContain("- **Commit**:");
   });
 
+  test("sdd-next gains the ready-to-pr gate and both orchestrators carve out the never-ask rule (T009)", () => {
+    const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
+    const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
+
+    // The "never ask" rule gains a bounded exception in BOTH orchestrators —
+    // worded as a carve-out, not a general softening of the rule.
+    expect(sddNext).toContain(
+      "Never ask for user confirmation — launch phases and advance automatically. **Exception: the post-archive PR gate**",
+    );
+    expect(sddAuto).toContain(
+      "**Never ask for user confirmation** — run all phases and advance automatically. **Exception: the post-archive PR gate**",
+    );
+    expect(sddNext).toContain("outward-facing actions that need a human's explicit go-ahead");
+    expect(sddAuto).toContain("outward-facing actions that need a human's explicit go-ahead");
+
+    // Phase-detection table gains the two post-archive rows sdd-next was missing,
+    // reconciling the drift against CLAUDE.md's master table (F3/F4 in decisions.md).
+    expect(sddNext).toContain("`sdd status <feature-id>` reports `phase: archived`");
+    expect(sddNext).toContain("`sdd status <feature-id>` reports `phase: ready-to-pr`");
+    // These two rows cannot key off file existence — the folder moved under specs/archive/.
+    expect(sddNext).toContain("F4 in `decisions.md`");
+    expect(sddNext).toContain(
+      "Once `/archive-feature` moves the folder, `specs/<feature-id>/` no longer exists",
+    );
+
+    // The gate itself: confirm once, then delegate the actual git/gh work to the CLI —
+    // the orchestrator never shells out to git push or gh directly (ADR 0002).
+    expect(sddNext).toContain("## Step 3a: PR gate");
+    expect(sddNext).toContain("sdd open-pr <feature-id>");
+    expect(sddNext).toContain("The orchestrator never calls `git push` or `gh` itself");
+    expect(sddNext).toContain("ADR 0002");
+    expect(sddNext).toContain(".pr-opened` was not written, so the gate stays resumable");
+
+    // sdd-auto's premise is "never pause" — it must now also stop at the gate
+    // instead of confirming it, and point the human back at /sdd-next to take it.
+    expect(sddAuto).toContain("`phase: ready-to-pr`");
+    expect(sddAuto).toContain("stop; do not confirm the gate yourself");
+    expect(sddAuto).toContain("run `/sdd-next <feature-id>` to take the gate");
+    // sdd-auto must delegate the gate rather than perform it — it never calls open-pr itself.
+    expect(sddAuto).not.toContain("sdd open-pr");
+  });
+
   test("review-feature pipeline wires in the cross-reviewer as an advisory third agent", () => {
     const reviewFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/review-feature/SKILL.md"), "utf8");
 
