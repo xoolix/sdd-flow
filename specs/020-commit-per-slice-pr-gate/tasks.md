@@ -74,7 +74,7 @@
   - touches: .claude/skills/sdd-next/SKILL.md, .claude/skills/sdd-auto/SKILL.md
   - type: feat
 
-- [ ] **T010 [AFK] Docs**: `CLAUDE.md` Commands/Pipeline/Phase-table/Workflow/Archive.
+- [x] **T010 [AFK] Docs**: `CLAUDE.md` Commands/Pipeline/Phase-table/Workflow/Archive.
   - blocked_by: T009
   - verifies: Rollback Plan, AC5
   - touches: CLAUDE.md

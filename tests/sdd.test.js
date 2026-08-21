@@ -437,6 +437,51 @@ describe("sdd CLI smoke tests", () => {
     expect(sddAuto).not.toContain("sdd open-pr");
   });
 
+  test("CLAUDE.md master docs cover the PR gate — human-input list, pipeline diagram, detection table, workflow diagram, archive format, commands, envelope (T010)", () => {
+    const claudeMd = fs.readFileSync(path.join(repoRoot, ".claude/CLAUDE.md"), "utf8");
+
+    // 1. "When Human Input Is Needed" gains a bullet for the routine ready-to-ship gate —
+    // every existing entry is an error/exhaustion state or a design decision, none covers this.
+    expect(claudeMd).toContain(
+      "**PR gate**: `/archive-feature` completed and `.pr-opened` absent (`sdd status` reports `phase: ready-to-pr`)",
+    );
+    expect(claudeMd).toContain("before `sdd open-pr` runs");
+
+    // 2. "Phase Pipeline" diagram gains the gate stage in the same ├─/└─ visual style
+    // as every other stage, showing both outcomes.
+    expect(claudeMd).toContain("/sdd-next → PR gate                  (human confirmation → sdd open-pr)");
+    expect(claudeMd).toContain("`.pr-opened` written");
+    expect(claudeMd).toContain("gate stays resumable");
+
+    // 3. "Phase Detection Logic" table gains a ready-to-pr row keyed off `sdd status`,
+    // not file existence — matching what T009 wrote into sdd-next/SKILL.md.
+    expect(claudeMd).toContain(
+      "| any | `sdd status <feature-id>` reports `phase: ready-to-pr` | — | — | Human PR gate — confirm, then `sdd open-pr <feature-id>` |",
+    );
+    expect(claudeMd).toContain("keys off `sdd status`, not file existence");
+    expect(claudeMd).toContain("F4 in `decisions.md`");
+
+    // 4. "Workflow" diagram gains the gate as one more step after archive-feature.
+    expect(claudeMd).toContain("PR gate (human confirm) → sdd open-pr");
+
+    // 5. "Archive folder format" documents .pr-opened, contrasted with .simplified.
+    expect(claudeMd).toContain("`.pr-opened` lives inside the archived folder");
+    expect(claudeMd).toContain("flips `sdd status` from `ready-to-pr` to `archived`");
+    expect(claudeMd).toContain("deliberately **tracked** (not gitignored)");
+
+    // 6. "SDD Commands" table descriptions reflect the pipeline now running through the gate.
+    expect(claudeMd).toContain("Detect current phase and run the next one, including the post-archive PR gate");
+    expect(claudeMd).toContain("stopping at the PR gate for human confirmation");
+    // bin/sdd subcommands are not user-invocable skills — they stay out of this table.
+    expect(claudeMd).not.toContain("`sdd commit-slice");
+    expect(claudeMd).not.toContain("`sdd open-pr`  |");
+
+    // 7. Result envelope line rewritten (not appended elsewhere) to include Commit —
+    // not.toContain on the exact old fenced line proves it was edited in place.
+    expect(claudeMd).toContain("Status | Summary | Artifacts | Next | Risks | Commit");
+    expect(claudeMd).not.toContain("```\nStatus | Summary | Artifacts | Next | Risks\n```");
+  });
+
   test("review-feature pipeline wires in the cross-reviewer as an advisory third agent", () => {
     const reviewFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/review-feature/SKILL.md"), "utf8");
 
