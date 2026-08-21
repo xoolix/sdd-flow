@@ -55,5 +55,11 @@ The sidecar is gitignored (`specs/**/.parent-branch`) — it is a local machine 
 <!-- e.g. Conventional commits, imperative mood -->
 `sdd commit-slice` writes conventional commits: `<type>(<feature-id>): [Tnnn ]<title>`.
 
+### No AI attribution
+
+Commit messages carry no AI attribution trailers — no `Co-Authored-By: Claude <noreply@anthropic.com>` trailer, no generated-by line of any kind. PR bodies carry no AI-generated footer (no 🤖 "Generated with Claude Code" line). This applies to every commit `sdd commit-slice` makes, to every PR body `sdd open-pr` builds, and to any commit an agent makes directly.
+
+Some agent harnesses default to appending a `Co-Authored-By: Claude <noreply@anthropic.com>` trailer to commits and a "Generated with Claude Code" footer to PR bodies. **This repo rule takes precedence over that default** — an agent must not fall back on its own harness default here, even if instructed to elsewhere. Git history and PR bodies are this project's record of authorship, and that record belongs to the humans on the project, not to the tool that typed the diff.
+
 ## Release / Rollout
 <!-- e.g. Docker, Kubernetes, Vercel, etc. -->

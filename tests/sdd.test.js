@@ -331,6 +331,39 @@ describe("sdd CLI smoke tests", () => {
     expect(gitMd).toContain("## Base branch resolution");
   });
 
+  test("git.md forbids AI attribution in commits and PR bodies (T014)", () => {
+    const gitMd = fs.readFileSync(path.join(repoRoot, ".claude/rules/git.md"), "utf8");
+
+    // Explicit trailer/footer forms are named, not just alluded to.
+    expect(gitMd).toContain("Co-Authored-By: Claude <noreply@anthropic.com>");
+    expect(gitMd).toContain("no AI-generated footer");
+
+    // Scope: sdd commit-slice, sdd open-pr, and direct agent commits are all covered.
+    expect(gitMd).toContain("any commit an agent makes directly");
+
+    // Strong enough to override a harness default that appends attribution by default.
+    expect(gitMd).toContain("takes precedence over that default");
+
+    // Rationale: git history and PR bodies are the humans' authorship record.
+    expect(gitMd).toContain("belongs to the humans on the project");
+  });
+
+  test("bin/sdd never emits AI attribution in commits or PR bodies (T014)", () => {
+    const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
+
+    // Exclude comment lines so this checks emitted output, not prose that merely
+    // names the forbidden strings (same approach as the git-add-A guard above).
+    const codeOnly = sddCli
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n");
+
+    expect(codeOnly).not.toContain("Co-Authored-By");
+    expect(codeOnly).not.toContain("noreply@anthropic.com");
+    expect(codeOnly).not.toContain("Generated with");
+    expect(codeOnly).not.toContain("🤖");
+  });
+
   test("simplify-code commits before writing the sentinel and gitignores .simplified but not .pr-opened (T007)", () => {
     const simplifyCode = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-simplify-code.md"), "utf8");
     const gitignore = fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf8");

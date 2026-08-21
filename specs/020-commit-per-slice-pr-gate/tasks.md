@@ -80,6 +80,12 @@
   - touches: CLAUDE.md
   - type: docs
 
+- [x] **T014 [AFK] No AI attribution**: forbid `Co-Authored-By` trailers and AI PR-body footers; assert `bin/sdd` emits neither.
+  - blocked_by: T010
+  - verifies: Rollback Plan
+  - touches: .claude/rules/git.md, tests/sdd.test.js
+  - type: docs
+
 ### 3. Human checkpoint
 
 - [ ] **T011 [HITL] Dogfood the pipeline on a real slice**: run implement→simplify→review→archive→gate; confirm one commit/slice, no unrelated files, `ready-to-pr` post-archive, gate works with/without `gh` auth.
