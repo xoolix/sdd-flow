@@ -1017,4 +1017,17 @@ describe("sdd CLI smoke tests", () => {
     // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
     expect(designer).toContain("the agent reads the rules file directly, the CLI never does");
   });
+
+  test("new-feature maps Domains to conventions.md Domain rules before Block 2/Step 0 fallback (T003)", () => {
+    const newFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/new-feature/SKILL.md"), "utf8");
+
+    // The `## Domains` mapping bullet reads the shared vocabulary first — same explicit-read
+    // pattern as the auto-commit knob and T002's designer instruction — before falling back
+    // to the interview's own Block 2 / Step 0 scan.
+    expect(newFeature).toContain("`## Domains` ← primero grep `.claude/rules/conventions.md` para `## Domain rules`");
+    expect(newFeature).toContain("vacío ⇒ derivá de Block 2 (archivos/módulos tocados) + el scan de Step 0");
+
+    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
+    expect(newFeature).toContain("el agente lee el archivo de reglas directamente, la CLI nunca lo hace");
+  });
 });

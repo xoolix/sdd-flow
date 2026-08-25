@@ -20,7 +20,7 @@
   - touches: .claude/agents/sdd-designer.md
   - type: feat
 
-- [ ] **T003 [AFK] new-feature reads Domain rules for spec Domains**: `## Domains` mapping instruction (SKILL.md:172) greps conventions.md § Domain rules first; empty → derive from clarify.md's Step 0 scan.
+- [x] **T003 [AFK] new-feature reads Domain rules for spec Domains**: `## Domains` mapping instruction (SKILL.md:172) greps conventions.md § Domain rules first; empty → derive from clarify.md's Step 0 scan.
   - blocked_by: none
   - verifies: AC2
   - touches: .claude/skills/new-feature/SKILL.md
