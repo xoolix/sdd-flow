@@ -989,4 +989,20 @@ describe("sdd CLI smoke tests", () => {
     expect(buildRegistry).toContain("default to `implement-task, review-feature`");
     expect(buildRegistry).toContain("5-15 lines");
   });
+
+  test("init-project asks for functional domains and fills Domain rules instead of TODO (T001)", () => {
+    const initProject = fs.readFileSync(path.join(repoRoot, ".claude/skills/init-project/SKILL.md"), "utf8");
+
+    // Step 1's Explore prompt gains an 11th ask for functional domains (business areas, not directories)
+    expect(initProject).toContain("11. Functional domains");
+    expect(initProject).toContain("business/functional areas");
+
+    // Step 3's Domain rules bullet is filled from the Step 1 scan, not left as a TODO
+    expect(initProject).toContain("**Domain rules**: Fill with the functional domains detected in Step 1");
+    expect(initProject).toContain("shared domain vocabulary");
+    expect(initProject).not.toContain("Leave as TODO for the user to fill");
+
+    // The existing overwrite guard is reused verbatim — it already covers the whole conventions.md file
+    expect(initProject).toContain("If `conventions.md` already has non-template content, ask the user before overwriting.");
+  });
 });
