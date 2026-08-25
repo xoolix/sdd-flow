@@ -1005,4 +1005,16 @@ describe("sdd CLI smoke tests", () => {
     // The existing overwrite guard is reused verbatim — it already covers the whole conventions.md file
     expect(initProject).toContain("If `conventions.md` already has non-template content, ask the user before overwriting.");
   });
+
+  test("sdd-designer reads Domain rules from conventions.md before filling domain sections (T002)", () => {
+    const designer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-designer.md"), "utf8");
+
+    // Explicit read instruction — mirrors the auto-commit knob pattern (agent reads the rules
+    // file directly; no ambient loading, no orchestrator-side injection).
+    expect(designer).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+    expect(designer).toContain("Content past the comment ⇒ use that vocabulary; empty ⇒ derive names from the exploration findings provided");
+
+    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
+    expect(designer).toContain("the agent reads the rules file directly, the CLI never does");
+  });
 });

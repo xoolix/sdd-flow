@@ -14,7 +14,7 @@
   - touches: .claude/skills/init-project/SKILL.md
   - type: feat
 
-- [ ] **T002 [AFK] sdd-designer reads Domain rules**: greps `.claude/rules/conventions.md` § Domain rules before filling plan.md's domain sections; empty → derive from exploration findings.
+- [x] **T002 [AFK] sdd-designer reads Domain rules**: greps `.claude/rules/conventions.md` § Domain rules before filling plan.md's domain sections; empty → derive from exploration findings.
   - blocked_by: none
   - verifies: AC2
   - touches: .claude/agents/sdd-designer.md

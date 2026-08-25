@@ -20,7 +20,11 @@ Feature-id: `$ARGUMENTS`
 
 ## Task
 
-Create `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base. Fill in:
+Create `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base.
+
+**Domain vocabulary.** Before filling any domain/module section (Domain analysis summary, Touched files/modules), grep `.claude/rules/conventions.md` for `## Domain rules`. Content past the comment ⇒ use that vocabulary; empty ⇒ derive names from the exploration findings provided. Mirrors the `auto-commit` knob in `git.md`: the agent reads the rules file directly, the CLI never does.
+
+Fill in:
 
 - **Domain analysis summary** (from the orchestrator's step 2 analysis)
 - **Current state** of relevant code (from exploration findings)
