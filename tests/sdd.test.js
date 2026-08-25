@@ -1130,4 +1130,69 @@ describe("sdd CLI smoke tests", () => {
     expect(template).toContain("Derive from what is evaluated");
     expect(template).toContain("vendor list (cost, lock-in,");
   });
+
+  describe("plan-template.md conditional sections (T007)", () => {
+    const planTemplatePath = path.join(repoRoot, ".specify/templates/plan-template.md");
+
+    test("Touched areas becomes a Module / path table, not the four fixed sub-fields", () => {
+      const template = fs.readFileSync(planTemplatePath, "utf8");
+
+      // Proves replacement, not addition alongside the old fixed sub-fields.
+      expect(template).not.toContain("APIs/contracts:");
+      expect(template).not.toContain("DB/schema:");
+      expect(template).not.toContain("Jobs/workers:");
+      expect(template).not.toContain("UI surfaces:");
+
+      // Heading name is unchanged — nothing parses it, but 3 archived plans already drifted
+      // to "## Touched files" and this feature should not add more drift.
+      expect(template).toContain("## Touched areas");
+      expect(template).toContain("| Module / path | Change |");
+    });
+
+    test("Observability and Migration / rollout become conditional, one-line sections", () => {
+      const template = fs.readFileSync(planTemplatePath, "utf8");
+
+      // Fixed sub-field lists are gone — proves replacement, not addition.
+      expect(template).not.toContain("- Logs:");
+      expect(template).not.toContain("- Metrics:");
+      expect(template).not.toContain("- Alerts:");
+      expect(template).not.toContain("- Backfill:");
+      expect(template).not.toContain("- Compatibility:");
+      expect(template).not.toContain("- Feature flags:");
+      expect(template).not.toContain("- Rollback:");
+
+      // Headings survive unchanged — regression guard against further drift.
+      expect(template).toContain("## Observability");
+      expect(template).toContain("## Migration / rollout");
+
+      // F5's adopted convention: `N/A — <reason>` as a section-level value, not a new
+      // fourth syntax alongside field-level N/A and `## Test-skip rationale`.
+      expect(template).toContain("N/A — <reason>");
+    });
+
+    test("plan-feature/SKILL.md drops Observability and Migration from the mandatory Fills-in list", () => {
+      const planFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/plan-feature/SKILL.md"), "utf8");
+
+      expect(planFeature).not.toContain("Migration / rollout strategy");
+      expect(planFeature).not.toContain("Observability plan");
+      expect(planFeature).not.toContain("Touched files/modules, APIs, DB/schema, jobs, UI");
+    });
+
+    test("plan-feature/SKILL.md carries the Domain vocabulary read instruction — F1's fourth consumer", () => {
+      const planFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/plan-feature/SKILL.md"), "utf8");
+
+      // Same explicit-read pattern as T002/T003/T004 — plan-feature is the orchestrator that
+      // launches sdd-designer, so it needs the instruction too (plan.md's F1 coverage gap).
+      expect(planFeature).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+      expect(planFeature).toContain("the agent reads the rules file directly, the CLI never does");
+    });
+
+    test("sdd-designer.md fill list matches the template's new conditional shape", () => {
+      const designer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-designer.md"), "utf8");
+
+      expect(designer).not.toContain("Touched files/modules, APIs, DB/schema, jobs, UI");
+      expect(designer).not.toContain("Migration / rollout strategy** — phased if MEDIUM/LARGE");
+      expect(designer).toContain("N/A — <reason>");
+    });
+  });
 });

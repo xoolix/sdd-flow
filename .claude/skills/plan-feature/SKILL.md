@@ -91,14 +91,15 @@ For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the 
    ```
 
 5. **Delegate design and tasks in parallel** — Launch **both sub-agents simultaneously in a single message** with two `Agent` tool calls:
+   - **Domain vocabulary.** Before launching `sdd-designer`, grep `.claude/rules/conventions.md` for `## Domain rules`. Content past the comment ⇒ pass that vocabulary to the designer; empty ⇒ the designer derives names from the exploration findings you collected in step 4. Mirrors the `auto-commit` knob in `git.md`: the agent reads the rules file directly, the CLI never does.
    - **`sdd-designer`**: Receives the spec + exploration findings (+ `discovery.md` content if resuming). Creates `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base. Fills in:
      - Domain analysis summary (from step 3)
      - Current state of relevant code
      - Proposed design
-     - Touched files/modules, APIs, DB/schema, jobs, UI
+     - Touched areas — a `| Module / path | Change |` table, real paths only
      - Data flow
-     - Migration / rollout strategy
-     - Observability plan
+     - Migration / rollout — conditional: real content, or `N/A — <reason>` when this feature has no rollout surface
+     - Observability — conditional: real content, or `N/A — <reason>` when this feature has no observability surface
      - Test strategy
      - Risks and mitigations
      - **Size budget**: The generated `plan.md` MUST be under 800 words. Prefer tables over prose.

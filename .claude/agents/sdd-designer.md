@@ -22,17 +22,17 @@ Feature-id: `$ARGUMENTS`
 
 Create `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base.
 
-**Domain vocabulary.** Before filling any domain/module section (Domain analysis summary, Touched files/modules), grep `.claude/rules/conventions.md` for `## Domain rules`. Content past the comment ⇒ use that vocabulary; empty ⇒ derive names from the exploration findings provided. Mirrors the `auto-commit` knob in `git.md`: the agent reads the rules file directly, the CLI never does.
+**Domain vocabulary.** Before filling any domain/module section (Domain analysis summary, Touched areas), grep `.claude/rules/conventions.md` for `## Domain rules`. Content past the comment ⇒ use that vocabulary; empty ⇒ derive names from the exploration findings provided. Mirrors the `auto-commit` knob in `git.md`: the agent reads the rules file directly, the CLI never does.
 
 Fill in:
 
 - **Domain analysis summary** (from the orchestrator's step 2 analysis)
 - **Current state** of relevant code (from exploration findings)
 - **Proposed design** — concrete approach, modules, data flow
-- **Touched files/modules, APIs, DB/schema, jobs, UI** — specific paths
+- **Touched areas** — a `| Module / path | Change |` table, real paths from exploration findings, no fixed sub-fields
 - **Data flow** — how inputs flow through the system
-- **Migration / rollout strategy** — phased if MEDIUM/LARGE
-- **Observability plan** — metrics, logs, alerts
+- **Migration / rollout** — conditional: real content if this feature has a rollout surface, else `N/A — <reason>`
+- **Observability** — conditional: real content if this feature has an observability surface, else `N/A — <reason>`
 - **Test strategy** — unit / integration / e2e coverage targets
 - **Risks and mitigations** — what could go wrong
 - **Open questions** — anything that needs research or user decision

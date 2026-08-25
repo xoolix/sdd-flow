@@ -46,7 +46,7 @@
   - touches: .specify/templates/research-template.md, tests/sdd.test.js
   - type: feat
 
-- [ ] **T007 [AFK] plan-template conditional sections**: `## Touched areas` drops the fixed APIs/DB/Jobs/UI fields for free-form Files/modules. `## Observability` and `## Migration / rollout` become conditional, reusing `N/A — <reason>` when absent. Not copied verbatim: update plan-feature/SKILL.md's "Fills in:" list, add its Domain vocabulary read instruction (F1's 4th consumer), and update sdd-designer.md to match. Add a regression guard for unchanged headings.
+- [x] **T007 [AFK] plan-template conditional sections**: `## Touched areas` drops the fixed APIs/DB/Jobs/UI fields for free-form Files/modules. `## Observability` and `## Migration / rollout` become conditional, reusing `N/A — <reason>` when absent. Not copied verbatim: update plan-feature/SKILL.md's "Fills in:" list, add its Domain vocabulary read instruction (F1's 4th consumer), and update sdd-designer.md to match. Add a regression guard for unchanged headings.
   - blocked_by: T002
   - verifies: AC3
   - touches: .specify/templates/plan-template.md, .claude/skills/plan-feature/SKILL.md, .claude/agents/sdd-designer.md, tests/sdd.test.js
