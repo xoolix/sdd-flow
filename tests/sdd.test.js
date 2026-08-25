@@ -52,6 +52,34 @@ function sddFail(args, options) {
   throw new Error(`expected "sdd ${args.join(" ")}" to fail, but it exited 0`);
 }
 
+// Resolves a feature's spec directory the same way bin/sdd's resolve_feature_dir
+// does: specs/<feature-id> while the feature is active, else the archived
+// specs/archive/<date>-<feature-id> match once /archive-feature has moved it.
+// Tests that assert on a feature's artifacts must go through this, or they
+// break with ENOENT the moment that feature is archived.
+function featureDir(featureId) {
+  const active = path.join(repoRoot, "specs", featureId);
+  if (fs.existsSync(active)) {
+    return active;
+  }
+
+  const archiveRoot = path.join(repoRoot, "specs", "archive");
+  if (fs.existsSync(archiveRoot)) {
+    const match = fs
+      .readdirSync(archiveRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.endsWith(`-${featureId}`))
+      .map((entry) => entry.name)
+      .sort()[0];
+    if (match) {
+      return path.join(archiveRoot, match);
+    }
+  }
+
+  throw new Error(
+    `feature "${featureId}" not found: no specs/${featureId} and no specs/archive/*-${featureId}`,
+  );
+}
+
 describe("sdd CLI smoke tests", () => {
   test("prints version", () => {
     const output = execFileSync(sddBin, ["version"], {
@@ -1290,8 +1318,9 @@ describe("sdd CLI smoke tests", () => {
     // They assert the artifacts stay in sync with decisions.md's own record —
     // catching the exact drift judge findings #3 and #4 flagged, so archiving
     // this feature doesn't freeze a spec/plan that contradicts its decision log.
-    const specPath = path.join(repoRoot, "specs/021-project-aware-templates/spec.md");
-    const planPath = path.join(repoRoot, "specs/021-project-aware-templates/plan.md");
+    const dir021 = featureDir("021-project-aware-templates");
+    const specPath = path.join(dir021, "spec.md");
+    const planPath = path.join(dir021, "plan.md");
 
     function extractSectionViaRealPath(file, heading) {
       const script = 'source "$0" help >/dev/null; extract_section "$1" "$2"';
