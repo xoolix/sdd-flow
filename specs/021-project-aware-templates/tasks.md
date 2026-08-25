@@ -34,7 +34,7 @@
 
 ### 2. Core implementation — template rewrites (downstream of the spine)
 
-- [ ] **T005 [AFK] spec-template Domains becomes derived**: Replace the fixed 8-item checklist with an HTML comment instructing real-module derivation (name unchanged). Add a genuine test in tests/sdd.test.js: build a spec.md from the changed template via makeTempProject, run the real extract_section path, assert Summary/Acceptance Criteria/Rollback Plan return non-empty — behavioral, not a regression guard.
+- [x] **T005 [AFK] spec-template Domains becomes derived**: Replace the fixed 8-item checklist with an HTML comment instructing real-module derivation (name unchanged). Add a genuine test in tests/sdd.test.js: build a spec.md from the changed template via makeTempProject, run the real extract_section path, assert Summary/Acceptance Criteria/Rollback Plan return non-empty — behavioral, not a regression guard.
   - blocked_by: T003
   - verifies: AC1, AC5
   - touches: .specify/templates/spec-template.md, tests/sdd.test.js

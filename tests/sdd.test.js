@@ -1047,4 +1047,72 @@ describe("sdd CLI smoke tests", () => {
     // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
     expect(researchSpike).toContain("the agent reads the rules file directly, the CLI never does");
   });
+
+  describe("spec-template.md Domains section (T005)", () => {
+    const specTemplatePath = path.join(repoRoot, ".specify/templates/spec-template.md");
+
+    // Sources bin/sdd's function definitions into a disposable bash process and runs the
+    // real build_pr_body_file (bin/sdd:936-953, which calls extract_section at :946/948/950)
+    // against featureDir, returning the PR body it builds. This is the actual shipped code
+    // path, not a reimplementation of the awk matcher. Going through `sdd open-pr` itself
+    // isn't possible here: its gh/remote pre-flight (bin/sdd:1004-1020) fails before ever
+    // reaching build_pr_body_file in a temp repo with no real GitHub remote.
+    function buildPrBodyViaRealPath(featureDir) {
+      // $0 is set to the real sddBin path (not a placeholder) so bin/sdd's own
+      // SDD_HOME resolution (readlink -f "$0" / realpath "$0") resolves cleanly.
+      const script = 'source "$0" help >/dev/null; build_pr_body_file "$1"';
+      const bodyFilePath = execFileSync("bash", ["-c", script, sddBin, featureDir], {
+        encoding: "utf8",
+      }).trim();
+      return fs.readFileSync(bodyFilePath, "utf8");
+    }
+
+    test("replaces the fixed 8-item Domains checklist with a derived-module instruction, not an addition", () => {
+      const template = fs.readFileSync(specTemplatePath, "utf8");
+
+      // Proves this was a replacement, not an addition alongside the old checklist.
+      expect(template).not.toContain("Database / storage");
+      expect(template).not.toContain("Notifications / messaging");
+      expect(template).not.toContain("- [ ] Other:");
+
+      // The section keeps its name — new-feature/SKILL.md:172 maps to it — and now
+      // instructs real-module derivation sourced from conventions.md § Domain rules.
+      expect(template).toContain("## Domains");
+      expect(template).toContain("Name the real modules touched");
+      expect(template).toContain("conventions.md` § Domain rules");
+    });
+
+    test("extract_section still pulls Summary/Acceptance Criteria/Rollback Plan from a spec.md built off the changed template (genuine, not a regression guard)", () => {
+      const project = makeTempProject();
+      const featureDir = path.join(project, "specs", "001-demo");
+
+      const template = fs.readFileSync(specTemplatePath, "utf8");
+      const filled = template
+        .replace(
+          "<!-- One paragraph describing what this feature does and why -->",
+          "GENUINE-SUMMARY-MARKER: derives Domains from real modules instead of a fixed checklist.",
+        )
+        .replace(
+          "- [ ] Given [precondition], When [action], Then [expected result]\n- [ ] Given [precondition], When [action], Then [expected result]",
+          "- [ ] Given a filled spec, When extract_section reads it, Then GENUINE-AC-MARKER is returned",
+        )
+        .replace(
+          "<!-- How do we revert if something goes wrong? -->",
+          "GENUINE-ROLLBACK-MARKER: revert the commit.",
+        );
+
+      // Guards the fixture itself: if any of the three replacements silently no-ops
+      // (e.g. the template's placeholder text drifted), fail loudly here instead of
+      // the assertions below passing for the wrong reason.
+      expect(filled).not.toBe(template);
+
+      fs.writeFileSync(path.join(featureDir, "spec.md"), filled);
+
+      const body = buildPrBodyViaRealPath(featureDir);
+
+      expect(body).toContain("GENUINE-SUMMARY-MARKER");
+      expect(body).toContain("GENUINE-AC-MARKER");
+      expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+    });
+  });
 });
