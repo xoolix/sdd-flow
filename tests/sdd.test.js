@@ -1246,4 +1246,42 @@ describe("sdd CLI smoke tests", () => {
       expect(pastComment(section)).toBe("");
     });
   });
+
+  describe("cmd_init seeds .claude/rules/ from a pristine seed, not SDD_HOME's own rules (T009)", () => {
+    // SEED-CONTAMINATION (decisions.md): SDD_HOME's own .claude/rules/conventions.md
+    // and model-overrides.md carry THIS repo's domain vocabulary and a real model
+    // override row (filled by T008 / feature 020). cmd_init used to copy those files
+    // verbatim into every new project. This is the real shipped code path — no
+    // reimplementation of the copy loop — so a genuine RED here means the bug is real.
+    test("a fresh `sdd init` does not leak this repo's domain vocabulary or model overrides, but still ships the auto-commit policy knob", () => {
+      const project = makeTempProject();
+
+      execFileSync(sddBin, ["init"], { cwd: project, encoding: "utf8" });
+
+      const conventions = fs.readFileSync(
+        path.join(project, ".claude/rules/conventions.md"),
+        "utf8",
+      );
+      const modelOverrides = fs.readFileSync(
+        path.join(project, ".claude/rules/model-overrides.md"),
+        "utf8",
+      );
+      const gitMd = fs.readFileSync(path.join(project, ".claude/rules/git.md"), "utf8");
+
+      // None of SDD_HOME's own domain vocabulary (T008) leaks into a new project.
+      expect(conventions).not.toContain("CLI surface");
+      expect(conventions).not.toContain("Phase agents");
+      expect(conventions).not.toContain("bin/sdd` subcommands");
+      expect(conventions).toContain("## Domain rules");
+
+      // None of SDD_HOME's own model override row leaks into a new project.
+      expect(modelOverrides).not.toContain("haiku");
+      expect(modelOverrides).not.toContain("| Review agent |");
+
+      // Framework policy (the auto-commit knob, feature 020) still ships — this
+      // file was never repo-specific, so it propagates unchanged.
+      expect(gitMd).toContain("auto-commit: on|off");
+      expect(gitMd).toContain("## Auto-commit");
+    });
+  });
 });
