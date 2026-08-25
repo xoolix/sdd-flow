@@ -40,7 +40,7 @@
   - touches: .specify/templates/spec-template.md, tests/sdd.test.js
   - type: feat
 
-- [ ] **T006 [AFK] research-template Evaluation criteria becomes derived**: Replace the fixed vendor-selection list with an HTML comment deriving criteria from what is evaluated. Add a regression guard for the surviving heading.
+- [x] **T006 [AFK] research-template Evaluation criteria becomes derived**: Replace the fixed vendor-selection list with an HTML comment deriving criteria from what is evaluated. Add a regression guard for the surviving heading.
   - blocked_by: T004
   - verifies: AC2
   - touches: .specify/templates/research-template.md, tests/sdd.test.js

@@ -1115,4 +1115,19 @@ describe("sdd CLI smoke tests", () => {
       expect(body).toContain("GENUINE-ROLLBACK-MARKER");
     });
   });
+
+  test("replaces the fixed vendor-selection Evaluation criteria list with a derived-criteria instruction, not an addition (T006)", () => {
+    const template = fs.readFileSync(path.join(repoRoot, ".specify/templates/research-template.md"), "utf8");
+
+    // Proves this was a replacement, not an addition alongside the old list — picks
+    // substrings that cannot appear elsewhere in the file by coincidence.
+    expect(template).not.toContain("Vendor lock-in");
+    expect(template).not.toContain("Team fit");
+
+    // The section keeps its name — sdd-research-spike.md:38 reads it as guidance — and now
+    // instructs criteria derived from what's actually being evaluated.
+    expect(template).toContain("## Evaluation criteria");
+    expect(template).toContain("Derive from what is evaluated");
+    expect(template).toContain("vendor list (cost, lock-in,");
+  });
 });
