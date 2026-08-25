@@ -54,7 +54,7 @@
 
 ### 3. Validation
 
-- [ ] **T008 [AFK] Verify domain vocabulary reaches filled artifacts**: Seed `.claude/rules/conventions.md` § Domain rules with distinctive test names; run sdd-designer (via plan-feature) and assert those names appear in plan.md's domain section. Empty the section, regenerate, and assert the names are gone and real modules appear instead. Regenerating 021's plan.md stays a sanity check (real paths, no fixed sub-fields), not the pass/fail gate.
+- [x] **T008 [AFK] Verify domain vocabulary reaches filled artifacts**: Seed `.claude/rules/conventions.md` § Domain rules with distinctive test names; run sdd-designer (via plan-feature) and assert those names appear in plan.md's domain section. Empty the section, regenerate, and assert the names are gone and real modules appear instead. Regenerating 021's plan.md stays a sanity check (real paths, no fixed sub-fields), not the pass/fail gate.
   - blocked_by: T002, T007
   - verifies: AC6
   - touches: .claude/rules/conventions.md, specs/021-project-aware-templates/plan.md
