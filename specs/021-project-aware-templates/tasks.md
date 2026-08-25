@@ -26,7 +26,7 @@
   - touches: .claude/skills/new-feature/SKILL.md
   - type: feat
 
-- [ ] **T004 [AFK] sdd-research-spike reads Domain rules for Evaluation criteria**: greps conventions.md § Domain rules before filling `## Evaluation criteria`; empty → derive from what is evaluated.
+- [x] **T004 [AFK] sdd-research-spike reads Domain rules for Evaluation criteria**: greps conventions.md § Domain rules before filling `## Evaluation criteria`; empty → derive from what is evaluated.
   - blocked_by: none
   - verifies: AC2
   - touches: .claude/agents/sdd-research-spike.md

@@ -1030,4 +1030,21 @@ describe("sdd CLI smoke tests", () => {
     // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
     expect(newFeature).toContain("el agente lee el archivo de reglas directamente, la CLI nunca lo hace");
   });
+
+  test("sdd-research-spike reads Domain rules for vocabulary, not for the criteria list, before filling Evaluation criteria (T004)", () => {
+    const researchSpike = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-research-spike.md"), "utf8");
+
+    // Explicit read instruction — same auto-commit-knob pattern as T002/T003, scoped to this file.
+    expect(researchSpike).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+
+    // Substance differs from T002/T003: Domain rules names domains, not evaluation axes. The
+    // criteria themselves always come from what's actually being evaluated, not the domain list.
+    expect(researchSpike).toContain("that section names domains, not evaluation axes");
+    expect(researchSpike).toContain(
+      "derive the criteria themselves from what Options and Questions above are actually evaluating either way"
+    );
+
+    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
+    expect(researchSpike).toContain("the agent reads the rules file directly, the CLI never does");
+  });
 });
