@@ -1284,4 +1284,33 @@ describe("sdd CLI smoke tests", () => {
       expect(gitMd).toContain("## Auto-commit");
     });
   });
+
+  describe("021's spec.md and plan.md stay reconciled with decisions.md (T010)", () => {
+    // Regression guards, not behavioral coverage: these are prose artifacts.
+    // They assert the artifacts stay in sync with decisions.md's own record —
+    // catching the exact drift judge findings #3 and #4 flagged, so archiving
+    // this feature doesn't freeze a spec/plan that contradicts its decision log.
+    const specPath = path.join(repoRoot, "specs/021-project-aware-templates/spec.md");
+    const planPath = path.join(repoRoot, "specs/021-project-aware-templates/plan.md");
+
+    function extractSectionViaRealPath(file, heading) {
+      const script = 'source "$0" help >/dev/null; extract_section "$1" "$2"';
+      return execFileSync("bash", ["-c", script, sddBin, file, heading], {
+        encoding: "utf8",
+      });
+    }
+
+    test("spec.md no longer names sdd-reviewer.md as a Domain or requires it to accept a discard line — decisions.md REMOVED that edge case", () => {
+      const spec = fs.readFileSync(specPath, "utf8");
+
+      expect(spec).not.toContain("sdd-reviewer.md");
+    });
+
+    test("plan.md's Touched areas names T009's files — bin/sdd and the pristine rules seed — so the archived plan doesn't omit them", () => {
+      const touchedAreas = extractSectionViaRealPath(planPath, "Touched areas");
+
+      expect(touchedAreas).toContain("bin/sdd");
+      expect(touchedAreas).toContain(".specify/templates/rules/");
+    });
+  });
 });

@@ -52,6 +52,8 @@ The `conventions.md` half is the spine: templates stop prescribing; agents are t
 | `.claude/skills/{plan-feature,new-feature,init-project}/SKILL.md` | read instruction; init fill + Explore ask |
 | `.claude/rules/conventions.md` | § Domain rules for *this* repo |
 | `tests/sdd.test.js` | see Test strategy |
+| `bin/sdd` | `cmd_init` rules-copy loop reads the pristine seed, not SDD_HOME's own rules |
+| `.specify/templates/rules/` | new pristine seed: `conventions.md`, `model-overrides.md`, `testing.md`, `git.md` |
 
 ## Migration / rollout
 Templates are symlinked to SDD_HOME — every project updates instantly, no `sdd update`. Additive: a project that never ran `/init-project` degrades to scan-derived names. Rollback = revert.
@@ -69,10 +71,10 @@ No CLI surface here, so `readFileSync` + `toContain` goes red-then-green **witho
 ## Risks and mitigations
 | Risk | Mitigation |
 |---|---|
-| `conventions.md` is also the **seed** `bin/sdd:232-241` copies into every new project (F10) | Fill § Domain rules with *this repo's* domains only; `cmd_init` skips existing files, so live projects stay untouched. Flag in the PR body. |
-| HTML-comment guidance never reaches human readers (0/11 survive, F3) | Accepted — it targets the agent at fill time; humans read `conventions.md`. |
-| Empty `conventions.md` ⇒ drift continues | Expected floor, equals today. `/init-project` is the fix. |
-| Feature 020 merge conflict | `tasks-template.md` untouched. |
+| `conventions.md` doubles as the **seed** for new projects (F10) | `cmd_init` skips existing files; Domain rules hold only *this repo's* domains. |
+| HTML-comment guidance never reaches humans (0/11 survive, F3) | Accepted; targets the agent, not readers. |
+| Empty `conventions.md` ⇒ drift continues | Expected floor, unchanged; `/init-project` fixes it. |
+| 020 merge conflict | `tasks-template.md` untouched. |
 
 ## Open questions
 - None.

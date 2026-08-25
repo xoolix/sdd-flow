@@ -13,7 +13,7 @@ Any phase writing an artifact from a template: `/new-feature` (spec), `sdd-desig
 4. `/init-project` fills § Domain rules with detected domains instead of the TODO placeholder.
 
 ## Domains
-- [x] Other: `.specify/templates/` (spec, plan, research), `init-project`, `plan-feature` and `new-feature` SKILLs, `sdd-reviewer.md`, `conventions.md`, `tests/sdd.test.js`
+- [x] Other: `.specify/templates/` (spec, plan, research), `init-project`, `plan-feature` and `new-feature` SKILLs, `conventions.md`, `tests/sdd.test.js`
 
 ## API Changes
 | Surface | Change |
@@ -31,7 +31,6 @@ Any phase writing an artifact from a template: `/new-feature` (spec), `sdd-desig
 | `conventions.md` empty / `/init-project` never run | Derive from the Step 0 scan. The common case — this repo's copy is headers only. |
 | Section omitted that did apply | Prevented by the discard line: silence is indistinguishable from an oversight. |
 | Same domain named differently across features | `conventions.md` is the shared vocabulary when present; otherwise accepted drift. |
-| `sdd-reviewer.md:43` looks for missing observability | Must accept an explicit discard line as complete. |
 
 ## Acceptance Criteria
 - [ ] Given a project with no database or frontend, When `/new-feature` writes `spec.md`, Then `## Domains` names real modules and contains none of the eight old fixed labels.

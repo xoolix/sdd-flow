@@ -30,3 +30,38 @@ Human decision: split the seed. `cmd_init` stops copying from `.claude/rules/` a
 - **ADDED**: `.specify/templates/rules/` — a pristine, versioned seed (`conventions.md`, `model-overrides.md`, `testing.md`, `git.md`). `cmd_init`'s rules-copy loop (`bin/sdd`) now reads from this seed instead of `$SDD_HOME/.claude/rules/*.md`. `conventions.md` and `model-overrides.md` in the seed carry headings/comments only — no Domain rules bullets, no override rows. `testing.md` and `git.md` are copied unchanged: both are already pure framework policy (TDD stance/knob, commit-per-slice/auto-commit knob) with no repo-specific fill in SDD_HOME's own copies, confirmed via `git log` — neither file has ever diverged from its first-commit content.
 - **CONFIRMED**: `cmd_update` and `cmd_doctor` do not need the same redirect — neither copies `.claude/rules/*` at all (rules are create-once at `init`, never synced by `update`; `doctor` only checks `conventions.md` exists). Checked via full read of both functions plus a `grep -n 'SDD_HOME.*rules'` sweep of `bin/sdd`.
 - **CONFIRMED**: end-to-end verified — `sdd init` into a fresh temp project now produces a `.claude/rules/conventions.md` with none of this repo's Domain rules content and a `model-overrides.md` with no override row, while `git.md`'s `auto-commit` knob still ships unchanged. The "skip if already exists" behavior and its log messages are unchanged (verified against a project with a pre-existing `conventions.md`).
+
+## Simplify: 2026-08-25 — /simplify-code
+- **Files simplified**: none
+- **Scope**: `sdd base-branch` resolved to `feature/020-commit-per-slice-pr-gate` (per `.parent-branch` sidecar); `git diff --name-only <merge-base>..HEAD` returned 21 files. Filters dropped 17 as prose (6 `specs/021-project-aware-templates/*.md`, 3 `.claude/skills/**/*.md`, 3 top-level `.specify/templates/*.md`, 4 `.specify/templates/rules/*.md` treated under the same templates-are-prose category despite the nested path, 1 `tests/sdd.test.js` test file).
+- **Reviewed, no edit — `bin/sdd`**: T009's new rules-copy loop (`cmd_init`) is already minimal — single responsibility, guarded glob (`[ -f "$rule_file" ] || continue`), consistent skip/warn messaging. It structurally echoes the adjacent agents-copy loop, but the two copy different asset kinds from different sources for reasons that can diverge independently; treated as incidental similarity, not shared domain knowledge, so left unextracted.
+- **Reviewed, judged out of scope — `.claude/agents/sdd-designer.md`, `.claude/agents/sdd-research-spike.md`**: each carries one added paragraph instructing the agent to grep `.claude/rules/conventions.md` § Domain rules. The two paragraphs read as near-duplicates, but the feature's own hard constraint (discovery: sub-agents receive no ambient `.claude/rules/*.md`) requires each consumer to carry its own explicit instruction — collapsing them into a shared reference would silently reintroduce the ambient-loading assumption the feature exists to fix. No other simplifiable structure in either diff hunk (pure prose addition, no code).
+- **Excluded — `.claude/rules/conventions.md`**: not literally matched by a filter glob, but out of scope per explicit task constraint (T008/T009: this repo's self-description in § Domain rules is deliberate and now seed-safe; simplifying it risks the exact regression T009 just fixed).
+- **Baseline**: pass (57/57 Jest tests; no lint/typecheck tooling configured in this repo) | **Post-edit**: N/A — no edits made, baseline stands unchanged.
+
+## JUDGMENT-DAY — 021-project-aware-templates
+
+| # | Severity | Category | Description |
+|---|---|---|---|
+| 1 | medium | implementation-risk | `.claude/rules/{git,testing}.md` and `.specify/templates/rules/{git,testing}.md` are byte-identical today but independently editable with no test tying them. The exact bug class T009 just fixed for conventions/model-overrides stays live for these two: a future knob added to one and forgotten in the other ships stale to every new project. Fail-safe, not fail-loud. |
+| 2 | medium | implementation-risk | T009's anti-leak assertion is coupled to today's literal override row (`not.toContain("haiku")`, `not.toContain("\| Review agent \|")`). A future second override row with different wording leaks into every fresh `sdd init` with the test still green. Should assert the fresh copy equals the pristine seed, or that zero data rows exist past the header separator. |
+| 3 | medium | undocumented-assumption | `plan.md` `## Touched areas` was never updated after the T009 delta added `bin/sdd` and `.specify/templates/rules/*.md`. `/archive-feature` merges decisions deltas into `spec.md` ONLY — never `plan.md`. So the archived plan permanently omits the two most consequential files of this change. |
+| 4 | medium | edge-case | `spec.md` still lists `sdd-reviewer.md` in `## Domains` and still carries the `## Edge Cases` row requiring the reviewer to accept a discard line — but `decisions.md` explicitly REMOVED that edge case and `sdd-reviewer.md` is untouched in this branch (0 lines changed). The declared source of truth contradicts its own decision log. |
+| 5 | low | incomplete-AC | Nothing specifies count, granularity or phrasing for § Domain rules entries, and "has content" is purely non-empty-after-stripping-the-comment. Two runs could produce 3 broad bullets or 15 fine-grained ones; a stray character flips empty→content. This is the mechanism the feature's value depends on. |
+| 6 | low | uncovered-scenario | No mechanism detects the day an agent silently stops grepping `conventions.md`. Accepted and documented, not hidden — but a cheap canary exists and was not taken: flag any newly-created `spec.md`/`plan.md` containing a retired string (`Database / storage`, `APIs/contracts:`). |
+
+Source: sdd-judge, review-feature phase
+Date: 2026-08-25
+
+## CROSS-REVIEW — 021-project-aware-templates
+
+| # | Severity | Evidence | Description |
+|---|---|---|---|
+| 1 | high | `.claude/skills/plan-feature/SKILL.md:54-95` | Domain analysis still runs on the OLD taxonomy before project vocabulary is loaded. Step 3 classifies work as db/api/frontend/infra/auth and uses those categories for sizing; the Domain rules read happens at Step 5, after that analysis is complete — yet the designer must include the Step 3 analysis in the artifact. This preserves the taxonomy the feature exists to remove. Also: the empty-rules fallback references Step 4 findings, but the discovery-resume path skips Step 4 entirely, leaving no scan to derive from — which is exactly the path 021 itself took. |
+| 2 | high | `tests/sdd.test.js:1199-1247` | The acceptance test never exercises a consuming agent or a filled artifact. T008 only calls `extract_section` against `conventions.md` and a synthetic empty file. **Production consumers do not call `extract_section`** — they grep. So AC2/AC6 can fail completely with all Jest tests green. |
+| 3 | medium | `bin/sdd:250-264` | Existing projects receive new templates (symlinked) but retain old agents (project-local copies, never overwritten by init). After an SDD pull, a project can run new templates with old agent instructions; rollout and rollback are non-atomic until someone runs `sdd update`. |
+
+Cross-Verdict: FAIL (advisory, model: codex)
+Source: sdd-cross-reviewer (codex 0.148.0, plugin 1.0.6), review-feature phase
+Date: 2026-08-25
+Note: advisory only — did not enter Step 4 consolidation and did not set the phase verdict.

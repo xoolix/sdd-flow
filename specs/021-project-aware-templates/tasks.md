@@ -66,6 +66,12 @@
   - touches: bin/sdd, .specify/templates/rules/, tests/sdd.test.js
   - type: fix
 
+- [x] **T010 [AFK] Reconcile spec/plan with decisions**: drop stale reviewer refs; add T009 files to Touched areas.
+  - blocked_by: T009
+  - verifies: Rollback Plan
+  - touches: specs/021-project-aware-templates/spec.md, specs/021-project-aware-templates/plan.md
+  - type: docs
+
 ## Notes
 - `[AFK]` = executable by `/implement-task`; no `[HITL]` — F1/F2/F5 decided in discovery.md.
 - `blocked_by`: `none` or comma-separated task IDs.
