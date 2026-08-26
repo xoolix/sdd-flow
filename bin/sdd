@@ -900,7 +900,17 @@ cmd_commit_slice() {
     fi
   fi
 
-  if git diff --cached --quiet; then
+  # Commit pathspec: exactly what this invocation staged above — --files,
+  # the derived feature dir, and --moved-from when present. A bare 'git
+  # commit' would sweep in anything already staged by someone else before
+  # this command ran; scoping to this pathspec commits only these paths and
+  # leaves the rest of the index staged, untouched (7th defect).
+  local -a commit_paths=("${files[@]}" "$feature_dir")
+  if [ -n "$moved_from" ]; then
+    commit_paths+=("$moved_from")
+  fi
+
+  if git diff --cached --quiet -- "${commit_paths[@]}"; then
     printf 'error: nothing staged for commit\n' >&2
     return 5
   fi
@@ -912,7 +922,7 @@ cmd_commit_slice() {
     subject="${type}(${feature_id}): ${title}"
   fi
 
-  if ! git commit -q -m "$subject"; then
+  if ! git commit -q -m "$subject" -- "${commit_paths[@]}"; then
     return 4
   fi
 
@@ -921,9 +931,11 @@ cmd_commit_slice() {
   printf '%s\n' "$sha"
 
   # Post-commit safety net: warn (stderr only — stdout must stay $()-safe) if a
-  # tracked file was left dirty, e.g. an omitted --files entry.
+  # tracked file was left dirty, e.g. an omitted --files entry. Scoped to
+  # commit_paths so someone else's untouched staged work (now deliberately
+  # left behind by the pathspec-scoped commit above) never trips this.
   local dirty
-  dirty="$(git status --porcelain 2>/dev/null | grep -v '^??' || true)"
+  dirty="$(git status --porcelain -- "${commit_paths[@]}" 2>/dev/null | grep -v '^??' || true)"
   if [ -n "$dirty" ]; then
     printf 'warning: tracked files still dirty after commit:\n%s\n' "$dirty" >&2
   fi

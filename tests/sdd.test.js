@@ -911,6 +911,88 @@ describe("sdd CLI smoke tests", () => {
       expect(files).toContain("specs/archive/2026-08-26-001-demo/spec.md");
     });
 
+    // Regression for the 7th defect: a bare `git commit` after scoped `git add`s
+    // still commits the WHOLE index, so anything pre-staged by someone else
+    // (not dirty — already staged) rides along silently. Both halves of the
+    // assertion matter: the unrelated file must be absent from the commit AND
+    // still staged afterward — dropping it from the commit but also unstaging
+    // it would be a different bug.
+    test("commits only the named paths, leaving a file staged by someone else untouched and still staged", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
+      // Pre-staged by "someone else" — never named in --files below.
+      execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
+
+      const output = execFileSync(
+        sddBin,
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).not.toContain("ajeno.txt");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      // Still staged (index "A"), neither committed nor bumped back to dirty/untracked.
+      expect(status).toMatch(/^A\s+ajeno\.txt$/m);
+    });
+
+    test("--moved-from deletion still lands in a scoped commit, even with an unrelated file pre-staged", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const oldDir = path.join(project, "specs", "001-demo");
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
+      fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
+      fs.renameSync(oldDir, archiveDir);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
+      execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
+
+      const output = execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "chore",
+          "--title",
+          "Archive note",
+          "--moved-from",
+          "specs/001-demo",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(tree).not.toContain("specs/001-demo/spec.md");
+      expect(tree).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+      expect(tree).not.toContain("ajeno.txt");
+
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+      expect(files).not.toContain("ajeno.txt");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).toMatch(/^A\s+ajeno\.txt$/m);
+    });
+
     test("--moved-from exits non-zero and names the path when it was never tracked, even if it still exists on disk", () => {
       const project = makeTempProject();
       seedCommit(project);

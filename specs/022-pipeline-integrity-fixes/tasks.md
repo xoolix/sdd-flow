@@ -25,6 +25,12 @@
   - touches: bin/sdd, tests/sdd.test.js
   - type: feat
 
+- [x] **T008 [AFK] `commit-slice` commits only named paths**: `git commit -- <paths>` scoped to `--files`/feature dir/`--moved-from`, not a bare commit, so others' pre-staged work stays staged.
+  - blocked_by: T002
+  - verifies: Rollback Plan
+  - touches: bin/sdd, tests/sdd.test.js
+  - type: fix
+
 ### 2. Core — prose fixes that depend on or gate CLI behavior
 
 - [ ] **T004 [AFK] Archive is not exempt from post-phase validation; no retry**: in §F, state archive is NOT covered by "skip if phase produces no code"; add an explicit non-retryable-phases list (`archive-feature`; post-move pre-flight can't retry), checked before the retry loop. Replicate both wordings into `sdd-next/SKILL.md` (:177, :196-197) and `sdd-auto/SKILL.md` (:120, :125) — five occurrences, lockstep (F3/F4).
