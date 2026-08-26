@@ -20,7 +20,7 @@
 
 **2. `commit-slice --moved-from <path>`.** A `case` arm shaped like `--type`, run **after** the existing `git add`s and **before** `git diff --cached --quiet` (`:878`), so a deletion-only commit still counts as staged. **Guard first**: `git ls-files --error-unmatch -- "$path"` — non-zero ⇒ exit 3 naming the path; zero ⇒ `git add -A -- "$path"`, failure ⇒ 4. Mandatory: never-tracked-but-present makes a bare `git add` exit 0 and stage a *new addition*.
 
-**3. §F non-retryable phases.** The step-3 row's "skip if phase produces no code" gains "`archive-feature` is **not** exempt: it moves files, and moving files breaks tests". A new `### Non-retryable phases` list under Retry Logic names `archive-feature` (its pre-flight needs the `specs/<id>/` the move removed): failure ⇒ `blocked`, **zero** retries. Replicated at `sdd-next:177` & `:196-197`, `sdd-auto:120` & `:125`.
+**3. §F non-retryable phases.** The step-3 row's "skip if phase produces no code" gains "`archive-feature` is **not** exempt: it moves files, and moving files breaks tests". A new `### Non-retryable phases` list under Retry Logic names `archive-feature` (its pre-flight needs the `specs/<id>/` the move removed): failure ⇒ `blocked`, **zero** retries. Replicated across `sdd-phase-common.md:104,110`, `sdd-next:177,182`, `sdd-auto:120,125` — six occurrences.
 
 **4. Reorder without renumbering.** New **Step 2.5 — Domain vocabulary** calls `domain-vocab`; exit≠0 ⇒ derive from `spec.md` (Step 2, always present), never step-4 findings. Step 3 consumes it and drops the fixed list — safe: sizing is domain-count arithmetic and Step 4 iterates whatever Step 3 emits. Numbering untouched, so `:37`/`:96` stay true; only `:94` (back-pointer to 2.5) and `sdd-designer.md:29` ("step 2" ⇒ "step 3") change.
 
@@ -34,7 +34,7 @@ Spanish at `new-feature/SKILL.md:172`; each keeps its own empty-branch fallback.
 ## Touched areas
 | Module / path | Change |
 |---|---|
-| `bin/sdd` | `cmd_domain_vocab`; `--moved-from` (`:825-876`); `cmd_status:1058` no-arg + helper; `usage():77-115`; dispatch `:1216-1232`; T008 (7th defect, found mid-implementation, absent from the design above): `git commit` + its post-commit dirty-check scoped to `commit_paths` (`--files`/feature dir/`--moved-from`), not the whole index — others' pre-staged work stays staged, untouched |
+| `bin/sdd` | `cmd_domain_vocab`; `--moved-from` (`:825-876`); `cmd_status:1058` no-arg + helper; `usage():77-115`; dispatch `:1216-1232`; T008 (7th defect, found mid-implementation, absent from the design above): `git commit` scoped to `commit_paths`; its post-commit dirty-check now re-scans the whole index against a pre-staged snapshot, leaving others' pre-staged work staged |
 | `plan-feature/SKILL.md` | Step 2.5; `:55-61`; `:94` |
 | `sdd-phase-common.md` + `sdd-next`/`sdd-auto` | §F step-3 row + non-retryable list, replicated 2 spots each |
 | `sdd-designer.md`, `sdd-research-spike.md`, `new-feature/SKILL.md` | closing sentence; designer also `:29` |

@@ -1372,12 +1372,30 @@ cmd_domain_vocab() {
   # many lines they cover. A filter that only matched a comment opening and
   # closing on the SAME line let a two-line HTML comment survive as printed
   # "vocabulary" — contradicting the spec's "comment-only counts as empty".
-  # The char-class trick ('[^-]*(-[^-]+)*') matches the shortest run between
-  # '<!--' and '-->' without a non-greedy quantifier, which awk gsub lacks.
+  # awk gsub has no non-greedy quantifier, so a char-class trick
+  # ('[^-]*(-[^-]+)*') was used to fake a shortest match between '<!--' and
+  # '-->'. That trick breaks under POSIX ERE's leftmost-longest semantics
+  # the moment the comment BODY itself contains '--' (an em-dash, common in
+  # this repo's own prose): it leaves the comment unstripped, so it prints
+  # as if it were real vocabulary instead of counting as empty (review fix
+  # cycle 3, judge finding). index()/substr() sidesteps greediness
+  # entirely: find the next '<!--', find the next '-->' after it, cut that
+  # span, repeat — no regex, so no shortest-vs-longest ambiguity to get
+  # wrong. An unterminated '<!--' (no matching '-->' left in buf) stops the
+  # loop and leaves the remainder untouched, so a dangling comment marker
+  # still counts as real content, not as empty.
   local stripped
   stripped="$(printf '%s\n' "$section" | awk '
     { buf = buf $0 "\n" }
-    END { gsub(/<!--[^-]*(-[^-]+)*-->/, "", buf); printf "%s", buf }
+    END {
+      while ((s = index(buf, "<!--")) > 0) {
+        rest = substr(buf, s + 4)
+        e = index(rest, "-->")
+        if (e == 0) break
+        buf = substr(buf, 1, s - 1) substr(rest, e + 3)
+      }
+      printf "%s", buf
+    }
   ')"
 
   local filtered

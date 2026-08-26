@@ -1845,6 +1845,133 @@ describe("sdd CLI smoke tests", () => {
       expect(error.status).toBe(3);
       expect(error.stdout.toString()).toBe("");
     });
+
+    // Review fix cycle 3 (judge, high): the emptiness filter stripped HTML
+    // comments with the regex `<!--[^-]*(-[^-]+)*-->` — a character-class
+    // trick emulating a non-greedy match, since awk gsub has no lazy
+    // quantifier. POSIX ERE's leftmost-longest semantics broke that trick
+    // the moment a comment BODY contained '--' (e.g. an em-dash in prose,
+    // which is all over this repo's own docs): the comment survived
+    // unstripped and printed as if it were real vocabulary — exit 0
+    // instead of the empty-section exit 3. That's the exact failure this
+    // whole feature exists to prevent: a consumer sees "vocabulary exists"
+    // and skips its own fallback scan.
+    describe("comment-only sections containing '--' in the body (judge, high)", () => {
+      test("single-line comment with an internal '--': no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!-- revisar esta lista -- no esta cerrada -->\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+
+      test("two-line comment with an internal '--': no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "<!-- revisar esta lista",
+            "-- no esta cerrada -->",
+            "",
+          ].join("\n"),
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+
+      test("'---' inside a comment: no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!-- nota --- pendiente -->\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+
+      test("real content plus a comment containing '--': prints the section, exit 0", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n- regla real\n<!-- nota -- pendiente -->\n",
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- regla real");
+      });
+    });
+
+    describe("comment shapes the '--' fix must not regress", () => {
+      test("unterminated comment ('<!--' with no closing '-->') still counts as real content: exit 0", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!-- revisar esta lista sin cerrar\n",
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("revisar esta lista sin cerrar");
+      });
+
+      test("empty comment '<!---->' alone still counts as empty: no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!---->\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+
+      // A nested-looking '<!-- a <!-- b -->' is still just ONE HTML comment
+      // (the first '<!--' through the first '-->' after it) with no real
+      // content outside it — so, per the same "comment-only counts as
+      // empty" rule this fix restores, it counts as empty too.
+      test("nested-looking comment ('<!-- a <!-- b -->') is one comment with no real content: exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!-- a <!-- b -->\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+    });
   });
 
   describe("cmd_init seeds .claude/rules/ from a pristine seed, not SDD_HOME's own rules (T009)", () => {
