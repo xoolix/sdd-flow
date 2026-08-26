@@ -89,6 +89,51 @@ function parseTemplateLine(line) {
   return tokens.map((tok) => (tok.startsWith('"') && tok.endsWith('"') ? tok.slice(1, -1) : tok));
 }
 
+// Sources bin/sdd's function definitions into a disposable bash process and runs the
+// real build_pr_body_file (bin/sdd's "open-pr" section, which calls extract_section
+// and, since 022's dogfood fix, append_decisions_capped) against featureDir, returning
+// the PR body it builds. This is the actual shipped code path, not a reimplementation
+// of the awk matcher or the cap arithmetic. Going through `sdd open-pr` itself isn't
+// possible here: its gh/remote pre-flight fails before ever reaching build_pr_body_file
+// in a temp repo with no real GitHub remote.
+function buildPrBodyViaRealPath(featureDir) {
+  // $0 is set to the real sddBin path (not a placeholder) so bin/sdd's own
+  // SDD_HOME resolution (readlink -f "$0" / realpath "$0") resolves cleanly.
+  const script = 'source "$0" help >/dev/null; build_pr_body_file "$1"';
+  const bodyFilePath = execFileSync("bash", ["-c", script, sddBin, featureDir], {
+    encoding: "utf8",
+  }).trim();
+  return fs.readFileSync(bodyFilePath, "utf8");
+}
+
+// A spec.md with exactly one line per section (no blank line before the next
+// "## " heading), so extract_section's output per section is deterministic
+// down to the byte -- lets a test assert an exact expected PR body instead of
+// just `toContain`. Used by the build_pr_body_file / decisions.md cap tests.
+function writeMinimalSpec(featureDir) {
+  fs.writeFileSync(
+    path.join(featureDir, "spec.md"),
+    "# Feature: Demo\n" +
+      "## Summary\n" +
+      "GENUINE-SUMMARY-MARKER\n" +
+      "## Acceptance Criteria\n" +
+      "- [ ] GENUINE-AC-MARKER\n" +
+      "## Rollback Plan\n" +
+      "GENUINE-ROLLBACK-MARKER\n",
+  );
+}
+
+// Builds a decisions.md well over GitHub's PR body limit without committing a
+// fixture file: `count` fixed-width numbered lines, each individually
+// greppable, so a test can tell exactly which lines survived a cap.
+function makeOversizedDecisions(count) {
+  const lines = [];
+  for (let i = 0; i < count; i++) {
+    lines.push(`LINE-${String(i).padStart(6, "0")} ` + "x".repeat(60));
+  }
+  return lines.join("\n") + "\n";
+}
+
 // Extracts the single fenced command line from sdd-archive-feature.md's
 // Step 3.5, the same block T007's test parses.
 function archiveStep35Line() {
@@ -1459,6 +1504,92 @@ describe("sdd CLI smoke tests", () => {
       expect(error.status).toBe(3);
       expect(error.stderr).toContain("feature not found");
     });
+
+    // 022 dogfood fix: `sdd open-pr` pushed the branch and then failed at `gh pr
+    // create` because the assembled body (spec sections + decisions.md verbatim)
+    // exceeded GitHub's 65536-character hard limit -- decisions.md is append-only
+    // and grows every review cycle, so nothing bounds it. GitHub's limit is an
+    // external fact, not an implementation detail, so it's named here rather than
+    // inlined as a bare number.
+    describe("build_pr_body_file caps decisions.md so the body never exceeds GitHub's PR body limit", () => {
+      const GITHUB_PR_BODY_LIMIT = 65536;
+
+      test("below the cap, the body is byte-identical to the uncapped assembly (no-op)", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        const decisionsContent = "# Decisions\n\n## Entry 1\nA short, ordinary decision.\n";
+        fs.writeFileSync(path.join(featureDir, "decisions.md"), decisionsContent);
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        const expectedBody =
+          "## Summary\n" +
+          "GENUINE-SUMMARY-MARKER\n" +
+          "\n## Acceptance Criteria\n" +
+          "- [ ] GENUINE-AC-MARKER\n" +
+          "\n## Rollback Plan\n" +
+          "GENUINE-ROLLBACK-MARKER\n" +
+          "\n## Decisions\n" +
+          decisionsContent;
+
+        expect(body).toBe(expectedBody);
+      });
+
+      test("an oversized decisions.md is capped under GitHub's limit, with real headroom, and carries a truncation marker naming the file", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        const decisionsPath = path.join(featureDir, "decisions.md");
+        fs.writeFileSync(decisionsPath, makeOversizedDecisions(3000));
+
+        // Sanity: the fixture itself must actually be over the limit, or this
+        // test would pass for the wrong reason.
+        expect(fs.statSync(decisionsPath).size).toBeGreaterThan(GITHUB_PR_BODY_LIMIT);
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body.length).toBeLessThan(GITHUB_PR_BODY_LIMIT);
+        // Real headroom, not a graze against the wire.
+        expect(GITHUB_PR_BODY_LIMIT - body.length).toBeGreaterThan(1000);
+
+        expect(body).toMatch(/truncated/i);
+        expect(body).toContain(decisionsPath);
+      });
+
+      test("truncation keeps the tail (most recent decisions), drops the head, and cuts on a line boundary", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        // Oldest entry (line 0, chronologically first) was dropped...
+        expect(body).not.toContain("LINE-000000 ");
+        // ...but the newest entry (last line, chronologically most recent) survived.
+        expect(body).toContain("LINE-002999 ");
+
+        // Whatever text immediately follows the truncation marker is a full,
+        // untouched numbered line -- not a fragment beginning mid-line.
+        const afterMarker = body.slice(body.search(/truncated/i));
+        const firstKeptLine = afterMarker.split("\n").find((line) => line.startsWith("LINE-"));
+        expect(firstKeptLine).toMatch(/^LINE-\d{6} x+$/);
+      });
+
+      test("spec sections survive intact when decisions.md is truncated", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-SUMMARY-MARKER");
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+    });
   });
 
   describe("sdd status — archived vs ready-to-pr (T004)", () => {
@@ -1706,22 +1837,6 @@ describe("sdd CLI smoke tests", () => {
 
   describe("spec-template.md Domains section (T005)", () => {
     const specTemplatePath = path.join(repoRoot, ".specify/templates/spec-template.md");
-
-    // Sources bin/sdd's function definitions into a disposable bash process and runs the
-    // real build_pr_body_file (bin/sdd:936-953, which calls extract_section at :946/948/950)
-    // against featureDir, returning the PR body it builds. This is the actual shipped code
-    // path, not a reimplementation of the awk matcher. Going through `sdd open-pr` itself
-    // isn't possible here: its gh/remote pre-flight (bin/sdd:1004-1020) fails before ever
-    // reaching build_pr_body_file in a temp repo with no real GitHub remote.
-    function buildPrBodyViaRealPath(featureDir) {
-      // $0 is set to the real sddBin path (not a placeholder) so bin/sdd's own
-      // SDD_HOME resolution (readlink -f "$0" / realpath "$0") resolves cleanly.
-      const script = 'source "$0" help >/dev/null; build_pr_body_file "$1"';
-      const bodyFilePath = execFileSync("bash", ["-c", script, sddBin, featureDir], {
-        encoding: "utf8",
-      }).trim();
-      return fs.readFileSync(bodyFilePath, "utf8");
-    }
 
     test("replaces the fixed 8-item Domains checklist with a derived-module instruction, not an addition", () => {
       const template = fs.readFileSync(specTemplatePath, "utf8");

@@ -1004,6 +1004,13 @@ cmd_commit_slice() {
 
 # ─── open-pr ───────────────────────────────────────────────────────
 
+# `gh pr create` rejects a body over GitHub's 65536-character hard limit outright.
+# Budgeted with real headroom below that: Summary/Acceptance Criteria/Rollback
+# Plan are bounded by the spec template, but decisions.md is append-only and
+# grows every review cycle, so it's the part capped when the assembled body
+# would overflow (see append_decisions_capped below).
+PR_BODY_MAX_CHARS=60000
+
 # Lines between an exact "## <heading>" line and the next "## " heading (or EOF).
 # Strips a trailing CRLF '\r' from every record before the heading compare —
 # on a CRLF file $0 for the heading line is "## Domain rules\r", which never
@@ -1038,10 +1045,64 @@ build_pr_title() {
   printf '%s\n' "$feature_id"
 }
 
+# Appends decisions_file to body_file, capping the *total* body_file at
+# PR_BODY_MAX_CHARS. decisions.md is chronological and append-only (oldest
+# entries first), so the newest reasoning -- what justifies the code as the PR
+# actually ships it -- sits at the end; that is the higher-value window for a
+# reviewer, so on overflow this keeps the TAIL and drops the head (rationale
+# recorded in decisions.md, not just here). The cut lands on a line boundary:
+# whatever partial line falls at the cut point is dropped rather than kept
+# half-written. Below the budget this is a plain `cat` -- byte-identical to
+# the uncapped assembly, so short bodies are a no-op.
+append_decisions_capped() {
+  local body_file="$1" decisions_file="$2"
+  local used total budget
+  used=$(wc -c < "$body_file")
+  total=$(wc -c < "$decisions_file")
+
+  [ "$total" -eq 0 ] && return 0
+
+  budget=$(( PR_BODY_MAX_CHARS - used ))
+  if [ "$budget" -ge "$total" ]; then
+    cat "$decisions_file" >> "$body_file"
+    return 0
+  fi
+
+  # Marker names the real path so a reader can go read what got cut. Sized and
+  # reserved out of the budget *before* sizing the kept tail, so the marker
+  # itself can never be what pushes the body over the cap.
+  local marker marker_len
+  marker="$(printf '> **Truncated** — %s is %d characters; showing the most recent portion below. Read the full file at `%s`.\n\n' \
+    "$(basename "$decisions_file")" "$total" "$decisions_file")"
+  marker_len=${#marker}
+
+  if [ "$budget" -le "$marker_len" ]; then
+    # Summary/Acceptance Criteria/Rollback Plan alone already fill the budget
+    # (they're supposed to be bounded, so this shouldn't happen in practice).
+    # Deterministic fallback: drop decisions.md entirely -- never a silent,
+    # unmarked partial cut -- rather than grow the body with its size.
+    printf '_decisions.md omitted: no budget left after Summary/Acceptance Criteria/Rollback Plan. Read it at `%s`._\n' \
+      "$decisions_file" >> "$body_file"
+    return 0
+  fi
+
+  local tail_budget skip tail_tmp
+  tail_budget=$(( budget - marker_len ))
+  skip=$(( total - tail_budget ))
+  tail_tmp="$(mktemp)"
+  tail -c "+$((skip + 1))" "$decisions_file" | tail -n +2 > "$tail_tmp"
+
+  printf '%s' "$marker" >> "$body_file"
+  cat "$tail_tmp" >> "$body_file"
+  rm -f "$tail_tmp"
+}
+
 # PR body: Summary + Acceptance Criteria + Rollback Plan from spec.md, plus
-# decisions.md verbatim (human decision: built from spec.md + decisions.md,
-# not `gh pr create --fill`'s commit-derived title/body). Writes to a temp
-# file and prints its path — `gh pr create --body-file` wants a path, not stdin.
+# decisions.md capped via append_decisions_capped so `gh pr create` never sees
+# a body over GitHub's hard limit (human decision: built from spec.md +
+# decisions.md, not `gh pr create --fill`'s commit-derived title/body). Writes
+# to a temp file and prints its path — `gh pr create --body-file` wants a
+# path, not stdin.
 build_pr_body_file() {
   local feature_dir="$1"
   local spec_file="$feature_dir/spec.md"
@@ -1058,11 +1119,12 @@ build_pr_body_file() {
       printf '\n## Rollback Plan\n'
       extract_section "$spec_file" "Rollback Plan"
     fi
-    if [ -f "$feature_dir/decisions.md" ]; then
-      printf '\n## Decisions\n'
-      cat "$feature_dir/decisions.md"
-    fi
   } > "$body_file"
+
+  if [ -f "$feature_dir/decisions.md" ]; then
+    printf '\n## Decisions\n' >> "$body_file"
+    append_decisions_capped "$body_file" "$feature_dir/decisions.md"
+  fi
 
   printf '%s\n' "$body_file"
 }
