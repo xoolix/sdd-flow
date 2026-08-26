@@ -2,7 +2,6 @@
 name: plan-feature
 description: Turn a feature spec into a technical plan and task list
 user-invocable: true
-disable-model-invocation: true
 arguments: feature-id
 ---
 
@@ -11,6 +10,8 @@ arguments: feature-id
 Feature-id: `$ARGUMENTS`
 
 **Main Claude executes this skill body inline. You orchestrate sub-agents and synthesize results. Do NOT do the analysis work yourself — delegate to sub-agents.**
+
+**Invocation guard**: run this phase only when the user explicitly typed `/plan-feature`, or an SDD orchestrator (`/sdd-next`, `/sdd-auto`) detected it as the next phase and invoked it. Never start it on your own initiative — if planning seems warranted, suggest the command and let the user decide.
 
 > Sub-agents you launch MUST follow the executor boundary from `.claude/skills/_shared/sdd-phase-common.md` — they do the work themselves without re-delegating.
 

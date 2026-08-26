@@ -60,8 +60,16 @@ Apply the decision table:
 | fast | `quick-spec.md` and no `plan.md` | No | — | Launch `/implement-task` |
 | fast | `quick-spec.md` and no `plan.md` | Yes | No | Launch `/simplify-code` |
 | fast | `quick-spec.md` and no `plan.md` | Yes | Yes | Launch `/review-feature` |
+| any | `sdd status <feature-id>` reports `phase: archived` | — | — | STOP — pipeline complete, PR already opened |
+| any | `sdd status <feature-id>` reports `phase: ready-to-pr` | — | — | Human PR gate — see Step 3a |
+
+> **Post-archive rows key off `sdd status`, not file existence.** Once `/archive-feature` moves the folder, `specs/<feature-id>/` no longer exists — the file-existence checks above can't see it (F4 in `decisions.md`). Run `sdd status <feature-id>` and read its `phase` field; the CLI's own archive-folder fallback resolves the moved path under `specs/archive/`.
 
 If both `quick-spec.md` and `plan.md`/`tasks.md` exist, treat this as an invalid mixed lane and STOP with `Status: blocked`; ask the user to archive one lane or normalize the feature folder.
+
+If the detected phase is `archived`, STOP: the pipeline is already complete. Skip Step 2b and Step 3 — show a one-line summary and go straight to Step 7 (Engram session close).
+
+If the detected phase is `ready-to-pr`, skip Step 2b and Step 3 — go directly to **Step 3a: PR gate** below.
 
 ## Step 2b: Load skill registry
 
@@ -101,7 +109,7 @@ If the resolved phase ∈ KNOWN_ORCHESTRATORS AND `.claude/agents/sdd-<phase>.md
 
 ```
 if .claude/agents/sdd-<phase>.md EXISTS → leaf phase → spawn native agent
-if .claude/agents/sdd-<phase>.md ABSENT  → orchestrator phase → execute SKILL.md inline
+if .claude/agents/sdd-<phase>.md ABSENT  → orchestrator phase → invoke skill via Skill tool (runs inline)
 ```
 
 This check is filesystem-only — no hardcoded list of phase names. Orchestrator phases (those whose body now lives in `.claude/skills/<phase>/SKILL.md`) have no agent file after the migration. Leaf phases (standalone executors) always have an agent file.
@@ -141,11 +149,24 @@ Agent(
 
 ### Branch B — Orchestrator phase (agent file ABSENT)
 
-Read `.claude/skills/<phase>/SKILL.md` (the full orchestration body). If the file does not exist, **STOP with a hard error** — do NOT fall back to a general-purpose agent (D-003: no orchestrator fallback). Report the missing SKILL.md path and the phase name so the user can diagnose.
+Invoke the `<phase>` skill via the Skill tool, passing the resolved feature-id as args (append ` --minimal` when `has_minimal_flag = true` and the phase is `review-feature`). The skill body loads into the current context and you (the main Claude instance) carry out its orchestration steps inline. Do NOT re-implement the phase from memory, and do NOT Read the SKILL.md manually as a substitute for the Skill tool — the Skill tool is the only sanctioned load path.
 
-Execute the SKILL.md body inline (you, the main Claude instance, carry out the orchestration steps described in that file). Pass the same prompt content as Branch A (feature-id, sdd-phase-common.md, engram-protocol.md, project name, compact rules).
+If the Skill tool reports the skill does not exist, **STOP with a hard error** — do NOT fall back to a general-purpose agent (D-003: no orchestrator fallback). Report the missing skill name and the phase so the user can diagnose.
+
+The Branch A context still governs the inline execution: apply `sdd-phase-common.md` and `engram-protocol.md`, use the resolved Engram project name, and inject compact rules from Step 2b into any sub-agents the phase spawns.
 
 **Do NOT use a `model=` override** — inline execution runs in the current model context.
+
+## Step 3a: PR gate (`ready-to-pr` only)
+
+Reached only when Step 2 detects `phase: ready-to-pr`. This is the one exception to "never ask for user confirmation" (see Rules) — it mirrors the pause/resume shape `/sdd-hitl` uses for `[HITL]` task checkpoints: pause, wait for an explicit human answer, resume via a command.
+
+1. Ask the human to confirm: "Ready to push `feature/<feature-id>` and open a draft PR. Confirm?"
+2. **If not confirmed** (declines or asks to wait): STOP. Output the result envelope with `Status: blocked`, `Next: /sdd-next <feature-id>` (re-run when ready). Do not touch git.
+3. **On confirmation**: run `sdd open-pr <feature-id>` via Bash. The orchestrator never calls `git push` or `gh` itself — `sdd open-pr` owns the pre-flight, the push, the draft PR creation, and writing `.pr-opened` (ADR 0002: `bin/sdd` is the sole git-write path).
+4. **Success (exit 0)**: the command printed the PR URL on stdout. Report it to the human, `Status: success`, pipeline complete.
+5. **Failure (non-zero exit)**: pre-flight failed (no `gh` on PATH, not authenticated, or no remote configured). Report the manual command the CLI printed on stderr. `.pr-opened` was not written, so the gate stays resumable — re-running `/sdd-next <feature-id>` detects `ready-to-pr` again. `Status: blocked`.
+6. Either outcome: go to Step 7 (Engram session close) — do not loop back to Step 2.
 
 ## Step 4: Validate and retry
 
@@ -224,7 +245,7 @@ If Engram tools are unavailable, skip this step.
 ## Rules
 - You are the ORCHESTRATOR — never read source code, never edit code.
 - You may only read state files: `spec.md`, `quick-spec.md`, `plan.md`, `tasks.md`, `decisions.md`.
-- Never ask for user confirmation — launch phases and advance automatically.
+- Never ask for user confirmation — launch phases and advance automatically. **Exception: the post-archive PR gate** (Step 3a, phase `ready-to-pr`) — pushing to the remote and opening a PR are outward-facing actions that need a human's explicit go-ahead. Every other phase still advances without asking.
 - Always validate sub-agent results using the Post-Phase Validation Protocol (section F of `sdd-phase-common.md`).
 - If a phase returns `blocked` or validation exhausts retries (`ESCALATED`), show the diagnostic and STOP.
 - **Review cycle cap**: After `/review-feature` returns FAIL, the evaluator-optimizer loop allows at most **2 fix→re-review cycles**. If the review still fails after 2 cycles, ESCALATE.

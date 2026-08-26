@@ -9,6 +9,9 @@ const sddBin = path.join(repoRoot, "bin", "sdd");
 function makeTempProject() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
   execFileSync("git", ["init", "-q"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "sdd-test@example.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "SDD Test"], { cwd: dir });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: dir });
   fs.mkdirSync(path.join(dir, "specs", "001-demo"), { recursive: true });
   fs.writeFileSync(path.join(dir, "specs", "001-demo", "spec.md"), "# Spec\n");
   fs.writeFileSync(path.join(dir, "specs", "001-demo", "plan.md"), "# Plan\n");
@@ -17,6 +20,36 @@ function makeTempProject() {
     "# Tasks\n\n- [ ] First behavior\n- [ ] Second behavior\n",
   );
   return dir;
+}
+
+// Commits everything currently in the working tree as a baseline "seed" commit,
+// so later commit-slice tests start from a clean tree with a real HEAD to diff against.
+function seedCommit(project) {
+  execFileSync("git", ["add", "-A"], { cwd: project });
+  execFileSync("git", ["commit", "-q", "-m", "seed"], { cwd: project });
+}
+
+// Lists the paths touched by a given commit (relative to repo root).
+function filesInCommit(project, sha) {
+  const output = execFileSync("git", ["show", "--name-only", "--format=", sha], {
+    cwd: project,
+    encoding: "utf8",
+  });
+  return output.split("\n").filter(Boolean);
+}
+
+// Runs the sdd CLI expecting a non-zero exit. Returns the caught error (with
+// .status and .stderr populated, since execFileSync does not inherit stdio)
+// so callers can assert on the graded exit code and stderr message. Throws
+// if the command unexpectedly succeeded, so a wrongly-green guardrail test
+// fails loudly instead of silently passing.
+function sddFail(args, options) {
+  try {
+    execFileSync(sddBin, args, { encoding: "utf8", ...options });
+  } catch (error) {
+    return error;
+  }
+  throw new Error(`expected "sdd ${args.join(" ")}" to fail, but it exited 0`);
 }
 
 describe("sdd CLI smoke tests", () => {
@@ -130,9 +163,10 @@ describe("sdd CLI smoke tests", () => {
     expect(fs.existsSync(path.join(project, "docs", "architecture"))).toBe(true);
   });
 
-  test("review agents use reviewer plus judge topology", () => {
+  test("review agents use reviewer plus judge plus cross-reviewer topology", () => {
     expect(fs.existsSync(path.join(repoRoot, ".claude/agents/sdd-reviewer.md"))).toBe(true);
     expect(fs.existsSync(path.join(repoRoot, ".claude/agents/sdd-judge.md"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, ".claude/agents/sdd-cross-reviewer.md"))).toBe(true);
     expect(fs.existsSync(path.join(repoRoot, ".claude/agents/sdd-reviewer-voter.md"))).toBe(false);
     expect(fs.existsSync(path.join(repoRoot, ".claude/agents/sdd-adversarial-reviewer.md"))).toBe(false);
   });
@@ -140,7 +174,7 @@ describe("sdd CLI smoke tests", () => {
   test("conversational fast-lane intakes run inline, not as native agents", () => {
     const agentFiles = fs.readdirSync(path.join(repoRoot, ".claude/agents")).filter((file) => /^sdd-.*\.md$/.test(file));
 
-    expect(agentFiles).toHaveLength(10);
+    expect(agentFiles).toHaveLength(11);
     expect(fs.existsSync(path.join(repoRoot, ".claude/agents/sdd-new-fix.md"))).toBe(false);
     expect(fs.existsSync(path.join(repoRoot, ".claude/agents/sdd-new-quick-feature.md"))).toBe(false);
 
@@ -152,8 +186,10 @@ describe("sdd CLI smoke tests", () => {
     expect(newQuick).toContain("Main Claude executes this skill body inline");
     expect(newFix).not.toContain("Launch the native agent");
     expect(newQuick).not.toContain("Launch the native agent");
-    expect(sddNew).toContain(".claude/skills/new-fix/SKILL.md");
-    expect(sddNew).toContain(".claude/skills/new-quick-feature/SKILL.md");
+    expect(sddNew).toContain("invoke the `new-fix` skill via the Skill tool");
+    expect(sddNew).toContain("invoke the `new-quick-feature` skill via the Skill tool");
+    expect(newFix).not.toContain("disable-model-invocation");
+    expect(newQuick).not.toContain("disable-model-invocation");
   });
 
   test("flow prompts include lane risk gate, calibrated judge, prototype gate, and Engram policy", () => {
@@ -200,6 +236,742 @@ describe("sdd CLI smoke tests", () => {
     expect(sddAuto).toContain("FORCE_TASK_ID=<last_attempted_task_id>");
     expect(sddHitl).toContain("Record human decisions before marking HITL complete");
     expect(sddCli).toContain("sdd-hitl");
+    expect(implementTask).toContain("implemented-by:");
+  });
+
+  test("shared envelope documents the Commit field and task format documents the type key (T005)", () => {
+    const phaseCommon = fs.readFileSync(
+      path.join(repoRoot, ".claude/skills/_shared/sdd-phase-common.md"),
+      "utf8",
+    );
+    const tasksTemplate = fs.readFileSync(path.join(repoRoot, ".specify/templates/tasks-template.md"), "utf8");
+    const taskPlanner = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-task-planner.md"), "utf8");
+
+    // Envelope: new optional Commit field in the template block itself.
+    expect(phaseCommon).toContain("**Commit** _(optional)_");
+    // Rules bullet explaining when it's a SHA vs "none", and that failures
+    // are reported via Status: blocked rather than through this field.
+    expect(phaseCommon).toContain("`Commit` is optional");
+    expect(phaseCommon).toContain("auto-commit: off");
+    expect(phaseCommon).toContain("never through this field");
+
+    // Task template: `type:` key on the AFK task blocks, after `touches:`.
+    expect(tasksTemplate).toContain("  - touches: <modules/files/domains>\n  - type: feat");
+    // Notes footer documents the five accepted values.
+    expect(tasksTemplate).toContain("`feat`, `fix`, `refactor`, `chore`, `docs`");
+
+    // Task planner: canonical AFK example gains `- type: feat`, plus a rule
+    // explaining how to choose it (mirroring blocked_by/verifies rules).
+    expect(taskPlanner).toContain("  - touches: api, ui, tests\n  - type: feat");
+    expect(taskPlanner).toContain("`type` must be one of `feat`, `fix`, `refactor`, `chore`, `docs`");
+  });
+
+  test("implement-task wires sdd branch, the auto-commit knob, and a Step 7.5 commit-with-revert (T006)", () => {
+    const implementTask = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-implement-task.md"), "utf8");
+
+    // Pre-flight: branch creation goes through the CLI, never a raw git checkout.
+    expect(implementTask).toContain("sdd branch $ARGUMENTS");
+    expect(implementTask).toContain("ADR 0002");
+
+    // Auto-commit knob: same grep-the-rules-file shape as the tdd: knob, absent ⇒ on.
+    expect(implementTask).toContain("auto-commit:\\s*off");
+    expect(implementTask).toContain("Commit: none");
+
+    // Step 7.5: the commit-slice call, gated on the knob, after checkbox+marker+delta.
+    expect(implementTask).toContain("7.5. **Commit the slice**");
+    expect(implementTask).toContain("sdd commit-slice $ARGUMENTS");
+
+    // type: fallback rule, captured alongside blocked_by in Step 3.
+    expect(implementTask).toContain("Step 2b auto-generated review-fix task ⇒ `fix`; missing anywhere else ⇒ `chore`");
+
+    // Commit failure reverts the checkbox and reports the graded exit code.
+    expect(implementTask).toContain("flip the task bullet back from `- [x]` to `- [ ]`");
+    expect(implementTask).toContain("`4`=git failure, `5`=nothing staged");
+    expect(implementTask).toContain("task complete ⟹ commit exists");
+
+    // Envelope gains the Commit field.
+    expect(implementTask).toContain("- **Commit**:");
+
+    // Task graph format (consumer side) documents the type: key.
+    expect(implementTask).toContain("  - touches: api, ui, tests\n  - type: feat");
+
+    // Step 2b auto-generated review-fix template also documents type: fix.
+    expect(implementTask).toContain(
+      "- touches: affected files from the feedback, or unknown\n       - type: fix",
+    );
+  });
+
+  test("git.md rewrites the never-commit policy to commit-per-slice + auto-commit knob (T013)", () => {
+    const gitMd = fs.readFileSync(path.join(repoRoot, ".claude/rules/git.md"), "utf8");
+
+    // Old opt-out-only policy must be gone — this proves a rewrite, not an append.
+    expect(gitMd).not.toContain("Never commit or push");
+    expect(gitMd).not.toContain("The human handles commits, merges, and PRs.");
+
+    // New policy: branch creation goes through the CLI, cites the ADR.
+    expect(gitMd).toContain("sdd branch <feature-id>");
+    expect(gitMd).toContain("docs/adr/0002-sdd-git-write-boundary.md");
+
+    // New policy: phases commit their own work per validated slice; nothing pushes.
+    expect(gitMd).toContain("sdd commit-slice");
+    expect(gitMd).toContain("Nothing is pushed during development");
+
+    // The human-confirmed PR gate.
+    expect(gitMd).toContain("sdd open-pr <feature-id>");
+    expect(gitMd).toContain("draft");
+
+    // Auto-commit knob, mirroring testing.md's tdd: knob shape.
+    expect(gitMd).toContain("auto-commit: on|off");
+    expect(gitMd).toContain("auto-commit: off");
+
+    // Commit style now documents the conventional-commit format sdd commit-slice produces.
+    expect(gitMd).toContain("<type>(<feature-id>): [Tnnn ]<title>");
+
+    // Untouched section stays intact.
+    expect(gitMd).toContain("## Base branch resolution");
+  });
+
+  test("git.md forbids AI attribution in commits and PR bodies (T014)", () => {
+    const gitMd = fs.readFileSync(path.join(repoRoot, ".claude/rules/git.md"), "utf8");
+
+    // Explicit trailer/footer forms are named, not just alluded to.
+    expect(gitMd).toContain("Co-Authored-By: Claude <noreply@anthropic.com>");
+    expect(gitMd).toContain("no AI-generated footer");
+
+    // Scope: sdd commit-slice, sdd open-pr, and direct agent commits are all covered.
+    expect(gitMd).toContain("any commit an agent makes directly");
+
+    // Strong enough to override a harness default that appends attribution by default.
+    expect(gitMd).toContain("takes precedence over that default");
+
+    // Rationale: git history and PR bodies are the humans' authorship record.
+    expect(gitMd).toContain("belongs to the humans on the project");
+  });
+
+  test("bin/sdd never emits AI attribution in commits or PR bodies (T014)", () => {
+    const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
+
+    // Exclude comment lines so this checks emitted output, not prose that merely
+    // names the forbidden strings (same approach as the git-add-A guard above).
+    const codeOnly = sddCli
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n");
+
+    expect(codeOnly).not.toContain("Co-Authored-By");
+    expect(codeOnly).not.toContain("noreply@anthropic.com");
+    expect(codeOnly).not.toContain("Generated with");
+    expect(codeOnly).not.toContain("🤖");
+  });
+
+  test("simplify-code commits before writing the sentinel and gitignores .simplified but not .pr-opened (T007)", () => {
+    const simplifyCode = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-simplify-code.md"), "utf8");
+    const gitignore = fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
+
+    // New step: commit-slice call between post-validation and sentinel write, refactor type, no task id.
+    expect(simplifyCode).toContain("5.5. Commit the slice");
+    expect(simplifyCode).toContain("sdd commit-slice $ARGUMENTS --type refactor --files <SCOPED_FILES...>");
+    expect(simplifyCode).toContain("No `--task` flag — a simplify pass has no task ID.");
+
+    // Auto-commit knob, same grep-the-rules-file shape as implement-task's Step 7.5.
+    expect(simplifyCode).toContain("auto-commit:\\s*off");
+    expect(simplifyCode).toContain("Commit: none");
+
+    // Ordering is explicitly documented as load-bearing: commit first, sentinel second,
+    // and the self-invalidation consequence of reversing it is spelled out so nobody "fixes" it later.
+    expect(simplifyCode).toContain("commit FIRST");
+    expect(simplifyCode).toContain("sentinel SECOND");
+    expect(simplifyCode).toContain("loop `/simplify-code` forever");
+
+    // Empty-diff path still writes the sentinel and reports no commit — nothing to commit.
+    expect(simplifyCode).toContain("skip straight to step 6 and report `Commit: none`");
+
+    // Commit failure blocks before the sentinel is written — same invariant as implement-task's revert.
+    expect(simplifyCode).toContain("do NOT write `.simplified`");
+
+    // Envelope gains the Commit field.
+    expect(simplifyCode).toContain("- **Commit**:");
+
+    // .simplified is gitignored (same sentinel-commit hazard the ordering rule above guards against);
+    // .pr-opened must stay tracked — it is the durable PR-URL record, not a self-invalidating sentinel.
+    expect(gitignore).toContain("specs/**/.simplified");
+    expect(gitignore).not.toContain(".pr-opened");
+  });
+
+  test("archive-feature commits the archived folder as a single haiku-safe call, no branching (T008)", () => {
+    const archiveFeature = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"), "utf8");
+
+    // Step 3.5: exactly one commit-slice call, type chore, no --task flag (archive has no task id).
+    expect(archiveFeature).toContain("### 3.5. Commit the slice");
+    expect(archiveFeature).toContain("sdd commit-slice $ARGUMENTS --type chore");
+    expect(archiveFeature).toContain("no `--task` flag (an archive pass has no task ID)");
+
+    // Auto-commit knob, same grep-the-rules-file shape as implement-task/simplify-code.
+    expect(archiveFeature).toContain("auto-commit:\\s*off");
+    expect(archiveFeature).toContain("Commit: none");
+
+    // Derived-directory reasoning (F2): the folder already moved before this runs.
+    expect(archiveFeature).toContain("sdd commit-slice derives the feature directory");
+    expect(archiveFeature).toContain("F2 in `decisions.md`");
+
+    // On failure: blocked, stderr, no recovery logic invented on this tier.
+    expect(archiveFeature).toContain("Do not attempt recovery logic");
+
+    // The haiku / no-branching constraint must be spelled out so a future editor
+    // doesn't "improve" this into a decision tree.
+    expect(archiveFeature).toContain("model: haiku");
+    expect(archiveFeature).toContain("cheapest tier in the pipeline");
+    expect(archiveFeature).toContain("no conditional branching");
+    expect(archiveFeature).toContain("that branching lives in `bin/sdd`");
+
+    // Envelope gains the Commit field.
+    expect(archiveFeature).toContain("- **Commit**:");
+  });
+
+  test("sdd-next gains the ready-to-pr gate and both orchestrators carve out the never-ask rule (T009)", () => {
+    const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
+    const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
+
+    // The "never ask" rule gains a bounded exception in BOTH orchestrators —
+    // worded as a carve-out, not a general softening of the rule.
+    expect(sddNext).toContain(
+      "Never ask for user confirmation — launch phases and advance automatically. **Exception: the post-archive PR gate**",
+    );
+    expect(sddAuto).toContain(
+      "**Never ask for user confirmation** — run all phases and advance automatically. **Exception: the post-archive PR gate**",
+    );
+    expect(sddNext).toContain("outward-facing actions that need a human's explicit go-ahead");
+    expect(sddAuto).toContain("outward-facing actions that need a human's explicit go-ahead");
+
+    // Phase-detection table gains the two post-archive rows sdd-next was missing,
+    // reconciling the drift against CLAUDE.md's master table (F3/F4 in decisions.md).
+    expect(sddNext).toContain("`sdd status <feature-id>` reports `phase: archived`");
+    expect(sddNext).toContain("`sdd status <feature-id>` reports `phase: ready-to-pr`");
+    // These two rows cannot key off file existence — the folder moved under specs/archive/.
+    expect(sddNext).toContain("F4 in `decisions.md`");
+    expect(sddNext).toContain(
+      "Once `/archive-feature` moves the folder, `specs/<feature-id>/` no longer exists",
+    );
+
+    // The gate itself: confirm once, then delegate the actual git/gh work to the CLI —
+    // the orchestrator never shells out to git push or gh directly (ADR 0002).
+    expect(sddNext).toContain("## Step 3a: PR gate");
+    expect(sddNext).toContain("sdd open-pr <feature-id>");
+    expect(sddNext).toContain("The orchestrator never calls `git push` or `gh` itself");
+    expect(sddNext).toContain("ADR 0002");
+    expect(sddNext).toContain(".pr-opened` was not written, so the gate stays resumable");
+
+    // sdd-auto's premise is "never pause" — it must now also stop at the gate
+    // instead of confirming it, and point the human back at /sdd-next to take it.
+    expect(sddAuto).toContain("`phase: ready-to-pr`");
+    expect(sddAuto).toContain("stop; do not confirm the gate yourself");
+    expect(sddAuto).toContain("run `/sdd-next <feature-id>` to take the gate");
+    // sdd-auto must delegate the gate rather than perform it — it never calls open-pr itself.
+    expect(sddAuto).not.toContain("sdd open-pr");
+  });
+
+  test("CLAUDE.md master docs cover the PR gate — human-input list, pipeline diagram, detection table, workflow diagram, archive format, commands, envelope (T010)", () => {
+    const claudeMd = fs.readFileSync(path.join(repoRoot, ".claude/CLAUDE.md"), "utf8");
+
+    // 1. "When Human Input Is Needed" gains a bullet for the routine ready-to-ship gate —
+    // every existing entry is an error/exhaustion state or a design decision, none covers this.
+    expect(claudeMd).toContain(
+      "**PR gate**: `/archive-feature` completed and `.pr-opened` absent (`sdd status` reports `phase: ready-to-pr`)",
+    );
+    expect(claudeMd).toContain("before `sdd open-pr` runs");
+
+    // 2. "Phase Pipeline" diagram gains the gate stage in the same ├─/└─ visual style
+    // as every other stage, showing both outcomes.
+    expect(claudeMd).toContain("/sdd-next → PR gate                  (human confirmation → sdd open-pr)");
+    expect(claudeMd).toContain("`.pr-opened` written");
+    expect(claudeMd).toContain("gate stays resumable");
+
+    // 3. "Phase Detection Logic" table gains a ready-to-pr row keyed off `sdd status`,
+    // not file existence — matching what T009 wrote into sdd-next/SKILL.md.
+    expect(claudeMd).toContain(
+      "| any | `sdd status <feature-id>` reports `phase: ready-to-pr` | — | — | Human PR gate — confirm, then `sdd open-pr <feature-id>` |",
+    );
+    expect(claudeMd).toContain("keys off `sdd status`, not file existence");
+    expect(claudeMd).toContain("F4 in `decisions.md`");
+
+    // 4. "Workflow" diagram gains the gate as one more step after archive-feature.
+    expect(claudeMd).toContain("PR gate (human confirm) → sdd open-pr");
+
+    // 5. "Archive folder format" documents .pr-opened, contrasted with .simplified.
+    expect(claudeMd).toContain("`.pr-opened` lives inside the archived folder");
+    expect(claudeMd).toContain("flips `sdd status` from `ready-to-pr` to `archived`");
+    expect(claudeMd).toContain("deliberately **tracked** (not gitignored)");
+
+    // 6. "SDD Commands" table descriptions reflect the pipeline now running through the gate.
+    expect(claudeMd).toContain("Detect current phase and run the next one, including the post-archive PR gate");
+    expect(claudeMd).toContain("stopping at the PR gate for human confirmation");
+    // bin/sdd subcommands are not user-invocable skills — they stay out of this table.
+    expect(claudeMd).not.toContain("`sdd commit-slice");
+    expect(claudeMd).not.toContain("`sdd open-pr`  |");
+
+    // 7. Result envelope line rewritten (not appended elsewhere) to include Commit —
+    // not.toContain on the exact old fenced line proves it was edited in place.
+    expect(claudeMd).toContain("Status | Summary | Artifacts | Next | Risks | Commit");
+    expect(claudeMd).not.toContain("```\nStatus | Summary | Artifacts | Next | Risks\n```");
+  });
+
+  test("review-feature pipeline wires in the cross-reviewer as an advisory third agent", () => {
+    const reviewFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/review-feature/SKILL.md"), "utf8");
+
+    expect(reviewFeature).toContain("CROSS_REVIEW_AVAILABLE");
+    expect(reviewFeature).toContain("sdd-cross-reviewer");
+    expect(reviewFeature).toContain("implemented-by");
+    expect(reviewFeature).toContain("## CROSS-REVIEW");
+    expect(reviewFeature).toContain("**Cross-Review**");
+    expect(reviewFeature).toContain("cross-review reported FAIL (advisory)");
+  });
+
+  test("cross-reviewer unwraps the companion result envelope and bounds runtime", () => {
+    const crossReviewer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-cross-reviewer.md"), "utf8");
+
+    expect(crossReviewer).toContain(".result");
+    expect(crossReviewer).toContain("parseError");
+    expect(crossReviewer).toContain("600000");
+    expect(crossReviewer).toContain("skipped — runtime error: timeout");
+  });
+
+  test("cross-reviewer and review-feature harden invocation, plugin detection, and fail-open (T007)", () => {
+    const crossReviewer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-cross-reviewer.md"), "utf8");
+    const reviewFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/review-feature/SKILL.md"), "utf8");
+
+    // Fix 1: focus text goes through a scratch file + command substitution, never literal interpolation
+    expect(crossReviewer).toContain(".cross-focus.txt");
+    expect(crossReviewer).toContain("$(cat ");
+
+    // Fix 2: kill-switch checked against the real installed_plugins.json + settings.json shape
+    expect(crossReviewer).toContain("installed_plugins.json");
+    expect(crossReviewer).toContain("enabledPlugins");
+    expect(reviewFeature).toContain("installed_plugins.json");
+    expect(reviewFeature).toContain("enabledPlugins");
+
+    // Fix 3: orchestration fail-open for cross-agent launch/crash/timeout/malformed-output
+    expect(reviewFeature).toContain("cross-agent failure");
+
+    // Fix 4: schema read from the resolved version directory, not hardcoded prose
+    expect(crossReviewer).toContain("review-output.schema.json");
+    expect(crossReviewer).toContain("resolved version directory");
+  });
+
+  test("cross-reviewer and review-feature fix schema path, gitignore, settings readability, and installPath fallback (T008)", () => {
+    const crossReviewer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-cross-reviewer.md"), "utf8");
+    const reviewFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/review-feature/SKILL.md"), "utf8");
+    const gitignore = fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
+
+    // Fix 1: real v1.0.6 schema layout is schemas/review-output.schema.json, with an explicit fallback
+    expect(crossReviewer).toContain("schemas/review-output.schema.json");
+    expect(crossReviewer).toContain("prose field summary");
+
+    // Fix 2: .cross-focus.txt scratch file is gitignored, mirroring .parent-branch
+    expect(gitignore).toContain("specs/**/.cross-focus.txt");
+
+    // Fix 3: unreadable/absent settings.json is treated identically to enabledPlugins missing
+    expect(crossReviewer).toContain("unreadable or absent");
+
+    // Fix 4: registry entry with a missing/invalid installPath is an audited skip, never a cache fallback
+    expect(crossReviewer).toContain("no valid installPath");
+    expect(reviewFeature).toContain("no valid installPath");
+  });
+
+  describe("sdd branch", () => {
+    function currentBranch(project) {
+      return execFileSync("git", ["branch", "--show-current"], {
+        cwd: project,
+        encoding: "utf8",
+      }).trim();
+    }
+
+    test("creates and checks out a new feature branch when none exists", () => {
+      const project = makeTempProject();
+
+      const output = execFileSync(sddBin, ["branch", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output.trim()).toBe("feature/001-demo");
+      expect(currentBranch(project)).toBe("feature/001-demo");
+    });
+
+    test("is idempotent when already on the feature branch", () => {
+      const project = makeTempProject();
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
+
+      const output = execFileSync(sddBin, ["branch", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output.trim()).toBe("feature/001-demo");
+      expect(currentBranch(project)).toBe("feature/001-demo");
+    });
+
+    test("checks out an existing feature branch without recreating it", () => {
+      const project = makeTempProject();
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      execFileSync("git", ["checkout", "-b", "other"], { cwd: project, encoding: "utf8" });
+      expect(currentBranch(project)).toBe("other");
+
+      const output = execFileSync(sddBin, ["branch", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output.trim()).toBe("feature/001-demo");
+      expect(currentBranch(project)).toBe("feature/001-demo");
+    });
+
+    test("exits non-zero and creates no branch when feature-id is missing", () => {
+      const project = makeTempProject();
+      const before = currentBranch(project);
+
+      let error;
+      try {
+        execFileSync(sddBin, ["branch"], { cwd: project, encoding: "utf8" });
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeDefined();
+      expect(error.status).not.toBe(0);
+      expect(currentBranch(project)).toBe(before);
+    });
+  });
+
+  describe("sdd commit-slice", () => {
+    test("commits the named files with the <type>(<id>): <title> message format", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const output = execFileSync(
+        sddBin,
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      const message = execFileSync("git", ["log", "-1", "--format=%s", sha], {
+        cwd: project,
+        encoding: "utf8",
+      }).trim();
+      expect(message).toBe("feat(001-demo): Add hello log");
+    });
+
+    test("prefixes the message with Tnnn when --task is passed", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const output = execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "feat",
+          "--task",
+          "T001",
+          "--title",
+          "Add hello log",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      const message = execFileSync("git", ["log", "-1", "--format=%s", sha], {
+        cwd: project,
+        encoding: "utf8",
+      }).trim();
+      expect(message).toBe("feat(001-demo): T001 Add hello log");
+    });
+
+    test("stages only --files plus the derived feature dir, leaving unrelated dirty files out", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "unrelated.js"), "console.log('bye');\n");
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "spec.md"), "# Spec\n\nUpdated.\n");
+
+      const output = execFileSync(
+        sddBin,
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      const files = filesInCommit(project, sha);
+
+      expect(files).toContain("app.js");
+      expect(files).toContain("specs/001-demo/spec.md");
+      expect(files).not.toContain("unrelated.js");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).toContain("unrelated.js");
+    });
+
+    test("refuses without --files and creates no commit, even when specs/<id> itself is dirty", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      // specs/001-demo has a real change on disk — without the guardrail, staging
+      // just the derived feature dir would be enough to produce a "successful" commit.
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "spec.md"), "# Spec\n\nUpdated.\n");
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "No files"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("--files");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+    });
+
+    test("resolves the derived feature dir from specs/archive/*-<id> when specs/<id> is absent", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.rmSync(path.join(project, "specs", "001-demo"), { recursive: true, force: true });
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-01-001-demo");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n");
+      execFileSync("git", ["add", "-A"], { cwd: project });
+      execFileSync("git", ["commit", "-q", "-m", "move to archive"], { cwd: project });
+
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(archiveDir, "decisions.md"), "# Decisions\n");
+
+      const output = execFileSync(
+        sddBin,
+        ["commit-slice", "001-demo", "--type", "chore", "--title", "Archive note", "--files", "app.js"],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).toContain("specs/archive/2026-08-01-001-demo/decisions.md");
+    });
+
+    test("exits 3 and creates no commit when the feature dir cannot be resolved", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const error = sddFail(
+        ["commit-slice", "999-missing", "--type", "feat", "--title", "No feature", "--files", "app.js"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(3);
+      expect(error.stderr).toContain("feature not found");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+    });
+
+    test("exits 4 and passes git's stderr through when a --files path does not exist", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Missing path", "--files", "does-not-exist.js"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(4);
+      expect(error.stderr).toMatch(/pathspec|did not match/);
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+    });
+
+    test("exits 5 and creates no commit when nothing changed to stage", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      execFileSync("git", ["add", "-A"], { cwd: project });
+      execFileSync("git", ["commit", "-q", "-m", "add app.js"], { cwd: project });
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "No changes", "--files", "app.js"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(5);
+      expect(error.stderr).toContain("nothing staged");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+    });
+
+    test("never stages with git add -A or --all", () => {
+      const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
+      const match = sddCli.match(/cmd_commit_slice\(\) \{[\s\S]*?\n\}\n/);
+
+      expect(match).not.toBeNull();
+
+      // Exclude comment lines (e.g. "Never 'git add -A'") so the assertion
+      // checks executable code, not prose that mentions the forbidden form.
+      const codeOnly = match[0]
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("#"))
+        .join("\n");
+      expect(codeOnly).not.toMatch(/git add (-A|--all)\b/);
+    });
+  });
+
+  describe("sdd open-pr", () => {
+    // Filters the current PATH down to directories that do NOT contain a `gh`
+    // executable, so the pre-flight "gh present on PATH" check deterministically
+    // fails without depending on this machine's real gh auth state (AC6).
+    function pathWithoutGh() {
+      const dirs = (process.env.PATH || "").split(path.delimiter);
+      return dirs
+        .filter((dir) => {
+          try {
+            fs.accessSync(path.join(dir, "gh"), fs.constants.X_OK);
+            return false;
+          } catch {
+            return true;
+          }
+        })
+        .join(path.delimiter);
+    }
+
+    // A real local bare repo used as "origin" so a push can be verified to have
+    // (not) happened by inspecting its refs, without touching any network.
+    function makeBareRemote() {
+      const remoteDir = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-remote-"));
+      execFileSync("git", ["init", "--bare", "-q", remoteDir]);
+      return remoteDir;
+    }
+
+    test("exits non-zero and prints usage when feature-id is missing", () => {
+      const project = makeTempProject();
+
+      const error = sddFail(["open-pr"], { cwd: project });
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("open-pr");
+    });
+
+    test("exits 3 and prints the manual command when not on the feature branch", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      // Never switched to feature/001-demo — still on the default branch.
+
+      const error = sddFail(["open-pr", "001-demo"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stderr).toContain("feature/001-demo");
+      expect(error.stderr).toContain("git push -u origin HEAD");
+      expect(error.stderr).toContain("gh pr create --draft");
+      expect(fs.existsSync(path.join(project, "specs", "001-demo", ".pr-opened"))).toBe(false);
+    });
+
+    test("exits 3, pushes nothing, and writes no sentinel when gh is absent from PATH (AC6)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
+      const remoteDir = makeBareRemote();
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: project });
+
+      const error = sddFail(["open-pr", "001-demo"], {
+        cwd: project,
+        env: { ...process.env, PATH: pathWithoutGh() },
+      });
+
+      expect(error.status).toBe(3);
+      expect(error.stderr.toLowerCase()).toContain("gh");
+      expect(error.stderr).toContain("git push -u origin HEAD");
+      expect(error.stderr).toContain("gh pr create --draft");
+
+      // No push happened — the bare remote has no refs at all.
+      const remoteRefs = execFileSync("git", ["ls-remote", remoteDir], { encoding: "utf8" }).trim();
+      expect(remoteRefs).toBe("");
+
+      expect(fs.existsSync(path.join(project, "specs", "001-demo", ".pr-opened"))).toBe(false);
+    });
+
+    test("exits 3 and reports feature not found when the feature dir cannot be resolved", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "999-missing"], { cwd: project, encoding: "utf8" });
+
+      const error = sddFail(["open-pr", "999-missing"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stderr).toContain("feature not found");
+    });
+  });
+
+  describe("sdd status — archived vs ready-to-pr (T004)", () => {
+    // Moves 001-demo into specs/archive/YYYY-MM-DD-<id>, exercising the real
+    // find-based resolve_feature_dir fallback rather than a shortcut path.
+    function archiveFeature(project) {
+      fs.rmSync(path.join(project, "specs", "001-demo"), { recursive: true, force: true });
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-14-001-demo");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(archiveDir, "decisions.md"), "# Decisions\n");
+      return archiveDir;
+    }
+
+    test("reports ready-to-pr for an archived feature with no .pr-opened sentinel", () => {
+      const project = makeTempProject();
+      archiveFeature(project);
+
+      const output = execFileSync(sddBin, ["status", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      const status = JSON.parse(output);
+      expect(status).toMatchObject({
+        feature_id: "001-demo",
+        phase: "ready-to-pr",
+        next_command: "sdd open-pr 001-demo",
+      });
+    });
+
+    test("still reports archived when .pr-opened is present in the archived dir", () => {
+      const project = makeTempProject();
+      const archiveDir = archiveFeature(project);
+      fs.writeFileSync(path.join(archiveDir, ".pr-opened"), "url: https://example.com/pr/1\n");
+
+      const output = execFileSync(sddBin, ["status", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      const status = JSON.parse(output);
+      expect(status).toMatchObject({
+        feature_id: "001-demo",
+        phase: "archived",
+        next_command: "(none — feature archived)",
+      });
+    });
   });
 
   test("build-registry ignores every core skill", () => {

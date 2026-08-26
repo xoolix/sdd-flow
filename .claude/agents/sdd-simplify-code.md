@@ -55,7 +55,7 @@ This guarantees that any post-edit failure later is attributable to simplify-cod
    - **Configs**: `*.config.*`, `.env*`, `docker-compose.*`, `tsconfig.json`, `vite.config.*`
    - **SDD artifacts**: `specs/**/*.md`, `.claude/skills/**/*.md`, `.claude/CLAUDE.md`, `.specify/templates/*.md` — spec, plan, tasks, quick-spec, SKILL.md, templates, and orchestrator docs are prose artifacts, not code. KISS/DRY/YAGNI applied to these is out of scope and can corrupt load-bearing structure (e.g., `## Tasks` checkboxes).
 4. Record the remaining list as `SCOPED_FILES` — this is the revert target list.
-5. **If `SCOPED_FILES` is empty** → write the sentinel (step 6) with `Summary: no changes needed` and return `Status: success`. Skip steps 4 and 5.
+5. **If `SCOPED_FILES` is empty** → skip straight to step 6 and report `Commit: none`; write the sentinel with `Summary: no changes needed` and return `Status: success`. Skip steps 4, 5, and 5.5 — there is nothing to simplify and nothing to commit.
 
 ### 4. Simplify
 
@@ -90,6 +90,25 @@ Re-run **Lint**, **Type check**, and **Tests** as parallel Bash calls.
   3. Verify revert: `git diff HEAD -- <file1> <file2> ...` must come back empty for every file.
   4. Do NOT create `.simplified`.
   5. Return `Status: blocked` with `Summary: simplify-code reverted — post-validation failed` and the validation error output in `Validations-Output`.
+
+### 5.5. Commit the slice
+
+Determine `AUTO_COMMIT` once here: grep `.claude/rules/git.md` for a line matching `^auto-commit:\s*off`. Found ⇒ `AUTO_COMMIT` is **off**: skip this step entirely and report `Commit: none`, then proceed to step 6. Absent ⇒ `AUTO_COMMIT` is **on** (the default) — proceed below. This mirrors the knob resolution `/implement-task` uses for its own Step 7.5.
+
+If `SCOPED_FILES` was empty (step 3.5 above), there is nothing to commit — that path already skips this step and reports `Commit: none`.
+
+Otherwise, call:
+
+```
+sdd commit-slice $ARGUMENTS --type refactor --files <SCOPED_FILES...>
+```
+
+No `--task` flag — a simplify pass has no task ID.
+
+- **On success**: record the printed SHA as `Commit: <sha>` for the result envelope, then proceed to step 6.
+- **On failure** (`sdd commit-slice` exits non-zero): do NOT write `.simplified`. Return `Status: blocked` with the CLI's stderr pasted verbatim and `Commit: none`.
+
+**Ordering is load-bearing — commit FIRST, write the sentinel SECOND. Never reverse this.** Step 6 captures `git rev-parse HEAD` for the sentinel's `git-head:` field *after* this commit lands. If the sentinel were written before the commit, the commit would advance HEAD past the recorded value; `bin/sdd`'s `cmd_status` freshness check (sentinel `git-head:` vs current `git rev-parse HEAD`) would then read the sentinel as stale on every subsequent check, and `/sdd-next` would route back to `/simplify-code` and loop `/simplify-code` forever. Do not reorder these two steps.
 
 ### 6. Write sentinel and decisions.md entry
 
@@ -129,6 +148,7 @@ Save **only if** a non-obvious simplification pattern surfaced (e.g., a recurrin
 - **Validations-Output**: [short summary on success; last 100 lines of terminal output on failure]
 - **Files-Simplified**: [list or `none` for empty diff]
 - **Revert-Applied**: [true/false]
+- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `AUTO_COMMIT` is off, `SCOPED_FILES` was empty, or the run blocked before step 5.5]
 - **Next**: /review-feature $ARGUMENTS
 - **Risks**: [anything the reviewer should double-check, or "None"]
 ```
@@ -140,4 +160,5 @@ Save **only if** a non-obvious simplification pattern surfaced (e.g., a recurrin
 - **Behavior preservation is the hard constraint** — the NEVER list above is non-negotiable.
 - **Revert is file-scoped, not branch-scoped** — only touch files in `SCOPED_FILES`.
 - **Empty diff is a success** — do not invent work. Write the sentinel and move on.
+- **Commit before sentinel, never the reverse** — step 5.5 must run before step 6. The sentinel's `git-head:` has to be the post-commit HEAD; writing it first self-invalidates the sentinel and loops `/simplify-code` forever.
 - Always output the result envelope at the end.

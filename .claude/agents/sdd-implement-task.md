@@ -27,6 +27,8 @@ Then verify:
 
 If any check fails, tell the user what's missing and suggest the appropriate step.
 
+Once the lane is resolved and the required files confirmed, call `sdd branch $ARGUMENTS` before any implementation work. It is idempotent — a no-op when already on `feature/$ARGUMENTS`, a checkout when the branch exists, a `checkout -b` otherwise — and prints the branch name. This is the only sanctioned way to create or switch the feature branch: never run a raw `git checkout -b` here — ADR 0002 makes `bin/sdd` the sole git-write path.
+
 ## Task graph format
 
 `tasks.md` and fast-lane `quick-spec.md` `## Tasks` use vertical slices:
@@ -36,12 +38,14 @@ If any check fails, tell the user what's missing and suggest the appropriate ste
   - blocked_by: none
   - verifies: AC1
   - touches: api, ui, tests
+  - type: feat
 ```
 
 Rules:
 - Task ID is the `Tnnn` token. Legacy bullets without IDs are allowed; treat them as AFK tasks with implicit order.
 - Type is `[AFK]` or `[HITL]`. Missing type defaults to `[AFK]` for legacy tasks.
 - `blocked_by` is `none` or comma-separated task IDs.
+- `type` (`feat`/`fix`/`refactor`/`chore`/`docs`, set by the task planner) drives the commit type prefix in Step 7.5. Missing on a Step 2b auto-generated review-fix task ⇒ `fix`; missing anywhere else ⇒ `chore`.
 - A task is unlocked only when all `blocked_by` IDs are completed (`- [x]`).
 - `[HITL]` tasks are human checkpoints. Do not implement them. If the next unlocked work is HITL-only, return `Status: blocked` with the exact task and `Next: /sdd-hitl $ARGUMENTS <Tnnn> "<decision>"`.
 - Default scope is **one unlocked AFK vertical slice** per invocation. `/sdd-next` and `/sdd-auto` will re-run you for the next unlocked slice, keeping each sub-agent context clean.
@@ -65,6 +69,10 @@ When `TDD_MODE` is ON, execute each task with testable behavior using the RED �
 3. **REFACTOR**: Clean up the code while keeping tests green.
 
 `TDD_MODE` OFF (greenfield repo with no tests and no framework yet): still write a test-first for any testable behavior when a framework can be added trivially; otherwise follow the standard flow and record why in `decisions.md`.
+
+## Auto-commit knob
+
+Determine `AUTO_COMMIT` once, before Step 7.5. Grep `.claude/rules/git.md` for a line matching `^auto-commit:\s*off`. Found ⇒ `AUTO_COMMIT` is **off**: skip Step 7.5 entirely and report `Commit: none`. Absent ⇒ `AUTO_COMMIT` is **on** (the default): Step 7.5 runs. This mirrors the `tdd:` knob in `testing.md` — the agent reads the rules file directly; the CLI never reads it.
 
 ## TDD quality bar
 
@@ -95,6 +103,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
        - blocked_by: none
        - verifies: review-feedback
        - touches: affected files from the feedback, or unknown
+       - type: fix
      ```
      Pick the next unused task ID.
 
@@ -102,6 +111,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
 
 3. **Select the next vertical slice**
    - Parse all checkbox task bullets and their indented metadata.
+   - Also capture each task's `type:` metadata alongside `blocked_by` — Step 7.5 needs it for the commit message. Missing `type:` on a Step 2b auto-generated review-fix task ⇒ `fix`; missing anywhere else ⇒ `chore`.
    - Build a completed-ID set from all `- [x]` tasks.
    - Parse optional `FORCE_TASK_ID=Tnnn` from the invoker prompt.
    - If `FORCE_TASK_ID` is present:
@@ -146,6 +156,15 @@ When a task has testable behavior, apply these rules whether or not the repo is 
    - **FAST_LANE = false**: change the selected task bullet from `- [ ]` to `- [x]` in `tasks.md`.
    - **FAST_LANE = true**: change the selected task bullet from `- [ ]` to `- [x]` in `quick-spec.md` `## Tasks` section (NOT `tasks.md` — there is no `tasks.md` for fast-lane features).
 
+6b. **Record the `implemented-by` marker**: Append one line to `specs/$ARGUMENTS/decisions.md`:
+    ```
+    [<ISO-8601 UTC timestamp>] implemented-by: <runtime>
+    ```
+    - Timestamp: `date -u +%Y-%m-%dT%H:%M:%SZ`.
+    - `<runtime>` is the runtime executing this task — `claude` when running in Claude Code, `codex` when the Codex port runs this same agent. Never hardcode `claude`; use whichever runtime you actually are.
+    - Dedupe rule is **consecutive-only**: read the last `implemented-by:` line in the file (if any). Skip the append only when that last line's value equals the current runtime's value. Do not dedupe against earlier, non-consecutive lines — an alternating sequence like `claude` → `codex` → `claude` must record all three.
+    - If `decisions.md` doesn't exist yet, create it with a `# Decisions` heading before appending.
+
 7. **Delta spec check**: If the selected task changed, added, or removed requirements from the original spec, document all deltas in `specs/$ARGUMENTS/decisions.md` in a single entry:
    ```
    ## Delta: [date] — Task Tnnn
@@ -154,6 +173,16 @@ When a task has testable behavior, apply these rules whether or not the repo is 
    - **REMOVED**: [requirement dropped and why]
    ```
    Only include sections (ADDED/MODIFIED/REMOVED) that apply. Skip this step if all tasks matched the spec exactly.
+
+7.5. **Commit the slice** — runs after Step 6 (checkbox flip), Step 6b (`implemented-by` marker), and Step 7 (deltas), so the commit captures all three. Skip entirely if `AUTO_COMMIT` is off: set `Commit: none` and go straight to Step 8.
+   - Resolve `type` for the selected task (captured in Step 3): the task's `type:` value, else `fix` for a Step 2b auto-generated review-fix task, else `chore`.
+   - Call:
+     ```
+     sdd commit-slice $ARGUMENTS --type <type> [--task Tnnn] --title "<slice title>" --files <paths…>
+     ```
+     `--files` lists only the paths this slice actually touched — never `git add -A` — and goes last (it is variadic and stops at the next `--*` token). Omit `--task` for a legacy bullet with no ID.
+   - **On success**: record the printed SHA as `Commit: <sha>` for the result envelope.
+   - **On failure** (`sdd commit-slice` exits non-zero): flip the task bullet back from `- [x]` to `- [ ]` — the same shape as the `FORCE_TASK_ID` re-open in Step 3 — set `Task completed: None (blocked before completion)` and `Commit: none`, and return `Status: blocked` with the CLI's stderr pasted verbatim. Note which graded exit code fired so the failure is diagnosable: `2`=usage, `3`=unresolvable, `4`=git failure, `5`=nothing staged. This preserves the invariant *task complete ⟹ commit exists*, which `/simplify-code`'s committed-diff scope depends on.
 
 8. **Engram memory** (skip if Engram unavailable):
    - Save **only if** you discovered a gotcha, unexpected behavior, or non-obvious pattern during the slice → `mem_save` type: `discovery` or `pattern`, `project: "{project}"`
@@ -172,6 +201,7 @@ After completing the selected slice, output this summary:
 - **Validations-Output**: [paste the concrete terminal output from the final validation run]
 - **Task attempted**: [Task ID + exact task bullet selected for this invocation]
 - **Task completed**: [Task ID + exact task bullet, or "None (blocked before completion)"]
+- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `AUTO_COMMIT` is off or the task was blocked before Step 7.5]
 - **Tasks remaining**: [N unchecked / total, plus locked/HITL count if relevant]
 - **Next**: [next phase or "/review-feature $ARGUMENTS" if all complete]
 - **Risks**: [blockers, questions, or spec divergences — or "None"]

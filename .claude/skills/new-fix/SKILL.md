@@ -2,7 +2,6 @@
 name: new-fix
 description: "Fast-lane (bugfix): Create a quick-spec.md for a low-risk single-domain bugfix (Kiro-style Current/Expected/Unchanged)"
 user-invocable: true
-disable-model-invocation: true
 arguments: bug description
 ---
 
@@ -13,6 +12,8 @@ Bug intent:
 `$ARGUMENTS`
 
 **Main Claude executes this skill body inline.** Do NOT launch a sub-agent — this intake is conversational and must ask the user one question at a time.
+
+**Invocation guard**: run this intake only when the user explicitly typed `/new-fix`, or `/sdd-new` classified the lane and routed here. Never start it on your own initiative mid-conversation — if an intake seems warranted, suggest the command and let the user decide.
 
 ## Approach
 
@@ -34,7 +35,7 @@ Ground yourself in the buggy code. ~30-60 seconds:
 
 **Silent escalation guard** (no questions): if the fix as understood genuinely requires a schema/data migration, auth/permission change, billing/payments, a public API/integration contract change, background jobs, concurrency, or other rollback-hard behavior, stop the fast lane and tell the user once:
 > "Esto toca `<concrete trigger found in code>` — lo trato como `/new-feature` para no subdimensionarlo."
-Then execute `/new-feature` inline with the same intent. Otherwise stay fast-lane silently.
+Then invoke the `new-feature` skill via the Skill tool with the same intent. Otherwise stay fast-lane silently.
 
 ## Grill-me intake (one question at a time)
 
@@ -73,7 +74,7 @@ SUCCESS METRIC:
 
 **Hard gate**: do NOT write `quick-spec.md` until the user confirms (or corrects) these blocks. The Unchanged list must be non-empty. The artifact still carries strict G/W/T acceptance criteria — you authored them, the user only validated.
 
-If capturing "done" needs more than 2 G/W/T, the fix outgrew fast-lane — switch to `/new-feature`.
+If capturing "done" needs more than 2 G/W/T, the fix outgrew fast-lane — invoke the `new-feature` skill via the Skill tool with the same intent.
 
 ## Generate quick-spec.md
 

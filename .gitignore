@@ -1,5 +1,7 @@
 node_modules
 .claude/CLAUDE.md.backup
 specs/**/.parent-branch
+specs/**/.cross-focus.txt
+specs/**/.simplified
 .engram/engram.db
 .engram/cloud.json

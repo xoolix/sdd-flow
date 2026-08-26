@@ -40,6 +40,7 @@ Each task is a checkbox bullet plus metadata:
   - blocked_by: none
   - verifies: AC1
   - touches: api, ui, tests
+  - type: feat
 ```
 
 Use `[AFK]` when the implementation agent can complete the slice without more human judgment.
@@ -60,6 +61,7 @@ Use stable, descriptive titles — downstream `review-feature` will match task b
 - Do NOT create horizontal tasks like "build API", "build UI", "write tests" unless the feature truly has no cross-layer behavior. Prefer "user can do X end-to-end".
 - Every AFK task should map to at least one acceptance criterion via `verifies`.
 - `blocked_by` must be `none` or comma-separated task IDs that exist in the file.
+- `type` must be one of `feat`, `fix`, `refactor`, `chore`, `docs` — pick the conventional-commit type that matches the slice's primary change: `docs` for documentation-only slices, `chore` for non-behavioral upkeep, `fix` for bug fixes, `refactor` for behavior-preserving restructuring, `feat` otherwise.
 - Parallelizable tasks are simply tasks with the same completed dependencies; no prose note needed.
 - If `discovery.md` was resumed, honor its DISCOVERY-ACCEPTED decisions when sizing scope.
 - **NEVER use Plan Mode**: write the file directly.
