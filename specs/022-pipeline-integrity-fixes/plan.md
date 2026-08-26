@@ -7,38 +7,38 @@
 4 domains, none large ⇒ **MEDIUM**, sequential: `CLI surface` first, then `Orchestration skills`, `Phase agents`, `Test suite`.
 
 ## Current state
-- Step 3 identifies **and sizes** with the old taxonomy; the vocabulary read is at Step 5 — `plan-feature/SKILL.md:55-61`, `:94`
-- `extract_section` returns a comment-only section as content — `bin/sdd:912-921`
-- Nothing stages the move's deletion half — `bin/sdd:869-876`; `34b7332` = 408 insertions, 0 deletions
-- Retry logic unconditional; no "non-retryable phase" concept — `sdd-phase-common.md:104`
-- `status` no-arg off a feature branch exits 1 — `bin/sdd:1062-1070`
-- Archive defect 2 already mitigated, **verify only** — `tests/sdd.test.js:60-77`
+- Step 3 identifies **and sizes** with the old taxonomy; the vocabulary read is at Step 5 (`plan-feature/SKILL.md`).
+- `extract_section` returns a comment-only section as content
+- Nothing stages the move's deletion half (`cmd_commit_slice`); commit `34b7332` = 408 insertions, 0 deletions
+- Retry logic unconditional; no "non-retryable phase" concept — `sdd-phase-common.md` §F
+- `status` no-arg off a feature branch exits 1, in `cmd_status`
+- Archive defect 2 already mitigated, **verify only** — `tests/sdd.test.js`'s `featureDir()`
 
 ## Proposed design
 
 **1. `sdd domain-vocab`** (no flags). `extract_section` over § Domain rules, then the **emptiness filter**: drop blank/comment lines (see `cmd_domain_vocab`'s `index()`/`substr()` comment). Empty remainder ⇒ no output, **exit 3** (empty=absent); else print it: exit 0 guarantees non-empty vocabulary and consumers drop their "past the comment" filter.
 
-**2. `commit-slice --moved-from <path>`.** A `case` arm shaped like `--type`, run **after** existing `git add`s and **before** `git diff --cached --quiet` (`:878`), so a deletion-only commit counts as staged. **Guard**: index or HEAD (a `git mv`'d path) — neither ⇒ exit 3 naming the path; index-tracked ⇒ `git add -- "$path"` (never `-A`), failure ⇒ 4; HEAD-only ⇒ staged, skip. Mandatory: never-tracked-but-present makes a bare `git add` exit 0, staging a *new addition*.
+**2. `commit-slice --moved-from <path>`.** A `case` arm shaped like `--type`, run **after** existing `git add`s and **before** `git diff --cached --quiet`, so a deletion-only commit counts as staged. **Guard**: index or HEAD (a `git mv`'d path) — neither ⇒ exit 3 naming the path; index-tracked ⇒ `git add -- "$path"` (never `-A`), failure ⇒ 4; HEAD-only ⇒ staged, skip. Mandatory: never-tracked-but-present makes a bare `git add` exit 0, staging a *new addition*.
 
-**3. §F non-retryable phases.** The step-3 row's "skip if phase produces no code" gains "`archive-feature` is **not** exempt: it moves files, and moving files breaks tests". A new `### Non-retryable phases` list under Retry Logic names `archive-feature` (its pre-flight needs the `specs/<id>/` the move removed): failure ⇒ `blocked`, **zero** retries. Replicated across `sdd-phase-common.md:104,110`, `sdd-next:177,182`, `sdd-auto:120,125` — six occurrences.
+**3. §F non-retryable phases.** The step-3 row's "skip if phase produces no code" gains "`archive-feature` is **not** exempt: it moves files, and moving files breaks tests". A new `### Non-retryable phases` list under Retry Logic names `archive-feature` (its pre-flight needs the `specs/<id>/` the move removed): failure ⇒ `blocked`, **zero** retries. Replicated across `sdd-phase-common.md`'s §F, `sdd-next`, `sdd-auto` — six occurrences.
 
-**4. Reorder without renumbering.** New **Step 2.5 — Domain vocabulary** calls `domain-vocab`; exit≠0 ⇒ derive from `spec.md` (Step 2, always present), never step-4 findings. Step 3 consumes it and drops the fixed list — safe: sizing is domain-count arithmetic and Step 4 iterates whatever Step 3 emits. Numbering untouched, so `:37`/`:96` stay true; only `:94` (back-pointer to 2.5) and `sdd-designer.md:29` ("step 2" ⇒ "step 3") change.
+**4. Reorder without renumbering.** New **Step 2.5 — Domain vocabulary** calls `domain-vocab`; exit≠0 ⇒ derive from `spec.md` (Step 2, always present), never step-4 findings. Step 3 consumes it and drops the fixed list — safe: sizing is domain-count arithmetic and Step 4 iterates whatever Step 3 emits. Numbering untouched, so the discovery-resume note and Step 5's backpointer stay true; Step 5's vocabulary bullet and `sdd-designer.md`'s step reference change.
 
 **5. `status` no-arg.** Phase detection extracted to a helper; single-feature JSON byte-identical. No-arg iterates `specs/*/` minus `archive/` and emits a JSON **array** of `{feature_id, phase, next_command}`, exit 0, `[]` when none.
 
 **6. Closing sentence**, all four consumers:
 > Per ADR 0003: the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (`auto-commit` in `git.md`) directly.
 
-Spanish at `new-feature/SKILL.md:172`; each keeps its own empty-branch fallback.
+Spanish, in `new-feature/SKILL.md`; each keeps its own empty-branch fallback.
 
 ## Touched areas
 | Module / path | Change |
 |---|---|
-| `bin/sdd` | `cmd_domain_vocab`; `--moved-from` (`:825-876`); `cmd_status:1058` no-arg + helper; `usage():77-115`; dispatch `:1216-1232`; T008 (7th defect, found mid-implementation, absent from the design above): `git commit` scoped to `commit_paths`; its post-commit dirty-check now re-scans the whole index against a pre-staged snapshot, leaving others' pre-staged work staged |
-| `plan-feature/SKILL.md` | Step 2.5; `:55-61`; `:94` |
+| `bin/sdd` | `cmd_domain_vocab`; `cmd_commit_slice`'s `--moved-from` arm; `cmd_status`/`cmd_status_list`/`detect_feature_phase`; `usage()`; dispatch `case`; T008 (7th defect, found mid-implementation, absent from the design above): `git commit` scoped to `commit_paths`; its post-commit dirty-check now re-scans the whole index against a pre-staged snapshot, leaving others' pre-staged work staged |
+| `plan-feature/SKILL.md` | Step 2.5; Steps 3 and 5 |
 | `sdd-phase-common.md` + `sdd-next`/`sdd-auto` | §F step-3 row + non-retryable list, replicated 2 spots each |
-| `sdd-designer.md`, `sdd-research-spike.md`, `new-feature/SKILL.md` | closing sentence; designer also `:29` |
-| `sdd-archive-feature.md` | Step 3.5 adds `--moved-from specs/$ARGUMENTS/` (path exists `:41`; one call) |
+| `sdd-designer.md`, `sdd-research-spike.md`, `new-feature/SKILL.md` | closing sentence; designer's step wording |
+| `sdd-archive-feature.md` | Step 3.5 adds `--moved-from specs/$ARGUMENTS/` (in Step 3; one call) |
 | `tests/sdd.test.js` | new describes; T008 retargeted to `domain-vocab` |
 
 ## Data flow

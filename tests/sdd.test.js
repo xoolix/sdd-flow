@@ -1577,6 +1577,33 @@ describe("sdd CLI smoke tests", () => {
         expect(firstKeptLine).toMatch(/^LINE-\d{6} x+$/);
       });
 
+      // Regression for review fix 1 (022): the marker was built with a
+      // trailing "\n\n" in its printf format, but storing it via `$(...)`
+      // strips ALL trailing newlines from command substitution -- so the
+      // marker was written with zero trailing newlines and fused onto the
+      // same physical line as the first kept line. A `toContain`/`toMatch`
+      // check on the marker text alone (the prior test above) can't catch
+      // this: it stays green whether or not a line break follows the marker.
+      // This test asserts the marker is its own physical line, not just present.
+      test("the truncation marker occupies its own line, separate from the first kept line", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
+
+        const body = buildPrBodyViaRealPath(featureDir);
+        const lines = body.split("\n");
+        const markerLineIndex = lines.findIndex((line) => /truncated/i.test(line));
+
+        expect(markerLineIndex).toBeGreaterThanOrEqual(0);
+        // The marker line must not have absorbed the first kept line's content.
+        expect(lines[markerLineIndex]).not.toMatch(/LINE-\d{6}/);
+        // A blank line separates the marker from the kept text below it...
+        expect(lines[markerLineIndex + 1]).toBe("");
+        // ...so the first kept line starts its own block, untouched.
+        expect(lines[markerLineIndex + 2]).toMatch(/^LINE-\d{6} x+$/);
+      });
+
       test("spec sections survive intact when decisions.md is truncated", () => {
         const project = makeTempProject();
         const featureDir = path.join(project, "specs", "001-demo");
