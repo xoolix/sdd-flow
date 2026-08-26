@@ -51,7 +51,7 @@
   - touches: .claude/agents/sdd-designer.md, .claude/agents/sdd-research-spike.md, .claude/skills/new-feature/SKILL.md, tests/sdd.test.js
   - type: fix
 
-- [ ] **T007 [AFK] Archive commits both halves of the move**: `sdd-archive-feature.md` Step 3.5's single `sdd commit-slice` call adds `--moved-from specs/$ARGUMENTS`, staying one plain call (haiku, no branching); 022's own archive proves it — the commit must show deletions, not just insertions.
+- [x] **T007 [AFK] Archive commits both halves of the move**: `sdd-archive-feature.md` Step 3.5's single `sdd commit-slice` call adds `--moved-from specs/$ARGUMENTS`, staying one plain call (haiku, no branching); 022's own archive proves it — the commit must show deletions, not just insertions.
   - blocked_by: T002
   - verifies: AC6
   - touches: .claude/agents/sdd-archive-feature.md, tests/sdd.test.js

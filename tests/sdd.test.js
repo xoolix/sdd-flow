@@ -456,6 +456,45 @@ describe("sdd CLI smoke tests", () => {
     expect(archiveFeature).toContain("- **Commit**:");
   });
 
+  test("archive-feature's commit-slice call stages --moved-from so both halves of the move land, still one plain call (T007)", () => {
+    const archiveFeature = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"), "utf8");
+
+    // The single call gains --moved-from specs/$ARGUMENTS — the old path the Step 3 `mv` already moved away from.
+    expect(archiveFeature).toContain(
+      "sdd commit-slice $ARGUMENTS --type chore --files <spec files touched by the delta merge> --moved-from specs/$ARGUMENTS",
+    );
+
+    // Step 3.5 is still exactly one `sdd commit-slice` invocation — this is a wiring regression
+    // guard, not proof the agent obeys it: it asserts the instruction text stays a single plain
+    // call with no branching added around it, per the haiku-tier constraint spelled out below.
+    const step35Match = archiveFeature.match(
+      /### 3\.5\. Commit the slice([\s\S]*?)\n4\. \*\*Present summary\*\*/,
+    );
+    expect(step35Match).not.toBeNull();
+    const step35Body = step35Match[1];
+
+    // Exactly one fenced code block — one invocation, not one-plus-a-fallback-branch.
+    // (Prose around it legitimately says "sdd commit-slice" more than once — e.g. explaining
+    // *why* the plain call works — so the invocation count is the fenced blocks, not the mentions.)
+    const fenceDelimiters = step35Body.match(/```/g) || [];
+    expect(fenceDelimiters.length).toBe(2);
+
+    // The fenced call itself is a single line — no if/case/conditional inserted into the call.
+    const fencedBlock = step35Body.match(/```\n([\s\S]*?)\n```/);
+    expect(fencedBlock).not.toBeNull();
+    const fencedLines = fencedBlock[1].split("\n");
+    expect(fencedLines.length).toBe(1);
+    expect(fencedLines[0]).toBe(
+      "sdd commit-slice $ARGUMENTS --type chore --files <spec files touched by the delta merge> --moved-from specs/$ARGUMENTS",
+    );
+
+    // No branching keywords added to Step 3.5 beyond the existing on/off knob check and the
+    // success/failure prose bullets (both pre-existing, documentation, not shell branching).
+    expect(step35Body).not.toMatch(/\bif\s+\[/);
+    expect(step35Body).not.toMatch(/\bcase\b/);
+    expect(step35Body).not.toMatch(/\belif\b/);
+  });
+
   test("sdd-next gains the ready-to-pr gate and both orchestrators carve out the never-ask rule (T009)", () => {
     const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
     const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
