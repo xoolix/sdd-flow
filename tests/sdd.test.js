@@ -1455,13 +1455,29 @@ describe("sdd CLI smoke tests", () => {
       expect(planFeature).not.toContain("Touched files/modules, APIs, DB/schema, jobs, UI");
     });
 
-    test("plan-feature/SKILL.md carries the Domain vocabulary read instruction — F1's fourth consumer", () => {
+    test("plan-feature/SKILL.md resolves domain vocabulary via `sdd domain-vocab` in a new Step 2.5, ahead of Step 3 (T005)", () => {
       const planFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/plan-feature/SKILL.md"), "utf8");
 
-      // Same explicit-read pattern as T002/T003/T004 — plan-feature is the orchestrator that
-      // launches sdd-designer, so it needs the instruction too (plan.md's F1 coverage gap).
-      expect(planFeature).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
-      expect(planFeature).toContain("the agent reads the rules file directly, the CLI never does");
+      // Wiring regression guard, not behavioral coverage — this asserts the prose
+      // instruction exists, not that an agent follows it (ADR 0003's own caveat).
+
+      // Step 2.5 exists and calls the CLI subcommand — the content-resolution path
+      // ADR 0003 chose over the grep-in-a-prompt pattern F1 originally used.
+      expect(planFeature).toContain("2.5. **Domain vocabulary**");
+      expect(planFeature).toContain("sdd domain-vocab");
+
+      // Step 3 no longer hardcodes the old fixed web taxonomy — domains now come
+      // from Step 2.5's vocabulary (or its spec-derived fallback) instead.
+      expect(planFeature).not.toContain("db, api, frontend, infra, auth, notifications, integrations");
+
+      // The empty/unavailable fallback names the spec — read in Step 2, always
+      // present — never step 4's exploration findings, which the discovery-resume
+      // path (:37) skips entirely. 021 took exactly that path.
+      expect(planFeature).not.toContain("the exploration findings you collected in step 4");
+
+      // The now-false "CLI never does" claim is gone from this file's copy of the
+      // closing sentence (the other three consumers are T006's).
+      expect(planFeature).not.toContain("the agent reads the rules file directly, the CLI never does");
     });
 
     test("sdd-designer.md fill list matches the template's new conditional shape", () => {

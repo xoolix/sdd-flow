@@ -39,7 +39,7 @@
   - touches: .claude/skills/_shared/sdd-phase-common.md, .claude/skills/sdd-next/SKILL.md, .claude/skills/sdd-auto/SKILL.md, tests/sdd.test.js
   - type: fix
 
-- [ ] **T005 [AFK] plan-feature resolves vocabulary before Step 3, via `domain-vocab`**: insert Step 2.5 (not a renumber — :37/:96 stay true) calling `sdd domain-vocab`, falling back to the spec, not step-4 findings, when empty/unavailable; Step 3 then identifies domains from that vocabulary, dropping the fixed taxonomy; only :94's back-pointer changes; rewrite the now-false "CLI never does" line.
+- [x] **T005 [AFK] plan-feature resolves vocabulary before Step 3, via `domain-vocab`**: insert Step 2.5 (not a renumber — :37/:96 stay true) calling `sdd domain-vocab`, falling back to the spec, not step-4 findings, when empty/unavailable; Step 3 then identifies domains from that vocabulary, dropping the fixed taxonomy; only :94's back-pointer changes; rewrite the now-false "CLI never does" line.
   - blocked_by: T001
   - verifies: AC1, AC2, AC4
   - touches: .claude/skills/plan-feature/SKILL.md, tests/sdd.test.js
