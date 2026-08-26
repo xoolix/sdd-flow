@@ -228,8 +228,15 @@ cmd_init() {
   fi
 
   # ── Rules (project-specific — always copy, never overwrite existing) ──
+  # Sourced from a pristine, versioned seed (.specify/templates/rules/), NOT from
+  # SDD_HOME's own .claude/rules/*.md. SDD_HOME describes itself in the latter
+  # (its own Domain rules, its own model-override rows) — copying those verbatim
+  # would leak this repo's description into every new project. See decisions.md
+  # SEED-CONTAMINATION (feature 021, T009).
   mkdir -p "$target/.claude/rules"
-  for rule_file in "$SDD_HOME/.claude/rules"/*.md; do
+  local rules_seed="$SDD_HOME/.specify/templates/rules"
+  for rule_file in "$rules_seed"/*.md; do
+    [ -f "$rule_file" ] || continue
     local rule_name
     rule_name="$(basename "$rule_file")"
     if [ -f "$target/.claude/rules/$rule_name" ]; then

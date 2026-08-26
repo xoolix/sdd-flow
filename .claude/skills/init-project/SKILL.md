@@ -27,7 +27,8 @@ Launch an Explore agent (subagent_type: "Explore", thoroughness: "very thorough"
 7. Test framework and test locations
 8. Lint/format configuration
 9. Package manager (npm, pnpm, yarn, pip, cargo, etc.)
-10. Any existing documentation or ADRs"
+10. Any existing documentation or ADRs
+11. Functional domains: name the project's business/functional areas (not directory or file names) — this becomes the shared domain vocabulary other phases reuse"
 ```
 
 ### 2. Generate architecture-map
@@ -61,7 +62,7 @@ Update `.claude/rules/conventions.md` based on detected conventions:
 - **Naming**: Detect from existing code (kebab-case files? camelCase? snake_case?)
 - **Folder structure**: Document the actual folder structure
 - **Lint / Format**: Detect from config files (eslint, prettier, ruff, clippy, etc.)
-- **Domain rules**: Leave as TODO for the user to fill
+- **Domain rules**: Fill with the functional domains detected in Step 1 (business/functional areas, not directory names) — this becomes the shared domain vocabulary other phases read before naming things themselves
 
 If `conventions.md` already has non-template content, ask the user before overwriting.
 

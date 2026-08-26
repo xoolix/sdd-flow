@@ -12,25 +12,18 @@ Describe current architecture and relevant modules.
 Describe the target design.
 
 ## Touched areas
-- Files/modules:
-- APIs/contracts:
-- DB/schema:
-- Jobs/workers:
-- UI surfaces:
+| Module / path | Change |
+|---|---|
+| | |
 
 ## Data flow
 Describe read/write paths.
 
 ## Migration / rollout
-- Backfill:
-- Compatibility:
-- Feature flags:
-- Rollback:
+Real rollout content, or `N/A — <reason>` if this feature has no rollout surface.
 
 ## Observability
-- Logs:
-- Metrics:
-- Alerts:
+Real observability content, or `N/A — <reason>` if this feature has no observability surface.
 
 ## Test strategy
 - Unit:

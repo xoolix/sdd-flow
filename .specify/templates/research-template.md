@@ -24,13 +24,9 @@ Why is this blocking or de-risking future work?
 -
 
 ## Evaluation criteria
-- Complexity
-- Cost
-- Performance
-- Reliability
-- Security
-- Team fit
-- Vendor lock-in
+<!-- Derive from what is evaluated. The vendor list (cost, lock-in,
+     team fit) applies only when the options ARE vendors. -->
+-
 
 ## Findings
 <!-- Document what was discovered during research -->

@@ -52,6 +52,34 @@ function sddFail(args, options) {
   throw new Error(`expected "sdd ${args.join(" ")}" to fail, but it exited 0`);
 }
 
+// Resolves a feature's spec directory the same way bin/sdd's resolve_feature_dir
+// does: specs/<feature-id> while the feature is active, else the archived
+// specs/archive/<date>-<feature-id> match once /archive-feature has moved it.
+// Tests that assert on a feature's artifacts must go through this, or they
+// break with ENOENT the moment that feature is archived.
+function featureDir(featureId) {
+  const active = path.join(repoRoot, "specs", featureId);
+  if (fs.existsSync(active)) {
+    return active;
+  }
+
+  const archiveRoot = path.join(repoRoot, "specs", "archive");
+  if (fs.existsSync(archiveRoot)) {
+    const match = fs
+      .readdirSync(archiveRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.endsWith(`-${featureId}`))
+      .map((entry) => entry.name)
+      .sort()[0];
+    if (match) {
+      return path.join(archiveRoot, match);
+    }
+  }
+
+  throw new Error(
+    `feature "${featureId}" not found: no specs/${featureId} and no specs/archive/*-${featureId}`,
+  );
+}
+
 describe("sdd CLI smoke tests", () => {
   test("prints version", () => {
     const output = execFileSync(sddBin, ["version"], {
@@ -988,5 +1016,330 @@ describe("sdd CLI smoke tests", () => {
 
     expect(buildRegistry).toContain("default to `implement-task, review-feature`");
     expect(buildRegistry).toContain("5-15 lines");
+  });
+
+  test("init-project asks for functional domains and fills Domain rules instead of TODO (T001)", () => {
+    const initProject = fs.readFileSync(path.join(repoRoot, ".claude/skills/init-project/SKILL.md"), "utf8");
+
+    // Step 1's Explore prompt gains an 11th ask for functional domains (business areas, not directories)
+    expect(initProject).toContain("11. Functional domains");
+    expect(initProject).toContain("business/functional areas");
+
+    // Step 3's Domain rules bullet is filled from the Step 1 scan, not left as a TODO
+    expect(initProject).toContain("**Domain rules**: Fill with the functional domains detected in Step 1");
+    expect(initProject).toContain("shared domain vocabulary");
+    expect(initProject).not.toContain("Leave as TODO for the user to fill");
+
+    // The existing overwrite guard is reused verbatim — it already covers the whole conventions.md file
+    expect(initProject).toContain("If `conventions.md` already has non-template content, ask the user before overwriting.");
+  });
+
+  test("sdd-designer reads Domain rules from conventions.md before filling domain sections (T002)", () => {
+    const designer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-designer.md"), "utf8");
+
+    // Explicit read instruction — mirrors the auto-commit knob pattern (agent reads the rules
+    // file directly; no ambient loading, no orchestrator-side injection).
+    expect(designer).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+    expect(designer).toContain("Content past the comment ⇒ use that vocabulary; empty ⇒ derive names from the exploration findings provided");
+
+    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
+    expect(designer).toContain("the agent reads the rules file directly, the CLI never does");
+  });
+
+  test("new-feature maps Domains to conventions.md Domain rules before Block 2/Step 0 fallback (T003)", () => {
+    const newFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/new-feature/SKILL.md"), "utf8");
+
+    // The `## Domains` mapping bullet reads the shared vocabulary first — same explicit-read
+    // pattern as the auto-commit knob and T002's designer instruction — before falling back
+    // to the interview's own Block 2 / Step 0 scan.
+    expect(newFeature).toContain("`## Domains` ← primero grep `.claude/rules/conventions.md` para `## Domain rules`");
+    expect(newFeature).toContain("vacío ⇒ derivá de Block 2 (archivos/módulos tocados) + el scan de Step 0");
+
+    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
+    expect(newFeature).toContain("el agente lee el archivo de reglas directamente, la CLI nunca lo hace");
+  });
+
+  test("sdd-research-spike reads Domain rules for vocabulary, not for the criteria list, before filling Evaluation criteria (T004)", () => {
+    const researchSpike = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-research-spike.md"), "utf8");
+
+    // Explicit read instruction — same auto-commit-knob pattern as T002/T003, scoped to this file.
+    expect(researchSpike).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+
+    // Substance differs from T002/T003: Domain rules names domains, not evaluation axes. The
+    // criteria themselves always come from what's actually being evaluated, not the domain list.
+    expect(researchSpike).toContain("that section names domains, not evaluation axes");
+    expect(researchSpike).toContain(
+      "derive the criteria themselves from what Options and Questions above are actually evaluating either way"
+    );
+
+    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
+    expect(researchSpike).toContain("the agent reads the rules file directly, the CLI never does");
+  });
+
+  describe("spec-template.md Domains section (T005)", () => {
+    const specTemplatePath = path.join(repoRoot, ".specify/templates/spec-template.md");
+
+    // Sources bin/sdd's function definitions into a disposable bash process and runs the
+    // real build_pr_body_file (bin/sdd:936-953, which calls extract_section at :946/948/950)
+    // against featureDir, returning the PR body it builds. This is the actual shipped code
+    // path, not a reimplementation of the awk matcher. Going through `sdd open-pr` itself
+    // isn't possible here: its gh/remote pre-flight (bin/sdd:1004-1020) fails before ever
+    // reaching build_pr_body_file in a temp repo with no real GitHub remote.
+    function buildPrBodyViaRealPath(featureDir) {
+      // $0 is set to the real sddBin path (not a placeholder) so bin/sdd's own
+      // SDD_HOME resolution (readlink -f "$0" / realpath "$0") resolves cleanly.
+      const script = 'source "$0" help >/dev/null; build_pr_body_file "$1"';
+      const bodyFilePath = execFileSync("bash", ["-c", script, sddBin, featureDir], {
+        encoding: "utf8",
+      }).trim();
+      return fs.readFileSync(bodyFilePath, "utf8");
+    }
+
+    test("replaces the fixed 8-item Domains checklist with a derived-module instruction, not an addition", () => {
+      const template = fs.readFileSync(specTemplatePath, "utf8");
+
+      // Proves this was a replacement, not an addition alongside the old checklist.
+      expect(template).not.toContain("Database / storage");
+      expect(template).not.toContain("Notifications / messaging");
+      expect(template).not.toContain("- [ ] Other:");
+
+      // The section keeps its name — new-feature/SKILL.md:172 maps to it — and now
+      // instructs real-module derivation sourced from conventions.md § Domain rules.
+      expect(template).toContain("## Domains");
+      expect(template).toContain("Name the real modules touched");
+      expect(template).toContain("conventions.md` § Domain rules");
+    });
+
+    test("extract_section still pulls Summary/Acceptance Criteria/Rollback Plan from a spec.md built off the changed template (genuine, not a regression guard)", () => {
+      const project = makeTempProject();
+      const featureDir = path.join(project, "specs", "001-demo");
+
+      const template = fs.readFileSync(specTemplatePath, "utf8");
+      const filled = template
+        .replace(
+          "<!-- One paragraph describing what this feature does and why -->",
+          "GENUINE-SUMMARY-MARKER: derives Domains from real modules instead of a fixed checklist.",
+        )
+        .replace(
+          "- [ ] Given [precondition], When [action], Then [expected result]\n- [ ] Given [precondition], When [action], Then [expected result]",
+          "- [ ] Given a filled spec, When extract_section reads it, Then GENUINE-AC-MARKER is returned",
+        )
+        .replace(
+          "<!-- How do we revert if something goes wrong? -->",
+          "GENUINE-ROLLBACK-MARKER: revert the commit.",
+        );
+
+      // Guards the fixture itself: if any of the three replacements silently no-ops
+      // (e.g. the template's placeholder text drifted), fail loudly here instead of
+      // the assertions below passing for the wrong reason.
+      expect(filled).not.toBe(template);
+
+      fs.writeFileSync(path.join(featureDir, "spec.md"), filled);
+
+      const body = buildPrBodyViaRealPath(featureDir);
+
+      expect(body).toContain("GENUINE-SUMMARY-MARKER");
+      expect(body).toContain("GENUINE-AC-MARKER");
+      expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+    });
+  });
+
+  test("replaces the fixed vendor-selection Evaluation criteria list with a derived-criteria instruction, not an addition (T006)", () => {
+    const template = fs.readFileSync(path.join(repoRoot, ".specify/templates/research-template.md"), "utf8");
+
+    // Proves this was a replacement, not an addition alongside the old list — picks
+    // substrings that cannot appear elsewhere in the file by coincidence.
+    expect(template).not.toContain("Vendor lock-in");
+    expect(template).not.toContain("Team fit");
+
+    // The section keeps its name — sdd-research-spike.md:38 reads it as guidance — and now
+    // instructs criteria derived from what's actually being evaluated.
+    expect(template).toContain("## Evaluation criteria");
+    expect(template).toContain("Derive from what is evaluated");
+    expect(template).toContain("vendor list (cost, lock-in,");
+  });
+
+  describe("plan-template.md conditional sections (T007)", () => {
+    const planTemplatePath = path.join(repoRoot, ".specify/templates/plan-template.md");
+
+    test("Touched areas becomes a Module / path table, not the four fixed sub-fields", () => {
+      const template = fs.readFileSync(planTemplatePath, "utf8");
+
+      // Proves replacement, not addition alongside the old fixed sub-fields.
+      expect(template).not.toContain("APIs/contracts:");
+      expect(template).not.toContain("DB/schema:");
+      expect(template).not.toContain("Jobs/workers:");
+      expect(template).not.toContain("UI surfaces:");
+
+      // Heading name is unchanged — nothing parses it, but 3 archived plans already drifted
+      // to "## Touched files" and this feature should not add more drift.
+      expect(template).toContain("## Touched areas");
+      expect(template).toContain("| Module / path | Change |");
+    });
+
+    test("Observability and Migration / rollout become conditional, one-line sections", () => {
+      const template = fs.readFileSync(planTemplatePath, "utf8");
+
+      // Fixed sub-field lists are gone — proves replacement, not addition.
+      expect(template).not.toContain("- Logs:");
+      expect(template).not.toContain("- Metrics:");
+      expect(template).not.toContain("- Alerts:");
+      expect(template).not.toContain("- Backfill:");
+      expect(template).not.toContain("- Compatibility:");
+      expect(template).not.toContain("- Feature flags:");
+      expect(template).not.toContain("- Rollback:");
+
+      // Headings survive unchanged — regression guard against further drift.
+      expect(template).toContain("## Observability");
+      expect(template).toContain("## Migration / rollout");
+
+      // F5's adopted convention: `N/A — <reason>` as a section-level value, not a new
+      // fourth syntax alongside field-level N/A and `## Test-skip rationale`.
+      expect(template).toContain("N/A — <reason>");
+    });
+
+    test("plan-feature/SKILL.md drops Observability and Migration from the mandatory Fills-in list", () => {
+      const planFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/plan-feature/SKILL.md"), "utf8");
+
+      expect(planFeature).not.toContain("Migration / rollout strategy");
+      expect(planFeature).not.toContain("Observability plan");
+      expect(planFeature).not.toContain("Touched files/modules, APIs, DB/schema, jobs, UI");
+    });
+
+    test("plan-feature/SKILL.md carries the Domain vocabulary read instruction — F1's fourth consumer", () => {
+      const planFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/plan-feature/SKILL.md"), "utf8");
+
+      // Same explicit-read pattern as T002/T003/T004 — plan-feature is the orchestrator that
+      // launches sdd-designer, so it needs the instruction too (plan.md's F1 coverage gap).
+      expect(planFeature).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+      expect(planFeature).toContain("the agent reads the rules file directly, the CLI never does");
+    });
+
+    test("sdd-designer.md fill list matches the template's new conditional shape", () => {
+      const designer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-designer.md"), "utf8");
+
+      expect(designer).not.toContain("Touched files/modules, APIs, DB/schema, jobs, UI");
+      expect(designer).not.toContain("Migration / rollout strategy** — phased if MEDIUM/LARGE");
+      expect(designer).toContain("N/A — <reason>");
+    });
+  });
+
+  describe("conventions.md Domain rules — vocabulary reaches the extraction chain (T008)", () => {
+    const conventionsPath = path.join(repoRoot, ".claude/rules/conventions.md");
+
+    // Sources the real extract_section (bin/sdd:905-912) into a disposable bash
+    // process — the same heading-delimited-section parser build_pr_body_file uses
+    // for spec.md's Summary/Acceptance Criteria/Rollback Plan (T005's technique).
+    // "## Domain rules" follows the identical "## <heading>" format, so this
+    // exercises the actual mechanism every consumer's "grep `.claude/rules/
+    // conventions.md` for `## Domain rules`" instruction relies on — not a
+    // reimplementation of the matcher, and not a string search over the whole file.
+    function extractSectionViaRealPath(file, heading) {
+      const script = 'source "$0" help >/dev/null; extract_section "$1" "$2"';
+      return execFileSync("bash", ["-c", script, sddBin, file, heading], {
+        encoding: "utf8",
+      });
+    }
+
+    // Content past the HTML comment — mirrors exactly what T002/T003/T004/T007's
+    // "Content past the comment ⇒ use that vocabulary; empty ⇒ derive ..." branch
+    // checks for.
+    function pastComment(section) {
+      return section.replace(/<!--[\s\S]*?-->/g, "").trim();
+    }
+
+    test("this repo's own conventions.md carries real, extractable domain names under Domain rules — not just the template comment", () => {
+      const section = extractSectionViaRealPath(conventionsPath, "Domain rules");
+
+      // Real parsing of the real file this repo ships: the section holds actual
+      // content past the comment, naming SDD_HOME's own functional areas — not
+      // generic/aspirational text that a fresh `sdd init` seed copy (bin/sdd:232-241)
+      // would mislead a new project with.
+      expect(pastComment(section).length).toBeGreaterThan(0);
+      expect(section).toContain("CLI surface");
+      expect(section).toContain("Phase agents");
+      expect(section).toContain("bin/sdd");
+    });
+
+    test("emptying Domain rules back to the template comment makes the real extractor return nothing — the exact RED every consumer's fallback branches on", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
+      const emptyConventions = path.join(dir, "conventions.md");
+      fs.writeFileSync(
+        emptyConventions,
+        "# Conventions\n\n## Domain rules\n<!-- Project-specific business logic rules -->\n",
+      );
+
+      const section = extractSectionViaRealPath(emptyConventions, "Domain rules");
+
+      expect(pastComment(section)).toBe("");
+    });
+  });
+
+  describe("cmd_init seeds .claude/rules/ from a pristine seed, not SDD_HOME's own rules (T009)", () => {
+    // SEED-CONTAMINATION (decisions.md): SDD_HOME's own .claude/rules/conventions.md
+    // and model-overrides.md carry THIS repo's domain vocabulary and a real model
+    // override row (filled by T008 / feature 020). cmd_init used to copy those files
+    // verbatim into every new project. This is the real shipped code path — no
+    // reimplementation of the copy loop — so a genuine RED here means the bug is real.
+    test("a fresh `sdd init` does not leak this repo's domain vocabulary or model overrides, but still ships the auto-commit policy knob", () => {
+      const project = makeTempProject();
+
+      execFileSync(sddBin, ["init"], { cwd: project, encoding: "utf8" });
+
+      const conventions = fs.readFileSync(
+        path.join(project, ".claude/rules/conventions.md"),
+        "utf8",
+      );
+      const modelOverrides = fs.readFileSync(
+        path.join(project, ".claude/rules/model-overrides.md"),
+        "utf8",
+      );
+      const gitMd = fs.readFileSync(path.join(project, ".claude/rules/git.md"), "utf8");
+
+      // None of SDD_HOME's own domain vocabulary (T008) leaks into a new project.
+      expect(conventions).not.toContain("CLI surface");
+      expect(conventions).not.toContain("Phase agents");
+      expect(conventions).not.toContain("bin/sdd` subcommands");
+      expect(conventions).toContain("## Domain rules");
+
+      // None of SDD_HOME's own model override row leaks into a new project.
+      expect(modelOverrides).not.toContain("haiku");
+      expect(modelOverrides).not.toContain("| Review agent |");
+
+      // Framework policy (the auto-commit knob, feature 020) still ships — this
+      // file was never repo-specific, so it propagates unchanged.
+      expect(gitMd).toContain("auto-commit: on|off");
+      expect(gitMd).toContain("## Auto-commit");
+    });
+  });
+
+  describe("021's spec.md and plan.md stay reconciled with decisions.md (T010)", () => {
+    // Regression guards, not behavioral coverage: these are prose artifacts.
+    // They assert the artifacts stay in sync with decisions.md's own record —
+    // catching the exact drift judge findings #3 and #4 flagged, so archiving
+    // this feature doesn't freeze a spec/plan that contradicts its decision log.
+    const dir021 = featureDir("021-project-aware-templates");
+    const specPath = path.join(dir021, "spec.md");
+    const planPath = path.join(dir021, "plan.md");
+
+    function extractSectionViaRealPath(file, heading) {
+      const script = 'source "$0" help >/dev/null; extract_section "$1" "$2"';
+      return execFileSync("bash", ["-c", script, sddBin, file, heading], {
+        encoding: "utf8",
+      });
+    }
+
+    test("spec.md no longer names sdd-reviewer.md as a Domain or requires it to accept a discard line — decisions.md REMOVED that edge case", () => {
+      const spec = fs.readFileSync(specPath, "utf8");
+
+      expect(spec).not.toContain("sdd-reviewer.md");
+    });
+
+    test("plan.md's Touched areas names T009's files — bin/sdd and the pristine rules seed — so the archived plan doesn't omit them", () => {
+      const touchedAreas = extractSectionViaRealPath(planPath, "Touched areas");
+
+      expect(touchedAreas).toContain("bin/sdd");
+      expect(touchedAreas).toContain(".specify/templates/rules/");
+    });
   });
 });

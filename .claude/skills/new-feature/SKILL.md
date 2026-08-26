@@ -169,7 +169,7 @@ Una vez validado GWT/rollback/success:
    - `## Summary` ← one-liner derivado de `$ARGUMENTS` + Block 1 (Comportamiento). Una oración técnica del feature, sin justificación de negocio.
    - `## Trigger` ← Block 1 (qué dispara el flujo nuevo).
    - `## Happy Path` ← Block 1 + Block 2 (pasos del flujo, anclados en los archivos/símbolos).
-   - `## Domains` ← Block 2 (archivos/módulos tocados).
+   - `## Domains` ← primero grep `.claude/rules/conventions.md` para `## Domain rules`: contenido después del comentario ⇒ usá ese vocabulario; vacío ⇒ derivá de Block 2 (archivos/módulos tocados) + el scan de Step 0. Igual que el knob `auto-commit`: el agente lee el archivo de reglas directamente, la CLI nunca lo hace.
    - `## API Changes` ← Block 3 (si el template no la tiene, agrega esta sección manual).
    - `## Edge Cases` ← Block 4.
    - `## Acceptance Criteria` ← bloque GWT validado.
