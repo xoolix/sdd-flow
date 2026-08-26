@@ -19,7 +19,7 @@
   - touches: bin/sdd, tests/sdd.test.js
   - type: feat
 
-- [ ] **T003 [AFK] `sdd status` with no feature-id lists `specs/`**: replace the `not on a feature branch` error with a JSON array of `{feature_id, phase, next_command}` per `specs/*/` folder minus `archive/`, exit 0, `[]` when none; reuse phase detection (F12/AC8).
+- [x] **T003 [AFK] `sdd status` with no feature-id lists `specs/`**: replace the `not on a feature branch` error with a JSON array of `{feature_id, phase, next_command}` per `specs/*/` folder minus `archive/`, exit 0, `[]` when none; reuse phase detection (F12/AC8).
   - blocked_by: none
   - verifies: AC8
   - touches: bin/sdd, tests/sdd.test.js
