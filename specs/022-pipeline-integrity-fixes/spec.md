@@ -45,6 +45,7 @@ Any `/plan-feature` run, any consumer needing domain vocabulary, and every `/arc
 - [ ] Given a feature archived with `--moved-from`, When the commit is inspected, Then it contains the old paths' deletions and a clean checkout holds only the archive location.
 - [ ] Given `--moved-from` names a path that was never tracked, When `commit-slice` runs, Then it exits non-zero naming the path — never staging it as a new addition.
 - [ ] Given `specs/` holds a feature whose tasks are all complete but that was never archived, When `sdd status` runs with no feature-id, Then it lists every `specs/` folder with its phase so the unarchived one is visible.
+- [ ] Given an unrelated path is already staged, When `commit-slice` commits, Then only the named, derived and `--moved-from` paths land in the commit and the unrelated staged path stays staged.
 
 ## Rollback Plan
 - Revert the commit. Skills and templates are symlinked; agents refresh on `sdd update`.

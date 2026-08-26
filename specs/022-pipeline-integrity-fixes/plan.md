@@ -34,7 +34,7 @@ Spanish at `new-feature/SKILL.md:172`; each keeps its own empty-branch fallback.
 ## Touched areas
 | Module / path | Change |
 |---|---|
-| `bin/sdd` | `cmd_domain_vocab`; `--moved-from` (`:825-876`); `cmd_status:1058` no-arg + helper; `usage():77-115`; dispatch `:1216-1232` |
+| `bin/sdd` | `cmd_domain_vocab`; `--moved-from` (`:825-876`); `cmd_status:1058` no-arg + helper; `usage():77-115`; dispatch `:1216-1232`; T008 (7th defect, found mid-implementation, absent from the design above): `git commit` + its post-commit dirty-check scoped to `commit_paths` (`--files`/feature dir/`--moved-from`), not the whole index — others' pre-staged work stays staged, untouched |
 | `plan-feature/SKILL.md` | Step 2.5; `:55-61`; `:94` |
 | `sdd-phase-common.md` + `sdd-next`/`sdd-auto` | §F step-3 row + non-retryable list, replicated 2 spots each |
 | `sdd-designer.md`, `sdd-research-spike.md`, `new-feature/SKILL.md` | closing sentence; designer also `:29` |

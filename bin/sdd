@@ -875,6 +875,16 @@ cmd_commit_slice() {
     return 3
   fi
 
+  # Snapshot every already-staged path BEFORE this invocation's own 'git add'
+  # calls touch the index. The post-commit safety net below diffs against
+  # this to tell "someone else's legitimately pre-staged work" (e.g. the 13
+  # in-flight renames from an unrelated cleanup) apart from a --files
+  # omission this invocation is responsible for catching — a file the agent
+  # edited but never staged shows up as unstaged both before and after, so
+  # it survives this snapshot and still trips the warning.
+  local pre_staged
+  pre_staged="$(git status --porcelain --no-renames 2>/dev/null | awk '{ st = substr($0, 1, 1); if (st != " " && st != "?") print substr($0, 4) }')"
+
   # Stage exactly the named files plus the derived feature dir. Never 'git add -A'.
   if [ "${#files[@]}" -gt 0 ]; then
     if ! git add -- "${files[@]}"; then
@@ -886,17 +896,33 @@ cmd_commit_slice() {
   fi
 
   # --moved-from: stage the deletion of a path the caller moved away from.
-  # Guard first with 'git ls-files --error-unmatch'. A never-tracked path
-  # would otherwise make a bare 'git add' exit 0 and stage it as a brand new
-  # addition when it still exists on disk — the opposite of what was asked,
-  # and no exit-code check on 'git add' alone catches it.
+  # Guard first: tracked in the INDEX ('git ls-files --error-unmatch') covers
+  # the common case and still rejects a never-tracked path — a bare 'git add'
+  # would otherwise exit 0 and stage it as a brand new addition when it still
+  # exists on disk, the opposite of what was asked, and no exit-code check on
+  # 'git add' alone catches it. But the index alone is too strict: 'git mv'
+  # (the natural way an agent stages a rename, e.g. during archive) already
+  # removes the old path from the index even though it is still tracked in
+  # HEAD and its deletion is correctly staged — so also accept a path that
+  # resolves in HEAD ('git cat-file -e'), which a never-tracked path never
+  # does, staged or not.
   if [ -n "$moved_from" ]; then
-    if ! git ls-files --error-unmatch -- "$moved_from" >/dev/null 2>&1; then
+    local moved_from_in_index=false
+    if git ls-files --error-unmatch -- "$moved_from" >/dev/null 2>&1; then
+      moved_from_in_index=true
+    elif ! git cat-file -e "HEAD:${moved_from}" 2>/dev/null; then
       printf 'error: --moved-from path was never tracked: %s\n' "$moved_from" >&2
       return 3
     fi
-    if ! git add -- "$moved_from"; then
-      return 4
+    # Only stage it when it is still sitting in the index (e.g. deleted on
+    # disk but not yet added) — when it was only found via the HEAD check,
+    # the removal is already staged (a prior 'git mv') and 'git add' on a
+    # path absent from both the index and the working tree would fail with
+    # "did not match any files" for no reason: there is nothing left to add.
+    if $moved_from_in_index; then
+      if ! git add -- "$moved_from"; then
+        return 4
+      fi
     fi
   fi
 
@@ -930,12 +956,25 @@ cmd_commit_slice() {
   sha="$(git rev-parse HEAD)"
   printf '%s\n' "$sha"
 
-  # Post-commit safety net: warn (stderr only — stdout must stay $()-safe) if a
-  # tracked file was left dirty, e.g. an omitted --files entry. Scoped to
-  # commit_paths so someone else's untouched staged work (now deliberately
-  # left behind by the pathspec-scoped commit above) never trips this.
+  # Post-commit safety net: warn (stderr only — stdout must stay $()-safe) if
+  # a tracked file was left dirty, e.g. an omitted --files entry. Scoped to
+  # commit_paths alone made this structurally unable to catch that (an
+  # omitted file is by definition outside commit_paths) — so this looks at
+  # the WHOLE index again, like pre-020, then drops any path that was
+  # already staged in the pre_staged snapshot above: that is someone else's
+  # legitimate pre-existing work (e.g. an in-flight rename), not something
+  # this invocation should have picked up.
   local dirty
-  dirty="$(git status --porcelain -- "${commit_paths[@]}" 2>/dev/null | grep -v '^??' || true)"
+  dirty="$(git status --porcelain --no-renames 2>/dev/null | grep -v '^??' || true)"
+  if [ -n "$pre_staged" ] && [ -n "$dirty" ]; then
+    # Two-file NR==FNR idiom, not 'awk -v pre="$pre_staged"': the default
+    # macOS/BSD awk rejects a -v value containing embedded newlines ("newline
+    # in string"), and pre_staged is exactly that — a newline-joined path
+    # list. Feeding it as its own input file via process substitution sidesteps
+    # the -v parser entirely and works the same on gawk and mawk.
+    dirty="$(awk 'NR==FNR { seen[$0]=1; next } { path = substr($0, 4); if (!(path in seen)) print }' \
+      <(printf '%s\n' "$pre_staged") <(printf '%s\n' "$dirty"))"
+  fi
   if [ -n "$dirty" ]; then
     printf 'warning: tracked files still dirty after commit:\n%s\n' "$dirty" >&2
   fi
@@ -1266,15 +1305,13 @@ cmd_status() {
   local feature_id="${1:-}"
 
   # ── Feature-id resolution ────────────────────────────────────────
+  # An omitted feature-id ALWAYS lists (AC8) — no branch-name sniffing. AC8
+  # names no condition about the current branch, and a developer running the
+  # bare command is almost always on a feature branch, which is exactly when
+  # the listing is most useful. Explicit `sdd status <id>` is unaffected.
   if [ -z "$feature_id" ]; then
-    local branch
-    branch="$(git branch --show-current 2>/dev/null || true)"
-    if [[ "$branch" =~ ^feature/([0-9]{3}-.+)$ ]]; then
-      feature_id="${BASH_REMATCH[1]}"
-    else
-      cmd_status_list
-      return
-    fi
+    cmd_status_list
+    return
   fi
 
   # ── Folder lookup ────────────────────────────────────────────────
@@ -1331,8 +1368,20 @@ cmd_domain_vocab() {
   local section
   section="$(extract_section "$file" "Domain rules")"
 
+  # Strip whole '<!-- ... -->' spans before testing for emptiness, however
+  # many lines they cover. A filter that only matched a comment opening and
+  # closing on the SAME line let a two-line HTML comment survive as printed
+  # "vocabulary" — contradicting the spec's "comment-only counts as empty".
+  # The char-class trick ('[^-]*(-[^-]+)*') matches the shortest run between
+  # '<!--' and '-->' without a non-greedy quantifier, which awk gsub lacks.
+  local stripped
+  stripped="$(printf '%s\n' "$section" | awk '
+    { buf = buf $0 "\n" }
+    END { gsub(/<!--[^-]*(-[^-]+)*-->/, "", buf); printf "%s", buf }
+  ')"
+
   local filtered
-  filtered="$(printf '%s\n' "$section" | grep -vE '^[[:space:]]*$|^[[:space:]]*<!--.*-->[[:space:]]*$' || true)"
+  filtered="$(printf '%s\n' "$stripped" | grep -vE '^[[:space:]]*$' || true)"
 
   if [ -z "$filtered" ]; then
     return 3

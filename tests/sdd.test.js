@@ -1062,6 +1062,59 @@ describe("sdd CLI smoke tests", () => {
       expect(status).toMatch(/M\s+app\.js/);
     });
 
+    // Review fix cycle 2 (cross #1, Fix 5 option (a)): T008 scoped the
+    // post-commit warning to commit_paths, which made it structurally
+    // unable to catch its original purpose — an omitted --files entry is by
+    // definition outside commit_paths. Restored: the check scans the whole
+    // index again, like pre-020, but a snapshot of paths already staged
+    // BEFORE this invocation's own 'git add' calls run excludes someone
+    // else's legitimate pre-existing work (e.g. this repo's own 13
+    // pre-staged May-cleanup renames) from tripping it. Both properties in
+    // one test: the omission still warns, the unrelated rename does not.
+    test("still warns about a genuinely omitted tracked file even with an unrelated rename pre-staged (cross #1)", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, "specs", "999-other"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "999-other", "f.md"), "old\n");
+      fs.writeFileSync(path.join(project, "omitted.js"), "console.log('do not forget me');\n");
+      seedCommit(project);
+
+      // Someone else's legitimate, unrelated in-flight rename — pre-staged
+      // before commit-slice runs, the same shape as this repo's own 13
+      // pre-staged May-cleanup renames.
+      fs.mkdirSync(path.join(project, "specs", "archive"), { recursive: true });
+      execFileSync("git", ["mv", "specs/999-other", "specs/archive/999-other"], { cwd: project });
+
+      // The agent edits a tracked file but forgets to list it in --files.
+      fs.appendFileSync(path.join(project, "omitted.js"), "// forgot to stage this\n");
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).toContain("warning: tracked files still dirty after commit");
+      expect(stderrOutput).toContain("omitted.js");
+      expect(stderrOutput).not.toContain("999-other");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).toMatch(/M\s+omitted\.js/);
+      expect(status).toMatch(/specs\/archive\/999-other/);
+    });
+
     test("--moved-from deletion still lands in a scoped commit, even with an unrelated file pre-staged", () => {
       const project = makeTempProject();
       seedCommit(project);
@@ -1109,6 +1162,61 @@ describe("sdd CLI smoke tests", () => {
         encoding: "utf8",
       });
       expect(status).toMatch(/^A\s+ajeno\.txt$/m);
+    });
+
+    // Review fix cycle 2 (cross #2): the guard used to read only the INDEX
+    // ('git ls-files --error-unmatch'), which 'git mv' already clears for the
+    // old path even though it is still tracked in HEAD and its deletion is
+    // correctly staged. Reproduced live: 'git mv specs/001-demo
+    // specs/archive/...' then '--moved-from specs/001-demo' errored
+    // "was never tracked" — the natural shape an agent produces when it
+    // moves a folder with 'git mv' instead of a plain filesystem rename (the
+    // other --moved-from tests above use fs.renameSync, which never
+    // exercises this path since the old entry stays in the index).
+    test("--moved-from succeeds on a path already moved away by 'git mv' (cross #2)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      // 'git mv' does not create missing parent directories on its own.
+      fs.mkdirSync(path.join(project, "specs", "archive"), { recursive: true });
+      execFileSync(
+        "git",
+        ["mv", "specs/001-demo", "specs/archive/2026-08-26-001-demo"],
+        { cwd: project },
+      );
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const output = execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "chore",
+          "--title",
+          "Archive note",
+          "--moved-from",
+          "specs/001-demo",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(tree).not.toContain("specs/001-demo/spec.md");
+      expect(tree).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status.trim()).toBe("");
     });
 
     test("--moved-from exits non-zero and names the path when it was never tracked, even if it still exists on disk", () => {
@@ -1366,6 +1474,40 @@ describe("sdd CLI smoke tests", () => {
       });
 
       expect(JSON.parse(output)).toEqual([]);
+    });
+
+    // Review fix cycle 2 (cross #3): cmd_status used to derive a feature-id
+    // from the branch name FIRST, so a bare `sdd status` on `feature/<id>`
+    // returned the single-feature JSON instead of listing — the exact
+    // scenario the AC exists for, since a developer running the bare
+    // command is almost always on a feature branch. AC8 names no branch
+    // condition: an omitted feature-id must always list.
+    test("still lists when the bare command runs on a matching feature branch (AC8, cross #3)", () => {
+      const project = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
+      execFileSync("git", ["init", "-q"], { cwd: project });
+      execFileSync("git", ["checkout", "-q", "-b", "feature/001-demo"], { cwd: project });
+
+      fs.mkdirSync(path.join(project, "specs", "001-demo"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "plan.md"), "# Plan\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [ ] First behavior\n- [ ] Second behavior\n",
+      );
+
+      const output = execFileSync(sddBin, ["status"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      const entries = JSON.parse(output);
+      expect(Array.isArray(entries)).toBe(true);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        feature_id: "001-demo",
+        phase: "planned",
+        next_command: "/implement-task 001-demo",
+      });
     });
   });
 
@@ -1644,6 +1786,35 @@ describe("sdd CLI smoke tests", () => {
       fs.writeFileSync(
         path.join(project, ".claude/rules/conventions.md"),
         "# Conventions\n\n## Domain rules\n<!-- Project-specific business logic rules -->\n",
+      );
+
+      const error = sddFail(["domain-vocab"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
+    });
+
+    // Review fix cycle 2 (judge #1, cross #5): the emptiness filter only
+    // matched a comment opening and closing on the SAME line, so a two-line
+    // HTML comment survived and printed as vocabulary — exit 0 with the
+    // comment as stdout, contradicting the spec's "comment-only counts as
+    // empty" and AC3's empty/absent branch. Reproduced here with a
+    // multi-line comment, the shape neither 021 nor 022 originally covered
+    // because the shipped template comment is a single line.
+    test("Domain rules reduced to only a multi-line HTML comment counts as empty: no stdout, exit 3 (judge #1, cross #5)", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+      fs.writeFileSync(
+        path.join(project, ".claude/rules/conventions.md"),
+        [
+          "# Conventions",
+          "",
+          "## Domain rules",
+          "<!-- Project-specific",
+          "     business logic rules,",
+          "     spanning multiple lines -->",
+          "",
+        ].join("\n"),
       );
 
       const error = sddFail(["domain-vocab"], { cwd: project });

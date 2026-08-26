@@ -27,7 +27,7 @@
 
 - [x] **T008 [AFK] `commit-slice` commits only named paths**: `git commit -- <paths>` scoped to `--files`/feature dir/`--moved-from`, not a bare commit, so others' pre-staged work stays staged.
   - blocked_by: T002
-  - verifies: Rollback Plan
+  - verifies: AC9
   - touches: bin/sdd, tests/sdd.test.js
   - type: fix
 
