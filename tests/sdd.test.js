@@ -80,6 +80,29 @@ function featureDir(featureId) {
   );
 }
 
+// Parses a single shell-like command line into argv tokens, respecting
+// double-quoted segments (e.g. --title "Archive 001-demo" stays one token).
+// Used to run the *literal* text an agent .md template embeds -- not a
+// hand-written argv array that only resembles it (review fix cycle 5).
+function parseTemplateLine(line) {
+  const tokens = line.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  return tokens.map((tok) => (tok.startsWith('"') && tok.endsWith('"') ? tok.slice(1, -1) : tok));
+}
+
+// Extracts the single fenced command line from sdd-archive-feature.md's
+// Step 3.5, the same block T007's test parses.
+function archiveStep35Line() {
+  const archiveFeature = fs.readFileSync(
+    path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"),
+    "utf8",
+  );
+  const fencedBlock = archiveFeature.match(/### 3\.5\. Commit the slice[\s\S]*?```\n([\s\S]*?)\n```/);
+  if (!fencedBlock) {
+    throw new Error("could not find Step 3.5's fenced commit-slice call in sdd-archive-feature.md");
+  }
+  return fencedBlock[1].trim();
+}
+
 describe("sdd CLI smoke tests", () => {
   test("prints version", () => {
     const output = execFileSync(sddBin, ["version"], {
@@ -461,7 +484,7 @@ describe("sdd CLI smoke tests", () => {
 
     // The single call gains --moved-from specs/$ARGUMENTS — the old path the Step 3 `mv` already moved away from.
     expect(archiveFeature).toContain(
-      "sdd commit-slice $ARGUMENTS --type chore --files <spec files touched by the delta merge> --moved-from specs/$ARGUMENTS",
+      "sdd commit-slice $ARGUMENTS --type chore --title \"Archive $ARGUMENTS\" --moved-from specs/$ARGUMENTS --files <spec files touched by the delta merge>",
     );
 
     // Step 3.5 is still exactly one `sdd commit-slice` invocation — this is a wiring regression
@@ -485,7 +508,7 @@ describe("sdd CLI smoke tests", () => {
     const fencedLines = fencedBlock[1].split("\n");
     expect(fencedLines.length).toBe(1);
     expect(fencedLines[0]).toBe(
-      "sdd commit-slice $ARGUMENTS --type chore --files <spec files touched by the delta merge> --moved-from specs/$ARGUMENTS",
+      "sdd commit-slice $ARGUMENTS --type chore --title \"Archive $ARGUMENTS\" --moved-from specs/$ARGUMENTS --files <spec files touched by the delta merge>",
     );
 
     // No branching keywords added to Step 3.5 beyond the existing on/off knob check and the
@@ -1267,6 +1290,89 @@ describe("sdd CLI smoke tests", () => {
 
       expect(error.status).toBe(2);
       expect(error.stderr).toContain("--moved-from");
+    });
+
+    // Review fix cycle 5 (cross #1): the agent's own Step 3.5 template omitted
+    // --title (a hard requirement) and, in the no-delta case, called --files
+    // with nothing after it. Both shapes below run the *literal* template
+    // text parsed out of sdd-archive-feature.md -- not a hand-built argv
+    // array that only resembles it -- against a real project and a real
+    // commit, the same way the archive agent actually invokes the CLI.
+    test("runs the literal Step 3.5 template with a delta file and commits both halves of the move (cross #1)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      // Step 3 (plain filesystem mv, no git awareness) already ran by the
+      // time Step 3.5 fires.
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
+      fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
+      fs.renameSync(path.join(project, "specs", "001-demo"), archiveDir);
+      // Step 2 (delta merge) touched the archived spec.md.
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n\nMerged delta.\n");
+
+      const line = archiveStep35Line()
+        .replace(/\$ARGUMENTS/g, "001-demo")
+        .replace("<spec files touched by the delta merge>", "specs/archive/2026-08-26-001-demo/spec.md");
+      const args = parseTemplateLine(line).slice(1); // drop the leading "sdd"
+
+      const output = execFileSync(sddBin, args, { cwd: project, encoding: "utf8" });
+      const sha = output.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+      expect(files).toContain("specs/001-demo/spec.md"); // deletion side of the move
+
+      const message = execFileSync("git", ["log", "-1", "--format=%s", sha], {
+        cwd: project,
+        encoding: "utf8",
+      }).trim();
+      expect(message).toBe('chore(001-demo): Archive 001-demo');
+    });
+
+    test("runs the literal Step 3.5 template with no deltas -- empty --files -- and still commits the move (cross #1)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
+      fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
+      fs.renameSync(path.join(project, "specs", "001-demo"), archiveDir);
+      // No delta merge this time: Step 2 was a no-op, so the placeholder
+      // resolves to nothing and --files is the last token with no path after it.
+
+      const line = archiveStep35Line()
+        .replace(/\$ARGUMENTS/g, "001-demo")
+        .replace("<spec files touched by the delta merge>", "")
+        .replace(/\s+$/, "");
+      const args = parseTemplateLine(line).slice(1);
+      expect(args[args.length - 1]).toBe("--files");
+
+      const output = execFileSync(sddBin, args, { cwd: project, encoding: "utf8" });
+      const sha = output.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      // Same-content move: git's rename detection folds old+new into one
+      // R100 record rather than a separate D line (see the --moved-from
+      // test above) -- assert on the resulting tree, not --name-only output.
+      const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(tree).not.toContain("specs/001-demo/spec.md");
+      expect(tree).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+    });
+
+    test("still refuses empty --files with no --moved-from and nothing staged -- does not open a hole", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "chore", "--title", "Archive 001-demo"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("--files");
     });
   });
 

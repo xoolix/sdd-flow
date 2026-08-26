@@ -863,7 +863,19 @@ cmd_commit_slice() {
     esac
   done
 
-  if [ -z "$type" ] || [ -z "$title" ] || [ "${#files[@]}" -eq 0 ]; then
+  if [ -z "$type" ] || [ -z "$title" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  # --files may be empty only when --moved-from is present: a move-only
+  # commit (e.g. archive with no delta-merge changes) is a legitimate shape
+  # -- the moved directory itself carries the staged content, added below
+  # unconditionally. Reject the truly-empty invocation (no --files, no
+  # --moved-from) right here rather than leaning on the "nothing staged"
+  # check further down, so a caller that simply forgot --files still gets
+  # the same early, unambiguous usage error it always got.
+  if [ "${#files[@]}" -eq 0 ] && [ -z "$moved_from" ]; then
     printf 'error: %s\n' "$usage_msg" >&2
     return 2
   fi
@@ -931,7 +943,15 @@ cmd_commit_slice() {
   # commit' would sweep in anything already staged by someone else before
   # this command ran; scoping to this pathspec commits only these paths and
   # leaves the rest of the index staged, untouched (7th defect).
-  local -a commit_paths=("${files[@]}" "$feature_dir")
+  # Built incrementally, never via a bare "${files[@]}" expansion: bash 3.2
+  # (macOS's /usr/bin/env bash) throws "unbound variable" expanding an empty
+  # array under 'set -u' -- the same reason the 'git add' call above guards
+  # it with a length check instead of expanding it directly.
+  local -a commit_paths=()
+  if [ "${#files[@]}" -gt 0 ]; then
+    commit_paths+=("${files[@]}")
+  fi
+  commit_paths+=("$feature_dir")
   if [ -n "$moved_from" ]; then
     commit_paths+=("$moved_from")
   fi

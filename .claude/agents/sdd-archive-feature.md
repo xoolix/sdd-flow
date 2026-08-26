@@ -48,8 +48,10 @@ Determine `AUTO_COMMIT`: grep `.claude/rules/git.md` for a line matching `^auto-
 Call exactly one `sdd commit-slice`, no `--task` flag (an archive pass has no task ID):
 
 ```
-sdd commit-slice $ARGUMENTS --type chore --files <spec files touched by the delta merge> --moved-from specs/$ARGUMENTS
+sdd commit-slice $ARGUMENTS --type chore --title "Archive $ARGUMENTS" --moved-from specs/$ARGUMENTS --files <spec files touched by the delta merge>
 ```
+
+`--title` is required — `cmd_commit_slice` exits 2 before touching git without it. When Step 2 found no deltas to merge, `<spec files touched by the delta merge>` resolves to nothing — pass `--files` with no paths after it (or omit the flag entirely). `cmd_commit_slice` accepts an empty `--files` list when `--moved-from` is present: the archived directory alone carries the staged content for a move-only commit. It still rejects an empty `--files` when `--moved-from` is also absent, so this stays a deliberate archive shape, not a general hole.
 
 By the time this runs, the folder has already moved to `specs/archive/YYYY-MM-DD-$ARGUMENTS/`. This is exactly why sdd commit-slice derives the feature directory (F2 in `decisions.md`): it tries `specs/$ARGUMENTS` first, then falls back to `find specs/archive -maxdepth 1 -type d -name "*-$ARGUMENTS"`. The plain call above works with no path override — do not invent one.
 
