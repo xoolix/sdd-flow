@@ -1092,38 +1092,18 @@ cmd_open_pr() {
 
 # ─── status ────────────────────────────────────────────────────────
 
-cmd_status() {
-  local feature_id="${1:-}"
+# Computes phase, task counts, sentinel freshness, and the next command for
+# one resolved feature directory. Extracted from cmd_status so both the
+# single-feature JSON and the no-arg listing (T003/F12) derive phase the same
+# way — the single-feature JSON output is unchanged by this extraction.
+#
+# Args: feature_id, feature_dir, is_archived ("true"/"false")
+# Sets (globals): PHASE_RESULT, TASKS_TOTAL_RESULT, TASKS_REMAINING_RESULT,
+#                 SENTINEL_FRESH_RESULT ("true"/"false"), NEXT_COMMAND_RESULT
+detect_feature_phase() {
+  local feature_id="$1" feature_dir="$2" is_archived="$3"
 
-  # ── Task 2: Feature-id resolution ──────────────────────────────
-  if [ -z "$feature_id" ]; then
-    local branch
-    branch="$(git branch --show-current 2>/dev/null || true)"
-    if [[ "$branch" =~ ^feature/([0-9]{3}-.+)$ ]]; then
-      feature_id="${BASH_REMATCH[1]}"
-    else
-      printf 'error: not on a feature branch\n' >&2
-      exit 1
-    fi
-  fi
-
-  # ── Task 3: Folder lookup ───────────────────────────────────────
-  local specs_dir
-  specs_dir="$(pwd)/specs"
-
-  local feature_dir=""
-  local is_archived=false
-
-  if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
-    [ "$feature_dir" = "$specs_dir/$feature_id" ] || is_archived=true
-  fi
-
-  if [ -z "$feature_dir" ]; then
-    printf 'error: feature not found: %s\n' "$feature_id" >&2
-    exit 1
-  fi
-
-  # ── Task 4: Phase detection ─────────────────────────────────────
+  # ── Phase detection ─────────────────────────────────────────────
   local phase
 
   if $is_archived; then
@@ -1146,7 +1126,7 @@ cmd_status() {
     phase=""  # determined after task counting
   fi
 
-  # ── Task 5: Task counting ───────────────────────────────────────
+  # ── Task counting ────────────────────────────────────────────────
   local tasks_done=0
   local tasks_remaining=0
   local tasks_total=0
@@ -1181,7 +1161,7 @@ cmd_status() {
     fi
     tasks_total=$((tasks_done + tasks_remaining))
 
-    # ── Task 6: Sentinel freshness ────────────────────────────────
+    # ── Sentinel freshness ──────────────────────────────────────────
     local sentinel_fresh=false
     local sentinel_file="$feature_dir/.simplified"
     if [ -f "$sentinel_file" ]; then
@@ -1212,9 +1192,6 @@ cmd_status() {
     tasks_remaining=0
   fi
 
-  # ── Blockers array ──────────────────────────────────────────────
-  local blockers='[]'
-
   # ── Next command ────────────────────────────────────────────────
   local next_command
   case "$phase" in
@@ -1229,21 +1206,107 @@ cmd_status() {
     *)                 next_command="(unknown)" ;;
   esac
 
-  # ── Task 7: JSON emission ───────────────────────────────────────
-  # Normalise sentinel_fresh to JSON boolean
+  # Normalise sentinel_fresh to a JSON boolean string
   local sentinel_json="false"
   if ${sentinel_fresh:-false}; then
     sentinel_json="true"
   fi
 
+  PHASE_RESULT="$phase"
+  TASKS_TOTAL_RESULT="$tasks_total"
+  TASKS_REMAINING_RESULT="$tasks_remaining"
+  SENTINEL_FRESH_RESULT="$sentinel_json"
+  NEXT_COMMAND_RESULT="$next_command"
+}
+
+# No-arg status: lists every active spec (specs/*/ minus specs/archive/) as a
+# JSON array of {feature_id, phase, next_command}. Archived folders are
+# excluded on purpose (F12) — a finished-but-unarchived feature left sitting
+# in specs/ is false context the model reads as active work, and that's
+# exactly what this listing surfaces; burying it among already-archived
+# folders would defeat the point.
+cmd_status_list() {
+  local specs_dir
+  specs_dir="$(pwd)/specs"
+
+  local items="" first=true
+  local dir feature_id
+
+  if [ -d "$specs_dir" ]; then
+    for dir in "$specs_dir"/*/; do
+      [ -d "$dir" ] || continue
+      feature_id="$(basename "$dir")"
+      [ "$feature_id" = "archive" ] && continue
+
+      detect_feature_phase "$feature_id" "${dir%/}" false
+
+      local entry
+      entry="$(printf '{"feature_id": "%s", "phase": "%s", "next_command": "%s"}' \
+        "$feature_id" "$PHASE_RESULT" "$NEXT_COMMAND_RESULT")"
+
+      if $first; then
+        items="  $entry"
+        first=false
+      else
+        items="$items,
+  $entry"
+      fi
+    done
+  fi
+
+  if [ -z "$items" ]; then
+    printf '[]\n'
+  else
+    printf '[\n%s\n]\n' "$items"
+  fi
+  exit 0
+}
+
+cmd_status() {
+  local feature_id="${1:-}"
+
+  # ── Feature-id resolution ────────────────────────────────────────
+  if [ -z "$feature_id" ]; then
+    local branch
+    branch="$(git branch --show-current 2>/dev/null || true)"
+    if [[ "$branch" =~ ^feature/([0-9]{3}-.+)$ ]]; then
+      feature_id="${BASH_REMATCH[1]}"
+    else
+      cmd_status_list
+      return
+    fi
+  fi
+
+  # ── Folder lookup ────────────────────────────────────────────────
+  local specs_dir
+  specs_dir="$(pwd)/specs"
+
+  local feature_dir=""
+  local is_archived=false
+
+  if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    [ "$feature_dir" = "$specs_dir/$feature_id" ] || is_archived=true
+  fi
+
+  if [ -z "$feature_dir" ]; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    exit 1
+  fi
+
+  detect_feature_phase "$feature_id" "$feature_dir" "$is_archived"
+
+  # ── Blockers array ──────────────────────────────────────────────
+  local blockers='[]'
+
+  # ── JSON emission ────────────────────────────────────────────────
   printf '{\n'
   printf '  "feature_id": "%s",\n' "$feature_id"
-  printf '  "phase": "%s",\n' "$phase"
-  printf '  "tasks_total": %d,\n' "$tasks_total"
-  printf '  "tasks_remaining": %d,\n' "$tasks_remaining"
-  printf '  "sentinel_fresh": %s,\n' "$sentinel_json"
+  printf '  "phase": "%s",\n' "$PHASE_RESULT"
+  printf '  "tasks_total": %d,\n' "$TASKS_TOTAL_RESULT"
+  printf '  "tasks_remaining": %d,\n' "$TASKS_REMAINING_RESULT"
+  printf '  "sentinel_fresh": %s,\n' "$SENTINEL_FRESH_RESULT"
   printf '  "blockers": %s,\n' "$blockers"
-  printf '  "next_command": "%s"\n' "$next_command"
+  printf '  "next_command": "%s"\n' "$NEXT_COMMAND_RESULT"
   printf '}\n'
   exit 0
 }

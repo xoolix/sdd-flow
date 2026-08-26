@@ -1177,6 +1177,80 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("sdd status — no-arg lists specs/ (T003)", () => {
+    test("lists every active specs/ folder with its phase, excluding archive/", () => {
+      const project = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
+      execFileSync("git", ["init", "-q"], { cwd: project });
+
+      fs.mkdirSync(path.join(project, "specs", "001-demo"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "plan.md"), "# Plan\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [ ] First behavior\n- [ ] Second behavior\n",
+      );
+
+      fs.mkdirSync(path.join(project, "specs", "003-slices"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "003-slices", "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(project, "specs", "003-slices", "plan.md"), "# Plan\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "003-slices", "tasks.md"),
+        [
+          "# Tasks",
+          "",
+          "- [x] **T001 [AFK] Foundation**: first vertical slice",
+          "- [ ] **T002 [AFK] UI path**: second vertical slice",
+          "",
+        ].join("\n"),
+      );
+
+      // A finished-and-archived feature sitting alongside the active ones —
+      // this is exactly the folder AC8 says must NOT show up in the listing.
+      const archiveDir = path.join(project, "specs", "archive", "2026-05-17-999-finished");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(archiveDir, "decisions.md"), "# Decisions\n");
+
+      const output = execFileSync(sddBin, ["status"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      const entries = JSON.parse(output);
+      expect(Array.isArray(entries)).toBe(true);
+      expect(entries).toHaveLength(2);
+
+      const byId = Object.fromEntries(entries.map((entry) => [entry.feature_id, entry]));
+      expect(byId["001-demo"]).toMatchObject({
+        feature_id: "001-demo",
+        phase: "planned",
+        next_command: "/implement-task 001-demo",
+      });
+      expect(byId["003-slices"]).toMatchObject({
+        feature_id: "003-slices",
+        phase: "implementing",
+        next_command: "/implement-task 003-slices",
+      });
+      expect(entries.some((entry) => entry.feature_id.includes("finished"))).toBe(false);
+    });
+
+    test("returns an empty array, exit 0, when specs/ holds only archive/", () => {
+      const project = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
+      execFileSync("git", ["init", "-q"], { cwd: project });
+
+      const archiveDir = path.join(project, "specs", "archive", "2026-05-17-999-finished");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n");
+
+      const output = execFileSync(sddBin, ["status"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(JSON.parse(output)).toEqual([]);
+    });
+  });
+
   test("build-registry ignores every core skill", () => {
     const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
     const buildRegistry = fs.readFileSync(path.join(repoRoot, ".claude/skills/build-registry/SKILL.md"), "utf8");
