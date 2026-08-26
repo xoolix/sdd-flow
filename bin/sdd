@@ -97,6 +97,8 @@ Usage:
                                  decisions.md; writes .pr-opened on success only. Pre-flight failure
                                  pushes nothing and prints the manual command to stderr.
   sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
+  sdd domain-vocab               Print § Domain rules from .claude/rules/conventions.md;
+                                 exit 3 (no output) if empty, comment-only, or absent
   sdd help                       Show this help
 
 Options for 'init':
@@ -1211,6 +1213,37 @@ cmd_status() {
   exit 0
 }
 
+# ─── domain-vocab ───────────────────────────────────────────────────
+
+# Prints § Domain rules from .claude/rules/conventions.md so the four
+# consumers that used to grep the file directly can call the CLI instead
+# (ADR 0003: the CLI resolves content, the agent reads knobs directly).
+#
+# extract_section returns a comment-only section as non-empty content —
+# conventions.md ships with exactly that shape ("<!-- Project-specific
+# business logic rules -->", 46 chars) until a project fills it in — so
+# blank and comment-only lines are filtered out here before deciding
+# emptiness. "Empty" and "absent" collapse to the same exit code: the spec
+# treats them as one branch and no consumer distinguishes them.
+cmd_domain_vocab() {
+  local file=".claude/rules/conventions.md"
+
+  [ -f "$file" ] || return 3
+
+  local section
+  section="$(extract_section "$file" "Domain rules")"
+
+  local filtered
+  filtered="$(printf '%s\n' "$section" | grep -vE '^[[:space:]]*$|^[[:space:]]*<!--.*-->[[:space:]]*$' || true)"
+
+  if [ -z "$filtered" ]; then
+    return 3
+  fi
+
+  printf '%s\n' "$section"
+  return 0
+}
+
 # ─── main ──────────────────────────────────────────────────────────
 
 case "${1:-help}" in
@@ -1222,6 +1255,7 @@ case "${1:-help}" in
   commit-slice) shift; cmd_commit_slice "$@" ;;
   open-pr)      shift; cmd_open_pr "$@" ;;
   status)       shift; cmd_status "$@" ;;
+  domain-vocab) cmd_domain_vocab ;;
   help|--help|-h) usage ;;
   version|--version|-v) echo "sdd v${VERSION}" ;;
   *)

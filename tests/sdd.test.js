@@ -1224,54 +1224,59 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
-  describe("conventions.md Domain rules — vocabulary reaches the extraction chain (T008)", () => {
-    const conventionsPath = path.join(repoRoot, ".claude/rules/conventions.md");
-
-    // Sources the real extract_section (bin/sdd:905-912) into a disposable bash
-    // process — the same heading-delimited-section parser build_pr_body_file uses
-    // for spec.md's Summary/Acceptance Criteria/Rollback Plan (T005's technique).
-    // "## Domain rules" follows the identical "## <heading>" format, so this
-    // exercises the actual mechanism every consumer's "grep `.claude/rules/
-    // conventions.md` for `## Domain rules`" instruction relies on — not a
-    // reimplementation of the matcher, and not a string search over the whole file.
-    function extractSectionViaRealPath(file, heading) {
-      const script = 'source "$0" help >/dev/null; extract_section "$1" "$2"';
-      return execFileSync("bash", ["-c", script, sddBin, file, heading], {
+  describe("sdd domain-vocab (T001)", () => {
+    // Real binary, real repo, no sourcing extract_section in isolation — that
+    // was 021's own C2 finding: a test exercised a parser production never
+    // calls, while the four consumers grepped the file themselves. This runs
+    // the exact command the consumers now call.
+    test("this repo's own conventions.md carries real domain vocabulary: sdd domain-vocab prints it and exits 0", () => {
+      const output = execFileSync(sddBin, ["domain-vocab"], {
+        cwd: repoRoot,
         encoding: "utf8",
       });
-    }
 
-    // Content past the HTML comment — mirrors exactly what T002/T003/T004/T007's
-    // "Content past the comment ⇒ use that vocabulary; empty ⇒ derive ..." branch
-    // checks for.
-    function pastComment(section) {
-      return section.replace(/<!--[\s\S]*?-->/g, "").trim();
-    }
-
-    test("this repo's own conventions.md carries real, extractable domain names under Domain rules — not just the template comment", () => {
-      const section = extractSectionViaRealPath(conventionsPath, "Domain rules");
-
-      // Real parsing of the real file this repo ships: the section holds actual
-      // content past the comment, naming SDD_HOME's own functional areas — not
-      // generic/aspirational text that a fresh `sdd init` seed copy (bin/sdd:232-241)
-      // would mislead a new project with.
-      expect(pastComment(section).length).toBeGreaterThan(0);
-      expect(section).toContain("CLI surface");
-      expect(section).toContain("Phase agents");
-      expect(section).toContain("bin/sdd");
+      // SDD_HOME's own § Domain rules names its actual functional areas, not
+      // just the template comment a fresh `sdd init` seed copy ships with.
+      expect(output).toContain("CLI surface");
+      expect(output).toContain("Phase agents");
+      expect(output).toContain("bin/sdd");
     });
 
-    test("emptying Domain rules back to the template comment makes the real extractor return nothing — the exact RED every consumer's fallback branches on", () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
-      const emptyConventions = path.join(dir, "conventions.md");
+    test("Domain rules reduced to only its HTML template comment counts as empty: no stdout, exit 3 (F1)", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
       fs.writeFileSync(
-        emptyConventions,
+        path.join(project, ".claude/rules/conventions.md"),
         "# Conventions\n\n## Domain rules\n<!-- Project-specific business logic rules -->\n",
       );
 
-      const section = extractSectionViaRealPath(emptyConventions, "Domain rules");
+      const error = sddFail(["domain-vocab"], { cwd: project });
 
-      expect(pastComment(section)).toBe("");
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
+    });
+
+    test("no Domain rules heading at all: no stdout, exit 3 — same outcome as an empty section", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+      fs.writeFileSync(
+        path.join(project, ".claude/rules/conventions.md"),
+        "# Conventions\n\n## Naming\n- kebab-case\n",
+      );
+
+      const error = sddFail(["domain-vocab"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
+    });
+
+    test("conventions.md missing entirely: no stdout, exit 3", () => {
+      const project = makeTempProject();
+
+      const error = sddFail(["domain-vocab"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
     });
   });
 
