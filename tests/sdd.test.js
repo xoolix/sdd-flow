@@ -1972,6 +1972,44 @@ describe("sdd CLI smoke tests", () => {
         expect(error.stdout.toString()).toBe("");
       });
     });
+
+    // Review fix cycle 4: extract_section's heading compare (`$0 == heading`)
+    // is an exact string match. On a CRLF file, $0 for the heading line is
+    // "## Domain rules\r" — never equal to "## Domain rules" — so the
+    // section is never found and reads as empty regardless of its real
+    // content. Reproduced live against the unfixed binary before this test
+    // was written (see decisions.md).
+    describe("CRLF line endings (review fix cycle 4)", () => {
+      test("CRLF conventions.md with real content in Domain rules: prints it, exit 0", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\r\n\r\n## Domain rules\r\n- assign-engine\r\n",
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- assign-engine");
+      });
+
+      test("CRLF conventions.md with a comment-only Domain rules section: no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\r\n\r\n## Domain rules\r\n<!-- Project-specific business logic rules -->\r\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+    });
   });
 
   describe("cmd_init seeds .claude/rules/ from a pristine seed, not SDD_HOME's own rules (T009)", () => {

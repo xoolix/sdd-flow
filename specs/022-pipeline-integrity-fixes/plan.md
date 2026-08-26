@@ -16,9 +16,9 @@
 
 ## Proposed design
 
-**1. `sdd domain-vocab`** (no flags). `extract_section` over § Domain rules, then the **emptiness filter**: drop blank and comment-only lines (`^[[:space:]]*<!--.*-->[[:space:]]*$`). Empty remainder ⇒ no output, **exit 3** (empty and absent collapse); else print it, so exit 0 guarantees non-empty vocabulary and consumers drop their "past the comment" filter.
+**1. `sdd domain-vocab`** (no flags). `extract_section` over § Domain rules, then the **emptiness filter**: drop blank/comment lines (see `cmd_domain_vocab`'s `index()`/`substr()` comment). Empty remainder ⇒ no output, **exit 3** (empty=absent); else print it: exit 0 guarantees non-empty vocabulary and consumers drop their "past the comment" filter.
 
-**2. `commit-slice --moved-from <path>`.** A `case` arm shaped like `--type`, run **after** the existing `git add`s and **before** `git diff --cached --quiet` (`:878`), so a deletion-only commit still counts as staged. **Guard first**: `git ls-files --error-unmatch -- "$path"` — non-zero ⇒ exit 3 naming the path; zero ⇒ `git add -A -- "$path"`, failure ⇒ 4. Mandatory: never-tracked-but-present makes a bare `git add` exit 0 and stage a *new addition*.
+**2. `commit-slice --moved-from <path>`.** A `case` arm shaped like `--type`, run **after** existing `git add`s and **before** `git diff --cached --quiet` (`:878`), so a deletion-only commit counts as staged. **Guard**: index or HEAD (a `git mv`'d path) — neither ⇒ exit 3 naming the path; index-tracked ⇒ `git add -- "$path"` (never `-A`), failure ⇒ 4; HEAD-only ⇒ staged, skip. Mandatory: never-tracked-but-present makes a bare `git add` exit 0, staging a *new addition*.
 
 **3. §F non-retryable phases.** The step-3 row's "skip if phase produces no code" gains "`archive-feature` is **not** exempt: it moves files, and moving files breaks tests". A new `### Non-retryable phases` list under Retry Logic names `archive-feature` (its pre-flight needs the `specs/<id>/` the move removed): failure ⇒ `blocked`, **zero** retries. Replicated across `sdd-phase-common.md:104,110`, `sdd-next:177,182`, `sdd-auto:120,125` — six occurrences.
 

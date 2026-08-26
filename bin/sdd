@@ -985,9 +985,15 @@ cmd_commit_slice() {
 # ─── open-pr ───────────────────────────────────────────────────────
 
 # Lines between an exact "## <heading>" line and the next "## " heading (or EOF).
+# Strips a trailing CRLF '\r' from every record before the heading compare —
+# on a CRLF file $0 for the heading line is "## Domain rules\r", which never
+# equals the LF heading string, so the section read as empty regardless of
+# its real content (review fix cycle 4). The strip is unconditional (not
+# gated on the heading match), so printed content lines lose their '\r' too.
 extract_section() {
   local file="$1" heading="## $2"
   awk -v heading="$heading" '
+    { sub(/\r$/, "") }
     $0 == heading { found=1; next }
     found && /^## / { exit }
     found { print }
