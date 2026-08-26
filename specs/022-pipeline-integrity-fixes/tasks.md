@@ -33,7 +33,7 @@
 
 ### 2. Core — prose fixes that depend on or gate CLI behavior
 
-- [ ] **T004 [AFK] Archive is not exempt from post-phase validation; no retry**: in §F, state archive is NOT covered by "skip if phase produces no code"; add an explicit non-retryable-phases list (`archive-feature`; post-move pre-flight can't retry), checked before the retry loop. Replicate both wordings into `sdd-next/SKILL.md` (:177, :196-197) and `sdd-auto/SKILL.md` (:120, :125) — five occurrences, lockstep (F3/F4).
+- [x] **T004 [AFK] Archive is not exempt from post-phase validation; no retry**: in §F, state archive is NOT covered by "skip if phase produces no code"; add an explicit non-retryable-phases list (`archive-feature`; post-move pre-flight can't retry), checked before the retry loop. Replicate both wordings into `sdd-next/SKILL.md` (:177, :196-197) and `sdd-auto/SKILL.md` (:120, :125) — five occurrences, lockstep (F3/F4).
   - blocked_by: none
   - verifies: AC5
   - touches: .claude/skills/_shared/sdd-phase-common.md, .claude/skills/sdd-next/SKILL.md, .claude/skills/sdd-auto/SKILL.md, tests/sdd.test.js

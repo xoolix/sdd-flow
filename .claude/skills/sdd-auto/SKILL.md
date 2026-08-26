@@ -117,11 +117,12 @@ Repeat until pipeline is complete, blocked, or escalated:
 3. **Validate result** — apply the **Post-Phase Validation Protocol** from `sdd-phase-common.md` section F:
    - **Artifacts exist** — `ls` each path listed in the `Artifacts` field of the return envelope.
    - **Envelope complete** — verify the return envelope contains all required fields: Status, Summary, Artifacts, Next, Risks.
-   - **Lint/tests pass** — run lint, typecheck, and tests in parallel Bash calls (skip if the phase produces no code, e.g., spec or plan phases).
+   - **Lint/tests pass** — run lint, typecheck, and tests in parallel Bash calls (skip if the phase produces no code, e.g., spec or plan phases — `archive-feature` is not exempt: it moves files, not prose, so this step still runs).
    - For `implement-task`, extract `Task attempted` from the result envelope and parse the first task ID (`Tnnn`). Cache this as `last_attempted_task_id` for retry handling.
 4. **On validation success**:
    - If `status: success` or `partial` → show a one-line summary, continue to next iteration.
 5. **On validation failure** — re-launch the sub-agent with the original prompt **plus** error context (which check(s) failed, error output, retry attempt number).
+   - **Non-retryable phases** (checked before either retry path below): `archive-feature`. Its post-move pre-flight can't succeed on a second attempt, so on failure report `Status: blocked` with the validation output and stop — zero retries, never `ESCALATED`.
    - For **non-implement-task phases**: max 2 retries per phase invocation. If exhausted → ESCALATE and STOP.
    - For **implement-task phases**: use per-task tracking (see below).
 6. **For implement-task**: The skill implements one unlocked `[AFK]` vertical slice per invocation. Launch implement-task once per slice; it will return a single result envelope.

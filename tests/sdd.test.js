@@ -1596,4 +1596,62 @@ describe("sdd CLI smoke tests", () => {
       expect(touchedAreas).toContain(".specify/templates/rules/");
     });
   });
+
+  describe("§F: archive is not exempt from validation, and non-retryable phases exist (T004)", () => {
+    // Wiring regression guard, not behavioral coverage: these assert the instruction
+    // text is present in all five prose locations decisions.md (F3/F4) names as needing
+    // lockstep edits. They cannot verify an orchestrator actually obeys the text — only
+    // that it's there to obey. That gap is exactly how archiving 021 broke the build and
+    // still returned Status: success: the "skip if phase produces no code" hatch read
+    // literally over archive's file-move. A test that looked like coverage wasn't; this
+    // one is deliberately scoped to what it can actually check.
+    const phaseCommon = fs.readFileSync(
+      path.join(repoRoot, ".claude/skills/_shared/sdd-phase-common.md"),
+      "utf8",
+    );
+    const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
+    const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
+
+    // Distinctive substrings only — "archive" and "retry" alone already appear throughout
+    // these files and would pass before the fix. These exact clauses do not exist pre-fix
+    // (verified: zero hits for either substring in all three files before this task).
+    const notExemptClause = "is not exempt: it moves files, not prose, so this step still runs";
+    const nonRetryableClause = "zero retries, never `ESCALATED`";
+
+    test("sdd-phase-common.md §F names archive-feature as not exempt from the no-code-skip hatch", () => {
+      expect(phaseCommon).toContain(notExemptClause);
+    });
+
+    test("sdd-phase-common.md §F declares a non-retryable-phases list, checked before the retry loop", () => {
+      expect(phaseCommon).toContain("Non-retryable phases");
+      expect(phaseCommon).toContain("checked before the retry loop below starts");
+      expect(phaseCommon).toContain("`archive-feature`");
+      expect(phaseCommon).toContain(nonRetryableClause);
+    });
+
+    test("sdd-next/SKILL.md Step 4 restates the archive carve-out inline (:177)", () => {
+      expect(sddNext).toContain(notExemptClause);
+    });
+
+    test("sdd-next/SKILL.md Step 4 restates the non-retryable check before its 2-retry-then-ESCALATED logic (:196-197)", () => {
+      expect(sddNext).toContain("Non-retryable phases");
+      expect(sddNext).toContain(nonRetryableClause);
+      // The existing 2-retry-then-ESCALATED logic must survive untouched, not be replaced.
+      expect(sddNext).toContain("**Max 2 retries** per phase invocation");
+      expect(sddNext).toContain("If 2 retries are exhausted without passing, **STOP** and report with `Status: ESCALATED`");
+    });
+
+    test("sdd-auto/SKILL.md Step 3 restates the archive carve-out inline (:120)", () => {
+      expect(sddAuto).toContain(notExemptClause);
+    });
+
+    test("sdd-auto/SKILL.md restates the non-retryable check before its non-implement-task retry logic (:125)", () => {
+      expect(sddAuto).toContain("Non-retryable phases");
+      expect(sddAuto).toContain(nonRetryableClause);
+      // The existing non-implement-task retry logic must survive untouched, not be replaced.
+      expect(sddAuto).toContain(
+        "For **non-implement-task phases**: max 2 retries per phase invocation. If exhausted → ESCALATE and STOP.",
+      );
+    });
+  });
 });
