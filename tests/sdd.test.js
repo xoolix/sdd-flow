@@ -983,6 +983,85 @@ describe("sdd CLI smoke tests", () => {
       expect(status).toMatch(/^A\s+ajeno\.txt$/m);
     });
 
+    // The post-commit safety net (the "warning: tracked files still dirty
+    // after commit" check) was rescoped alongside the commit itself in the
+    // same T008 fix, sharing its root cause and its commit_paths variable —
+    // but had no test of its own. These two tests cover both directions:
+    // (a) alone would stay green even if the warning were deleted outright,
+    // and (b) alone would stay green even if the check were still scanning
+    // the whole index instead of just commit_paths. Only both together pin
+    // down "scoped, and still functional".
+    test("does not warn when an unrelated file was pre-staged before commit-slice ran (scoped safety net stays quiet about work that is not ours)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
+      // Pre-staged and left clean — before T008 scoped the dirty-check to
+      // commit_paths, this alone (tracked, staged, not "??") was enough to
+      // populate `dirty` and print the warning for work this command never
+      // touched.
+      execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).not.toContain("tracked files still dirty after commit");
+      expect(stderrOutput).toBe("");
+    });
+
+    test("still warns when a file inside the commit scope is left genuinely dirty after the commit (safety net is not silently disabled)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      // A post-commit hook runs synchronously as part of `git commit`
+      // returning — squarely inside cmd_commit_slice's own `git commit`
+      // call — so it deterministically reproduces "a tracked file left
+      // dirty after the commit that included it" (e.g. an omitted --files
+      // entry, or a generated file rewritten post-commit) without racing
+      // bin/sdd's own git calls.
+      fs.writeFileSync(
+        path.join(project, ".git", "hooks", "post-commit"),
+        "#!/bin/sh\necho '// dirtied after commit' >> app.js\n",
+      );
+      fs.chmodSync(path.join(project, ".git", "hooks", "post-commit"), 0o755);
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).toContain("warning: tracked files still dirty after commit");
+      expect(stderrOutput).toContain("app.js");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).toMatch(/M\s+app\.js/);
+    });
+
     test("--moved-from deletion still lands in a scoped commit, even with an unrelated file pre-staged", () => {
       const project = makeTempProject();
       seedCommit(project);
