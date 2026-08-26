@@ -867,6 +867,99 @@ describe("sdd CLI smoke tests", () => {
         .join("\n");
       expect(codeOnly).not.toMatch(/git add (-A|--all)\b/);
     });
+
+    test("--moved-from stages the deletion of a tracked path that moved away", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const oldDir = path.join(project, "specs", "001-demo");
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
+      fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
+      fs.renameSync(oldDir, archiveDir);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const output = execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "chore",
+          "--title",
+          "Archive note",
+          "--moved-from",
+          "specs/001-demo",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      // git's default rename detection folds a tracked-and-deleted path plus
+      // a same-content addition into an "R100 old new" record rather than a
+      // separate D line — so assert on the resulting tree (AC6's "a clean
+      // checkout holds only the archive location"), not on --name-status.
+      const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(tree).not.toContain("specs/001-demo/spec.md");
+      expect(tree).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+    });
+
+    test("--moved-from exits non-zero and names the path when it was never tracked, even if it still exists on disk", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      fs.writeFileSync(path.join(project, "never-tracked.js"), "console.log('surprise');\n");
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const error = sddFail(
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "feat",
+          "--title",
+          "Bad moved-from",
+          "--moved-from",
+          "never-tracked.js",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project },
+      );
+
+      expect(error.status).not.toBe(0);
+      expect(error.stderr).toContain("never-tracked.js");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+
+      // Not staged as a new addition — still shown as untracked, not "A ".
+      const statusPorcelain = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(statusPorcelain).toContain("?? never-tracked.js");
+    });
+
+    test("exits 2 when --moved-from is passed without a value", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "No value", "--moved-from"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("--moved-from");
+    });
   });
 
   describe("sdd open-pr", () => {

@@ -13,7 +13,7 @@
   - touches: bin/sdd, tests/sdd.test.js
   - type: feat
 
-- [ ] **T002 [AFK] `commit-slice --moved-from` guard**: run `git ls-files --error-unmatch -- "$path"` (F2); tracked ⇒ `git add -- "$path"`, never `-A` (keeps the no-`-A` test green), before the "nothing staged" check; never-tracked, even on disk, ⇒ exit non-zero naming it, nothing staged. Add usage line.
+- [x] **T002 [AFK] `commit-slice --moved-from` guard**: run `git ls-files --error-unmatch -- "$path"` (F2); tracked ⇒ `git add -- "$path"`, never `-A` (keeps the no-`-A` test green), before the "nothing staged" check; never-tracked, even on disk, ⇒ exit non-zero naming it, nothing staged. Add usage line.
   - blocked_by: none
   - verifies: AC6, AC7
   - touches: bin/sdd, tests/sdd.test.js

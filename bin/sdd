@@ -91,7 +91,10 @@ Usage:
   sdd branch <feature-id>        Idempotently switch to feature/<feature-id> (create if missing)
   sdd commit-slice <feature-id>  Stage --files plus the derived specs/<feature-id> dir and commit;
                                  never pushes, never 'git add -A'
-                                 (--type <t> [--task Tnnn] --title "<s>" --files <p>... ; --files last)
+                                 (--type <t> [--task Tnnn] [--moved-from <path>] --title "<s>"
+                                 --files <p>... ; --files last)
+                                 --moved-from stages the deletion of a path guarded by
+                                 'git ls-files --error-unmatch'; never-tracked ⇒ exit 3, named
   sdd open-pr <feature-id>       Pre-flight (feature branch, gh on PATH, gh auth, remote), then
                                  push + 'gh pr create --draft' with title/body built from spec.md +
                                  decisions.md; writes .pr-opened on success only. Pre-flight failure
@@ -811,7 +814,7 @@ resolve_feature_dir() {
 }
 
 cmd_commit_slice() {
-  local usage_msg='usage: sdd commit-slice <feature-id> --type <t> [--task Tnnn] --title "<s>" --files <p>... (--files last)'
+  local usage_msg='usage: sdd commit-slice <feature-id> --type <t> [--task Tnnn] [--moved-from <path>] --title "<s>" --files <p>... (--files last)'
 
   local feature_id="${1:-}"
   [ $# -gt 0 ] && shift
@@ -821,7 +824,7 @@ cmd_commit_slice() {
     return 2
   fi
 
-  local type="" task="" title=""
+  local type="" task="" title="" moved_from=""
   local -a files=()
 
   while [ $# -gt 0 ]; do
@@ -834,6 +837,11 @@ cmd_commit_slice() {
       --task)
         [ $# -ge 2 ] || { printf 'error: --task requires a value\n' >&2; return 2; }
         task="$2"
+        shift 2
+        ;;
+      --moved-from)
+        [ $# -ge 2 ] || { printf 'error: --moved-from requires a value\n' >&2; return 2; }
+        moved_from="$2"
         shift 2
         ;;
       --title)
@@ -875,6 +883,21 @@ cmd_commit_slice() {
   fi
   if ! git add -- "$feature_dir"; then
     return 4
+  fi
+
+  # --moved-from: stage the deletion of a path the caller moved away from.
+  # Guard first with 'git ls-files --error-unmatch'. A never-tracked path
+  # would otherwise make a bare 'git add' exit 0 and stage it as a brand new
+  # addition when it still exists on disk — the opposite of what was asked,
+  # and no exit-code check on 'git add' alone catches it.
+  if [ -n "$moved_from" ]; then
+    if ! git ls-files --error-unmatch -- "$moved_from" >/dev/null 2>&1; then
+      printf 'error: --moved-from path was never tracked: %s\n' "$moved_from" >&2
+      return 3
+    fi
+    if ! git add -- "$moved_from"; then
+      return 4
+    fi
   fi
 
   if git diff --cached --quiet; then
