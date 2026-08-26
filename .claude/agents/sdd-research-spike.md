@@ -35,7 +35,7 @@ Research topic:
    - **Context gathered**: Key answers from the clarification phase (if it ran). Include any declared assumptions.
    - **Questions**: Specific questions to answer (refined by clarification phase)
    - **Options**: Alternatives to evaluate
-   - **Evaluation criteria**: How to compare options. Before filling this, grep `.claude/rules/conventions.md` for `## Domain rules` — that section names domains, not evaluation axes. Content past the comment keeps criteria names consistent with the project's vocabulary when a criterion touches a domain; derive the criteria themselves from what Options and Questions above are actually evaluating either way. Mirrors the `auto-commit` knob in `git.md`: the agent reads the rules file directly, the CLI never does.
+   - **Evaluation criteria**: How to compare options. Before filling this, run `sdd domain-vocab` — that section names domains, not evaluation axes. Exit 0 with output ⇒ keeps criteria names consistent with the project's vocabulary when a criterion touches a domain; exit non-zero, or the command unavailable ⇒ no such consistency assist; derive the criteria themselves from what Options and Questions above are actually evaluating either way. Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `auto-commit` knob in `git.md`) directly.
    - **Findings**: Launch **parallel agents** to investigate different aspects simultaneously:
      - Use **general-purpose agents** for web research on each option/question (one agent per option works well)
      - Use **Explore agents** to analyze relevant parts of the current codebase

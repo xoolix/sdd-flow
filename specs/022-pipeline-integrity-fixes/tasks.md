@@ -45,7 +45,7 @@
   - touches: .claude/skills/plan-feature/SKILL.md, tests/sdd.test.js
   - type: fix
 
-- [ ] **T006 [AFK] Remaining domain-vocab consumers drop the grep**: `sdd-designer.md`, `sdd-research-spike.md`, `new-feature/SKILL.md` (:172, Spanish) call `sdd domain-vocab`, not grep; failure/empty degrades to their own scan; rewrite each "CLI never does" line; fix `sdd-designer.md:29`'s stale "step 2" (F6).
+- [x] **T006 [AFK] Remaining domain-vocab consumers drop the grep**: `sdd-designer.md`, `sdd-research-spike.md`, `new-feature/SKILL.md` (:172, Spanish) call `sdd domain-vocab`, not grep; failure/empty degrades to their own scan; rewrite each "CLI never does" line; fix `sdd-designer.md:29`'s stale "step 2" (F6).
   - blocked_by: T001
   - verifies: AC4
   - touches: .claude/agents/sdd-designer.md, .claude/agents/sdd-research-spike.md, .claude/skills/new-feature/SKILL.md, tests/sdd.test.js

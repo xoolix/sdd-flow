@@ -1283,46 +1283,59 @@ describe("sdd CLI smoke tests", () => {
     expect(initProject).toContain("If `conventions.md` already has non-template content, ask the user before overwriting.");
   });
 
-  test("sdd-designer reads Domain rules from conventions.md before filling domain sections (T002)", () => {
+  test("sdd-designer resolves domain vocabulary via `sdd domain-vocab`, not grep, before filling domain sections (T006)", () => {
     const designer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-designer.md"), "utf8");
 
-    // Explicit read instruction — mirrors the auto-commit knob pattern (agent reads the rules
-    // file directly; no ambient loading, no orchestrator-side injection).
-    expect(designer).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
-    expect(designer).toContain("Content past the comment ⇒ use that vocabulary; empty ⇒ derive names from the exploration findings provided");
+    // Wiring regression guard, not behavioral coverage — asserts the prose instruction
+    // exists, not that an agent follows it (ADR 0003's own caveat).
 
-    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
-    expect(designer).toContain("the agent reads the rules file directly, the CLI never does");
+    // Sourcing mechanism changed to the CLI subcommand; fallback target is unchanged
+    // (still the exploration findings this agent was already given).
+    expect(designer).toContain("run `sdd domain-vocab`");
+    expect(designer).toContain("derive names from the exploration findings provided");
+    expect(designer).not.toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+
+    // The now-false "CLI never does" claim is gone, replaced by ADR 0003's wording —
+    // same voice as T005's plan-feature/SKILL.md copy (the fourth copy of this idea).
+    expect(designer).not.toContain("the agent reads the rules file directly, the CLI never does");
+    expect(designer).toContain("Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`)");
+
+    // F6: stale "step 2" cross-reference fixed — domain analysis is Step 3 in plan-feature/SKILL.md.
+    expect(designer).toContain("from the orchestrator's step 3 analysis");
+    expect(designer).not.toContain("from the orchestrator's step 2 analysis");
   });
 
-  test("new-feature maps Domains to conventions.md Domain rules before Block 2/Step 0 fallback (T003)", () => {
+  test("new-feature maps Domains via `sdd domain-vocab`, not grep, before Block 2/Step 0 fallback (T006)", () => {
     const newFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/new-feature/SKILL.md"), "utf8");
 
-    // The `## Domains` mapping bullet reads the shared vocabulary first — same explicit-read
-    // pattern as the auto-commit knob and T002's designer instruction — before falling back
-    // to the interview's own Block 2 / Step 0 scan.
-    expect(newFeature).toContain("`## Domains` ← primero grep `.claude/rules/conventions.md` para `## Domain rules`");
-    expect(newFeature).toContain("vacío ⇒ derivá de Block 2 (archivos/módulos tocados) + el scan de Step 0");
+    // Wiring regression guard — Spanish body, per this file's convention.
+    expect(newFeature).toContain("`## Domains` ← primero corré `sdd domain-vocab`");
+    // Fallback target is unchanged: Block 2 (archivos/módulos tocados) + el scan de Step 0.
+    expect(newFeature).toContain("derivá de Block 2 (archivos/módulos tocados) + el scan de Step 0");
+    expect(newFeature).not.toContain("primero grep `.claude/rules/conventions.md` para `## Domain rules`");
 
-    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
-    expect(newFeature).toContain("el agente lee el archivo de reglas directamente, la CLI nunca lo hace");
+    // The now-false closing line is gone, replaced by the Spanish ADR 0003 wording.
+    expect(newFeature).not.toContain("el agente lee el archivo de reglas directamente, la CLI nunca lo hace");
+    expect(newFeature).toContain("Por ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`)");
   });
 
-  test("sdd-research-spike reads Domain rules for vocabulary, not for the criteria list, before filling Evaluation criteria (T004)", () => {
+  test("sdd-research-spike resolves domain vocabulary via `sdd domain-vocab`, not grep, before filling Evaluation criteria (T006)", () => {
     const researchSpike = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-research-spike.md"), "utf8");
 
-    // Explicit read instruction — same auto-commit-knob pattern as T002/T003, scoped to this file.
-    expect(researchSpike).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+    // Sourcing mechanism changed to the CLI subcommand.
+    expect(researchSpike).toContain("run `sdd domain-vocab`");
+    expect(researchSpike).not.toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
 
-    // Substance differs from T002/T003: Domain rules names domains, not evaluation axes. The
+    // Substance preserved: § Domain rules names domains, not evaluation axes. The
     // criteria themselves always come from what's actually being evaluated, not the domain list.
     expect(researchSpike).toContain("that section names domains, not evaluation axes");
     expect(researchSpike).toContain(
       "derive the criteria themselves from what Options and Questions above are actually evaluating either way"
     );
 
-    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
-    expect(researchSpike).toContain("the agent reads the rules file directly, the CLI never does");
+    // The now-false "CLI never does" claim is gone, replaced by ADR 0003's wording.
+    expect(researchSpike).not.toContain("the agent reads the rules file directly, the CLI never does");
+    expect(researchSpike).toContain("Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`)");
   });
 
   describe("spec-template.md Domains section (T005)", () => {
