@@ -1,0 +1,74 @@
+# Technical Plan
+
+## Inputs
+`spec.md` · `clarify.md` · `discovery.md` · `decisions.md` (F2/F3/F12 accepted, not re-opened) · ADR 0002/0003
+
+## Domain analysis
+4 domains, none large ⇒ **MEDIUM**, sequential: `CLI surface` first, then `Orchestration skills`, `Phase agents`, `Test suite`.
+
+## Current state
+- Step 3 identifies **and sizes** with the old taxonomy; the vocabulary read is at Step 5 (`plan-feature/SKILL.md`).
+- `extract_section` returns a comment-only section as content
+- Nothing stages the move's deletion half (`cmd_commit_slice`); commit `34b7332` = 408 insertions, 0 deletions
+- Retry logic unconditional; no "non-retryable phase" concept — `sdd-phase-common.md` §F
+- `status` no-arg off a feature branch exits 1, in `cmd_status`
+- Archive defect 2 already mitigated, **verify only** — `tests/sdd.test.js`'s `featureDir()`
+
+## Proposed design
+
+**1. `sdd domain-vocab`** (no flags). `extract_section` over § Domain rules, then the **emptiness filter**: drop blank/comment lines (see `cmd_domain_vocab`'s `index()`/`substr()` comment). Empty remainder ⇒ no output, **exit 3** (empty=absent); else print it: exit 0 guarantees non-empty vocabulary and consumers drop their "past the comment" filter.
+
+**2. `commit-slice --moved-from <path>`.** A `case` arm shaped like `--type`, run **after** existing `git add`s and **before** `git diff --cached --quiet`, so a deletion-only commit counts as staged. **Guard**: index or HEAD (a `git mv`'d path) — neither ⇒ exit 3 naming the path; index-tracked ⇒ `git add -- "$path"` (never `-A`), failure ⇒ 4; HEAD-only ⇒ staged, skip. Mandatory: never-tracked-but-present makes a bare `git add` exit 0, staging a *new addition*.
+
+**3. §F non-retryable phases.** The step-3 row's "skip if phase produces no code" gains "`archive-feature` is **not** exempt: it moves files, and moving files breaks tests". A new `### Non-retryable phases` list under Retry Logic names `archive-feature` (its pre-flight needs the `specs/<id>/` the move removed): failure ⇒ `blocked`, **zero** retries. Replicated across `sdd-phase-common.md`'s §F, `sdd-next`, `sdd-auto` — six occurrences.
+
+**4. Reorder without renumbering.** New **Step 2.5 — Domain vocabulary** calls `domain-vocab`; exit≠0 ⇒ derive from `spec.md` (Step 2, always present), never step-4 findings. Step 3 consumes it and drops the fixed list — safe: sizing is domain-count arithmetic and Step 4 iterates whatever Step 3 emits. Numbering untouched, so the discovery-resume note and Step 5's backpointer stay true; Step 5's vocabulary bullet and `sdd-designer.md`'s step reference change.
+
+**5. `status` no-arg.** Phase detection extracted to a helper; single-feature JSON byte-identical. No-arg iterates `specs/*/` minus `archive/` and emits a JSON **array** of `{feature_id, phase, next_command}`, exit 0, `[]` when none.
+
+**6. Closing sentence**, all four consumers:
+> Per ADR 0003: the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (`auto-commit` in `git.md`) directly.
+
+Spanish, in `new-feature/SKILL.md`; each keeps its own empty-branch fallback.
+
+## Touched areas
+| Module / path | Change |
+|---|---|
+| `bin/sdd` | `cmd_domain_vocab`; `cmd_commit_slice`'s `--moved-from` arm; `cmd_status`/`cmd_status_list`/`detect_feature_phase`; `usage()`; dispatch `case`; T008 (7th defect, found mid-implementation, absent from the design above): `git commit` scoped to `commit_paths`; its post-commit dirty-check now re-scans the whole index against a pre-staged snapshot, leaving others' pre-staged work staged |
+| `plan-feature/SKILL.md` | Step 2.5; Steps 3 and 5 |
+| `sdd-phase-common.md` + `sdd-next`/`sdd-auto` | §F step-3 row + non-retryable list, replicated 2 spots each |
+| `sdd-designer.md`, `sdd-research-spike.md`, `new-feature/SKILL.md` | closing sentence; designer's step wording |
+| `sdd-archive-feature.md` | Step 3.5 adds `--moved-from specs/$ARGUMENTS/` (in Step 3; one call) |
+| `tests/sdd.test.js` | new describes; T008 retargeted to `domain-vocab` |
+
+## Data flow
+§ Domain rules → `extract_section` → filter → exit/stdout → Step 2.5 → Step 3 → designer → `plan.md`.
+Archive: `mv` → `commit-slice --moved-from` → guard → stage deletion + archive dir → commit → orchestrator validates, blocked without retry.
+
+## Migration / rollout
+CLI → consumers → §F/orchestrators → `status`. One revertible commit; agents refresh on `sdd update`. Fail-open: a broken `domain-vocab` restores pre-022 behavior.
+
+## Observability
+Exit codes plus stderr are the signal surface; `status` no-arg **is** the stale-spec fix.
+
+## Test strategy
+**Behavioral — real binary, temp repo (genuine coverage)**
+- `domain-vocab`: content ⇒ stdout + 0; comment-only, blank section, absent heading ⇒ silent + 3.
+- `--moved-from`: tracked-and-deleted ⇒ deletion in `filesInCommit`; never-tracked-and-absent ⇒ 3; never-tracked-**but-present** ⇒ 3 **and** absent from `git diff --cached`; missing value ⇒ 2; deletion-only commit still commits.
+- `status` no-arg: array shape, per-folder phase, `archive/` excluded, `[]` when empty.
+
+**Prose guards — `toContain` over `.md`: wiring assertions, NOT coverage.** Non-retryable list in all five spots; no `the CLI never does` left; four consumers name `sdd domain-vocab`; Step 2.5 present, Step 3 free of the fixed taxonomy.
+
+**Verify-only**: `featureDir` (T010). **E2E**: 022's archive commit shows deletions — the only proof the prose is obeyed.
+
+## Risks and mitigations
+| Risk | Mitigation |
+|---|---|
+| `git add -A` over-stages a broad path | Archive passes only `specs/$ARGUMENTS/` |
+| Prose guards green while the model ignores them | Dogfood: 022's own archive |
+| §F carve-out drifts across five files | One guard asserts all five |
+| Consumers depend on a subcommand | Fail-open; absent ⇒ pre-022 behavior |
+| `cmd_status` refactor breaks T004 | Single-feature JSON byte-identical |
+
+## Open questions
+- None.

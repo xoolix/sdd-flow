@@ -80,6 +80,74 @@ function featureDir(featureId) {
   );
 }
 
+// Parses a single shell-like command line into argv tokens, respecting
+// double-quoted segments (e.g. --title "Archive 001-demo" stays one token).
+// Used to run the *literal* text an agent .md template embeds -- not a
+// hand-written argv array that only resembles it (review fix cycle 5).
+function parseTemplateLine(line) {
+  const tokens = line.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  return tokens.map((tok) => (tok.startsWith('"') && tok.endsWith('"') ? tok.slice(1, -1) : tok));
+}
+
+// Sources bin/sdd's function definitions into a disposable bash process and runs the
+// real build_pr_body_file (bin/sdd's "open-pr" section, which calls extract_section
+// and, since 022's dogfood fix, append_decisions_capped) against featureDir, returning
+// the PR body it builds. This is the actual shipped code path, not a reimplementation
+// of the awk matcher or the cap arithmetic. Going through `sdd open-pr` itself isn't
+// possible here: its gh/remote pre-flight fails before ever reaching build_pr_body_file
+// in a temp repo with no real GitHub remote.
+function buildPrBodyViaRealPath(featureDir) {
+  // $0 is set to the real sddBin path (not a placeholder) so bin/sdd's own
+  // SDD_HOME resolution (readlink -f "$0" / realpath "$0") resolves cleanly.
+  const script = 'source "$0" help >/dev/null; build_pr_body_file "$1"';
+  const bodyFilePath = execFileSync("bash", ["-c", script, sddBin, featureDir], {
+    encoding: "utf8",
+  }).trim();
+  return fs.readFileSync(bodyFilePath, "utf8");
+}
+
+// A spec.md with exactly one line per section (no blank line before the next
+// "## " heading), so extract_section's output per section is deterministic
+// down to the byte -- lets a test assert an exact expected PR body instead of
+// just `toContain`. Used by the build_pr_body_file / decisions.md cap tests.
+function writeMinimalSpec(featureDir) {
+  fs.writeFileSync(
+    path.join(featureDir, "spec.md"),
+    "# Feature: Demo\n" +
+      "## Summary\n" +
+      "GENUINE-SUMMARY-MARKER\n" +
+      "## Acceptance Criteria\n" +
+      "- [ ] GENUINE-AC-MARKER\n" +
+      "## Rollback Plan\n" +
+      "GENUINE-ROLLBACK-MARKER\n",
+  );
+}
+
+// Builds a decisions.md well over GitHub's PR body limit without committing a
+// fixture file: `count` fixed-width numbered lines, each individually
+// greppable, so a test can tell exactly which lines survived a cap.
+function makeOversizedDecisions(count) {
+  const lines = [];
+  for (let i = 0; i < count; i++) {
+    lines.push(`LINE-${String(i).padStart(6, "0")} ` + "x".repeat(60));
+  }
+  return lines.join("\n") + "\n";
+}
+
+// Extracts the single fenced command line from sdd-archive-feature.md's
+// Step 3.5, the same block T007's test parses.
+function archiveStep35Line() {
+  const archiveFeature = fs.readFileSync(
+    path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"),
+    "utf8",
+  );
+  const fencedBlock = archiveFeature.match(/### 3\.5\. Commit the slice[\s\S]*?```\n([\s\S]*?)\n```/);
+  if (!fencedBlock) {
+    throw new Error("could not find Step 3.5's fenced commit-slice call in sdd-archive-feature.md");
+  }
+  return fencedBlock[1].trim();
+}
+
 describe("sdd CLI smoke tests", () => {
   test("prints version", () => {
     const output = execFileSync(sddBin, ["version"], {
@@ -454,6 +522,45 @@ describe("sdd CLI smoke tests", () => {
 
     // Envelope gains the Commit field.
     expect(archiveFeature).toContain("- **Commit**:");
+  });
+
+  test("archive-feature's commit-slice call stages --moved-from so both halves of the move land, still one plain call (T007)", () => {
+    const archiveFeature = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"), "utf8");
+
+    // The single call gains --moved-from specs/$ARGUMENTS — the old path the Step 3 `mv` already moved away from.
+    expect(archiveFeature).toContain(
+      "sdd commit-slice $ARGUMENTS --type chore --title \"Archive $ARGUMENTS\" --moved-from specs/$ARGUMENTS --files <spec files touched by the delta merge>",
+    );
+
+    // Step 3.5 is still exactly one `sdd commit-slice` invocation — this is a wiring regression
+    // guard, not proof the agent obeys it: it asserts the instruction text stays a single plain
+    // call with no branching added around it, per the haiku-tier constraint spelled out below.
+    const step35Match = archiveFeature.match(
+      /### 3\.5\. Commit the slice([\s\S]*?)\n4\. \*\*Present summary\*\*/,
+    );
+    expect(step35Match).not.toBeNull();
+    const step35Body = step35Match[1];
+
+    // Exactly one fenced code block — one invocation, not one-plus-a-fallback-branch.
+    // (Prose around it legitimately says "sdd commit-slice" more than once — e.g. explaining
+    // *why* the plain call works — so the invocation count is the fenced blocks, not the mentions.)
+    const fenceDelimiters = step35Body.match(/```/g) || [];
+    expect(fenceDelimiters.length).toBe(2);
+
+    // The fenced call itself is a single line — no if/case/conditional inserted into the call.
+    const fencedBlock = step35Body.match(/```\n([\s\S]*?)\n```/);
+    expect(fencedBlock).not.toBeNull();
+    const fencedLines = fencedBlock[1].split("\n");
+    expect(fencedLines.length).toBe(1);
+    expect(fencedLines[0]).toBe(
+      "sdd commit-slice $ARGUMENTS --type chore --title \"Archive $ARGUMENTS\" --moved-from specs/$ARGUMENTS --files <spec files touched by the delta merge>",
+    );
+
+    // No branching keywords added to Step 3.5 beyond the existing on/off knob check and the
+    // success/failure prose bullets (both pre-existing, documentation, not shell branching).
+    expect(step35Body).not.toMatch(/\bif\s+\[/);
+    expect(step35Body).not.toMatch(/\bcase\b/);
+    expect(step35Body).not.toMatch(/\belif\b/);
   });
 
   test("sdd-next gains the ready-to-pr gate and both orchestrators carve out the never-ask rule (T009)", () => {
@@ -867,6 +974,451 @@ describe("sdd CLI smoke tests", () => {
         .join("\n");
       expect(codeOnly).not.toMatch(/git add (-A|--all)\b/);
     });
+
+    test("--moved-from stages the deletion of a tracked path that moved away", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const oldDir = path.join(project, "specs", "001-demo");
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
+      fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
+      fs.renameSync(oldDir, archiveDir);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const output = execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "chore",
+          "--title",
+          "Archive note",
+          "--moved-from",
+          "specs/001-demo",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      // git's default rename detection folds a tracked-and-deleted path plus
+      // a same-content addition into an "R100 old new" record rather than a
+      // separate D line — so assert on the resulting tree (AC6's "a clean
+      // checkout holds only the archive location"), not on --name-status.
+      const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(tree).not.toContain("specs/001-demo/spec.md");
+      expect(tree).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+    });
+
+    // Regression for the 7th defect: a bare `git commit` after scoped `git add`s
+    // still commits the WHOLE index, so anything pre-staged by someone else
+    // (not dirty — already staged) rides along silently. Both halves of the
+    // assertion matter: the unrelated file must be absent from the commit AND
+    // still staged afterward — dropping it from the commit but also unstaging
+    // it would be a different bug.
+    test("commits only the named paths, leaving a file staged by someone else untouched and still staged", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
+      // Pre-staged by "someone else" — never named in --files below.
+      execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
+
+      const output = execFileSync(
+        sddBin,
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).not.toContain("ajeno.txt");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      // Still staged (index "A"), neither committed nor bumped back to dirty/untracked.
+      expect(status).toMatch(/^A\s+ajeno\.txt$/m);
+    });
+
+    // The post-commit safety net (the "warning: tracked files still dirty
+    // after commit" check) was rescoped alongside the commit itself in the
+    // same T008 fix, sharing its root cause and its commit_paths variable —
+    // but had no test of its own. These two tests cover both directions:
+    // (a) alone would stay green even if the warning were deleted outright,
+    // and (b) alone would stay green even if the check were still scanning
+    // the whole index instead of just commit_paths. Only both together pin
+    // down "scoped, and still functional".
+    test("does not warn when an unrelated file was pre-staged before commit-slice ran (scoped safety net stays quiet about work that is not ours)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
+      // Pre-staged and left clean — before T008 scoped the dirty-check to
+      // commit_paths, this alone (tracked, staged, not "??") was enough to
+      // populate `dirty` and print the warning for work this command never
+      // touched.
+      execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).not.toContain("tracked files still dirty after commit");
+      expect(stderrOutput).toBe("");
+    });
+
+    test("still warns when a file inside the commit scope is left genuinely dirty after the commit (safety net is not silently disabled)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      // A post-commit hook runs synchronously as part of `git commit`
+      // returning — squarely inside cmd_commit_slice's own `git commit`
+      // call — so it deterministically reproduces "a tracked file left
+      // dirty after the commit that included it" (e.g. an omitted --files
+      // entry, or a generated file rewritten post-commit) without racing
+      // bin/sdd's own git calls.
+      fs.writeFileSync(
+        path.join(project, ".git", "hooks", "post-commit"),
+        "#!/bin/sh\necho '// dirtied after commit' >> app.js\n",
+      );
+      fs.chmodSync(path.join(project, ".git", "hooks", "post-commit"), 0o755);
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).toContain("warning: tracked files still dirty after commit");
+      expect(stderrOutput).toContain("app.js");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).toMatch(/M\s+app\.js/);
+    });
+
+    // Review fix cycle 2 (cross #1, Fix 5 option (a)): T008 scoped the
+    // post-commit warning to commit_paths, which made it structurally
+    // unable to catch its original purpose — an omitted --files entry is by
+    // definition outside commit_paths. Restored: the check scans the whole
+    // index again, like pre-020, but a snapshot of paths already staged
+    // BEFORE this invocation's own 'git add' calls run excludes someone
+    // else's legitimate pre-existing work (e.g. this repo's own 13
+    // pre-staged May-cleanup renames) from tripping it. Both properties in
+    // one test: the omission still warns, the unrelated rename does not.
+    test("still warns about a genuinely omitted tracked file even with an unrelated rename pre-staged (cross #1)", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, "specs", "999-other"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "999-other", "f.md"), "old\n");
+      fs.writeFileSync(path.join(project, "omitted.js"), "console.log('do not forget me');\n");
+      seedCommit(project);
+
+      // Someone else's legitimate, unrelated in-flight rename — pre-staged
+      // before commit-slice runs, the same shape as this repo's own 13
+      // pre-staged May-cleanup renames.
+      fs.mkdirSync(path.join(project, "specs", "archive"), { recursive: true });
+      execFileSync("git", ["mv", "specs/999-other", "specs/archive/999-other"], { cwd: project });
+
+      // The agent edits a tracked file but forgets to list it in --files.
+      fs.appendFileSync(path.join(project, "omitted.js"), "// forgot to stage this\n");
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).toContain("warning: tracked files still dirty after commit");
+      expect(stderrOutput).toContain("omitted.js");
+      expect(stderrOutput).not.toContain("999-other");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).toMatch(/M\s+omitted\.js/);
+      expect(status).toMatch(/specs\/archive\/999-other/);
+    });
+
+    test("--moved-from deletion still lands in a scoped commit, even with an unrelated file pre-staged", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const oldDir = path.join(project, "specs", "001-demo");
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
+      fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
+      fs.renameSync(oldDir, archiveDir);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
+      execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
+
+      const output = execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "chore",
+          "--title",
+          "Archive note",
+          "--moved-from",
+          "specs/001-demo",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(tree).not.toContain("specs/001-demo/spec.md");
+      expect(tree).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+      expect(tree).not.toContain("ajeno.txt");
+
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+      expect(files).not.toContain("ajeno.txt");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).toMatch(/^A\s+ajeno\.txt$/m);
+    });
+
+    // Review fix cycle 2 (cross #2): the guard used to read only the INDEX
+    // ('git ls-files --error-unmatch'), which 'git mv' already clears for the
+    // old path even though it is still tracked in HEAD and its deletion is
+    // correctly staged. Reproduced live: 'git mv specs/001-demo
+    // specs/archive/...' then '--moved-from specs/001-demo' errored
+    // "was never tracked" — the natural shape an agent produces when it
+    // moves a folder with 'git mv' instead of a plain filesystem rename (the
+    // other --moved-from tests above use fs.renameSync, which never
+    // exercises this path since the old entry stays in the index).
+    test("--moved-from succeeds on a path already moved away by 'git mv' (cross #2)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      // 'git mv' does not create missing parent directories on its own.
+      fs.mkdirSync(path.join(project, "specs", "archive"), { recursive: true });
+      execFileSync(
+        "git",
+        ["mv", "specs/001-demo", "specs/archive/2026-08-26-001-demo"],
+        { cwd: project },
+      );
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const output = execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "chore",
+          "--title",
+          "Archive note",
+          "--moved-from",
+          "specs/001-demo",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(tree).not.toContain("specs/001-demo/spec.md");
+      expect(tree).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status.trim()).toBe("");
+    });
+
+    test("--moved-from exits non-zero and names the path when it was never tracked, even if it still exists on disk", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      fs.writeFileSync(path.join(project, "never-tracked.js"), "console.log('surprise');\n");
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const error = sddFail(
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "feat",
+          "--title",
+          "Bad moved-from",
+          "--moved-from",
+          "never-tracked.js",
+          "--files",
+          "app.js",
+        ],
+        { cwd: project },
+      );
+
+      expect(error.status).not.toBe(0);
+      expect(error.stderr).toContain("never-tracked.js");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+
+      // Not staged as a new addition — still shown as untracked, not "A ".
+      const statusPorcelain = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(statusPorcelain).toContain("?? never-tracked.js");
+    });
+
+    test("exits 2 when --moved-from is passed without a value", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "No value", "--moved-from"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("--moved-from");
+    });
+
+    // Review fix cycle 5 (cross #1): the agent's own Step 3.5 template omitted
+    // --title (a hard requirement) and, in the no-delta case, called --files
+    // with nothing after it. Both shapes below run the *literal* template
+    // text parsed out of sdd-archive-feature.md -- not a hand-built argv
+    // array that only resembles it -- against a real project and a real
+    // commit, the same way the archive agent actually invokes the CLI.
+    test("runs the literal Step 3.5 template with a delta file and commits both halves of the move (cross #1)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      // Step 3 (plain filesystem mv, no git awareness) already ran by the
+      // time Step 3.5 fires.
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
+      fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
+      fs.renameSync(path.join(project, "specs", "001-demo"), archiveDir);
+      // Step 2 (delta merge) touched the archived spec.md.
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n\nMerged delta.\n");
+
+      const line = archiveStep35Line()
+        .replace(/\$ARGUMENTS/g, "001-demo")
+        .replace("<spec files touched by the delta merge>", "specs/archive/2026-08-26-001-demo/spec.md");
+      const args = parseTemplateLine(line).slice(1); // drop the leading "sdd"
+
+      const output = execFileSync(sddBin, args, { cwd: project, encoding: "utf8" });
+      const sha = output.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+      expect(files).toContain("specs/001-demo/spec.md"); // deletion side of the move
+
+      const message = execFileSync("git", ["log", "-1", "--format=%s", sha], {
+        cwd: project,
+        encoding: "utf8",
+      }).trim();
+      expect(message).toBe('chore(001-demo): Archive 001-demo');
+    });
+
+    test("runs the literal Step 3.5 template with no deltas -- empty --files -- and still commits the move (cross #1)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
+      fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
+      fs.renameSync(path.join(project, "specs", "001-demo"), archiveDir);
+      // No delta merge this time: Step 2 was a no-op, so the placeholder
+      // resolves to nothing and --files is the last token with no path after it.
+
+      const line = archiveStep35Line()
+        .replace(/\$ARGUMENTS/g, "001-demo")
+        .replace("<spec files touched by the delta merge>", "")
+        .replace(/\s+$/, "");
+      const args = parseTemplateLine(line).slice(1);
+      expect(args[args.length - 1]).toBe("--files");
+
+      const output = execFileSync(sddBin, args, { cwd: project, encoding: "utf8" });
+      const sha = output.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      // Same-content move: git's rename detection folds old+new into one
+      // R100 record rather than a separate D line (see the --moved-from
+      // test above) -- assert on the resulting tree, not --name-only output.
+      const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", sha], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(tree).not.toContain("specs/001-demo/spec.md");
+      expect(tree).toContain("specs/archive/2026-08-26-001-demo/spec.md");
+    });
+
+    test("still refuses empty --files with no --moved-from and nothing staged -- does not open a hole", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "chore", "--title", "Archive 001-demo"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("--files");
+    });
   });
 
   describe("sdd open-pr", () => {
@@ -952,6 +1504,119 @@ describe("sdd CLI smoke tests", () => {
       expect(error.status).toBe(3);
       expect(error.stderr).toContain("feature not found");
     });
+
+    // 022 dogfood fix: `sdd open-pr` pushed the branch and then failed at `gh pr
+    // create` because the assembled body (spec sections + decisions.md verbatim)
+    // exceeded GitHub's 65536-character hard limit -- decisions.md is append-only
+    // and grows every review cycle, so nothing bounds it. GitHub's limit is an
+    // external fact, not an implementation detail, so it's named here rather than
+    // inlined as a bare number.
+    describe("build_pr_body_file caps decisions.md so the body never exceeds GitHub's PR body limit", () => {
+      const GITHUB_PR_BODY_LIMIT = 65536;
+
+      test("below the cap, the body is byte-identical to the uncapped assembly (no-op)", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        const decisionsContent = "# Decisions\n\n## Entry 1\nA short, ordinary decision.\n";
+        fs.writeFileSync(path.join(featureDir, "decisions.md"), decisionsContent);
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        const expectedBody =
+          "## Summary\n" +
+          "GENUINE-SUMMARY-MARKER\n" +
+          "\n## Acceptance Criteria\n" +
+          "- [ ] GENUINE-AC-MARKER\n" +
+          "\n## Rollback Plan\n" +
+          "GENUINE-ROLLBACK-MARKER\n" +
+          "\n## Decisions\n" +
+          decisionsContent;
+
+        expect(body).toBe(expectedBody);
+      });
+
+      test("an oversized decisions.md is capped under GitHub's limit, with real headroom, and carries a truncation marker naming the file", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        const decisionsPath = path.join(featureDir, "decisions.md");
+        fs.writeFileSync(decisionsPath, makeOversizedDecisions(3000));
+
+        // Sanity: the fixture itself must actually be over the limit, or this
+        // test would pass for the wrong reason.
+        expect(fs.statSync(decisionsPath).size).toBeGreaterThan(GITHUB_PR_BODY_LIMIT);
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body.length).toBeLessThan(GITHUB_PR_BODY_LIMIT);
+        // Real headroom, not a graze against the wire.
+        expect(GITHUB_PR_BODY_LIMIT - body.length).toBeGreaterThan(1000);
+
+        expect(body).toMatch(/truncated/i);
+        expect(body).toContain(decisionsPath);
+      });
+
+      test("truncation keeps the tail (most recent decisions), drops the head, and cuts on a line boundary", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        // Oldest entry (line 0, chronologically first) was dropped...
+        expect(body).not.toContain("LINE-000000 ");
+        // ...but the newest entry (last line, chronologically most recent) survived.
+        expect(body).toContain("LINE-002999 ");
+
+        // Whatever text immediately follows the truncation marker is a full,
+        // untouched numbered line -- not a fragment beginning mid-line.
+        const afterMarker = body.slice(body.search(/truncated/i));
+        const firstKeptLine = afterMarker.split("\n").find((line) => line.startsWith("LINE-"));
+        expect(firstKeptLine).toMatch(/^LINE-\d{6} x+$/);
+      });
+
+      // Regression for review fix 1 (022): the marker was built with a
+      // trailing "\n\n" in its printf format, but storing it via `$(...)`
+      // strips ALL trailing newlines from command substitution -- so the
+      // marker was written with zero trailing newlines and fused onto the
+      // same physical line as the first kept line. A `toContain`/`toMatch`
+      // check on the marker text alone (the prior test above) can't catch
+      // this: it stays green whether or not a line break follows the marker.
+      // This test asserts the marker is its own physical line, not just present.
+      test("the truncation marker occupies its own line, separate from the first kept line", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
+
+        const body = buildPrBodyViaRealPath(featureDir);
+        const lines = body.split("\n");
+        const markerLineIndex = lines.findIndex((line) => /truncated/i.test(line));
+
+        expect(markerLineIndex).toBeGreaterThanOrEqual(0);
+        // The marker line must not have absorbed the first kept line's content.
+        expect(lines[markerLineIndex]).not.toMatch(/LINE-\d{6}/);
+        // A blank line separates the marker from the kept text below it...
+        expect(lines[markerLineIndex + 1]).toBe("");
+        // ...so the first kept line starts its own block, untouched.
+        expect(lines[markerLineIndex + 2]).toMatch(/^LINE-\d{6} x+$/);
+      });
+
+      test("spec sections survive intact when decisions.md is truncated", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-SUMMARY-MARKER");
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+    });
   });
 
   describe("sdd status — archived vs ready-to-pr (T004)", () => {
@@ -1002,6 +1667,114 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("sdd status — no-arg lists specs/ (T003)", () => {
+    test("lists every active specs/ folder with its phase, excluding archive/", () => {
+      const project = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
+      execFileSync("git", ["init", "-q"], { cwd: project });
+
+      fs.mkdirSync(path.join(project, "specs", "001-demo"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "plan.md"), "# Plan\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [ ] First behavior\n- [ ] Second behavior\n",
+      );
+
+      fs.mkdirSync(path.join(project, "specs", "003-slices"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "003-slices", "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(project, "specs", "003-slices", "plan.md"), "# Plan\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "003-slices", "tasks.md"),
+        [
+          "# Tasks",
+          "",
+          "- [x] **T001 [AFK] Foundation**: first vertical slice",
+          "- [ ] **T002 [AFK] UI path**: second vertical slice",
+          "",
+        ].join("\n"),
+      );
+
+      // A finished-and-archived feature sitting alongside the active ones —
+      // this is exactly the folder AC8 says must NOT show up in the listing.
+      const archiveDir = path.join(project, "specs", "archive", "2026-05-17-999-finished");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(archiveDir, "decisions.md"), "# Decisions\n");
+
+      const output = execFileSync(sddBin, ["status"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      const entries = JSON.parse(output);
+      expect(Array.isArray(entries)).toBe(true);
+      expect(entries).toHaveLength(2);
+
+      const byId = Object.fromEntries(entries.map((entry) => [entry.feature_id, entry]));
+      expect(byId["001-demo"]).toMatchObject({
+        feature_id: "001-demo",
+        phase: "planned",
+        next_command: "/implement-task 001-demo",
+      });
+      expect(byId["003-slices"]).toMatchObject({
+        feature_id: "003-slices",
+        phase: "implementing",
+        next_command: "/implement-task 003-slices",
+      });
+      expect(entries.some((entry) => entry.feature_id.includes("finished"))).toBe(false);
+    });
+
+    test("returns an empty array, exit 0, when specs/ holds only archive/", () => {
+      const project = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
+      execFileSync("git", ["init", "-q"], { cwd: project });
+
+      const archiveDir = path.join(project, "specs", "archive", "2026-05-17-999-finished");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n");
+
+      const output = execFileSync(sddBin, ["status"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(JSON.parse(output)).toEqual([]);
+    });
+
+    // Review fix cycle 2 (cross #3): cmd_status used to derive a feature-id
+    // from the branch name FIRST, so a bare `sdd status` on `feature/<id>`
+    // returned the single-feature JSON instead of listing — the exact
+    // scenario the AC exists for, since a developer running the bare
+    // command is almost always on a feature branch. AC8 names no branch
+    // condition: an omitted feature-id must always list.
+    test("still lists when the bare command runs on a matching feature branch (AC8, cross #3)", () => {
+      const project = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
+      execFileSync("git", ["init", "-q"], { cwd: project });
+      execFileSync("git", ["checkout", "-q", "-b", "feature/001-demo"], { cwd: project });
+
+      fs.mkdirSync(path.join(project, "specs", "001-demo"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "plan.md"), "# Plan\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [ ] First behavior\n- [ ] Second behavior\n",
+      );
+
+      const output = execFileSync(sddBin, ["status"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      const entries = JSON.parse(output);
+      expect(Array.isArray(entries)).toBe(true);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        feature_id: "001-demo",
+        phase: "planned",
+        next_command: "/implement-task 001-demo",
+      });
+    });
+  });
+
   test("build-registry ignores every core skill", () => {
     const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
     const buildRegistry = fs.readFileSync(path.join(repoRoot, ".claude/skills/build-registry/SKILL.md"), "utf8");
@@ -1034,66 +1807,63 @@ describe("sdd CLI smoke tests", () => {
     expect(initProject).toContain("If `conventions.md` already has non-template content, ask the user before overwriting.");
   });
 
-  test("sdd-designer reads Domain rules from conventions.md before filling domain sections (T002)", () => {
+  test("sdd-designer resolves domain vocabulary via `sdd domain-vocab`, not grep, before filling domain sections (T006)", () => {
     const designer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-designer.md"), "utf8");
 
-    // Explicit read instruction — mirrors the auto-commit knob pattern (agent reads the rules
-    // file directly; no ambient loading, no orchestrator-side injection).
-    expect(designer).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
-    expect(designer).toContain("Content past the comment ⇒ use that vocabulary; empty ⇒ derive names from the exploration findings provided");
+    // Wiring regression guard, not behavioral coverage — asserts the prose instruction
+    // exists, not that an agent follows it (ADR 0003's own caveat).
 
-    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
-    expect(designer).toContain("the agent reads the rules file directly, the CLI never does");
+    // Sourcing mechanism changed to the CLI subcommand; fallback target is unchanged
+    // (still the exploration findings this agent was already given).
+    expect(designer).toContain("run `sdd domain-vocab`");
+    expect(designer).toContain("derive names from the exploration findings provided");
+    expect(designer).not.toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+
+    // The now-false "CLI never does" claim is gone, replaced by ADR 0003's wording —
+    // same voice as T005's plan-feature/SKILL.md copy (the fourth copy of this idea).
+    expect(designer).not.toContain("the agent reads the rules file directly, the CLI never does");
+    expect(designer).toContain("Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`)");
+
+    // F6: stale "step 2" cross-reference fixed — domain analysis is Step 3 in plan-feature/SKILL.md.
+    expect(designer).toContain("from the orchestrator's step 3 analysis");
+    expect(designer).not.toContain("from the orchestrator's step 2 analysis");
   });
 
-  test("new-feature maps Domains to conventions.md Domain rules before Block 2/Step 0 fallback (T003)", () => {
+  test("new-feature maps Domains via `sdd domain-vocab`, not grep, before Block 2/Step 0 fallback (T006)", () => {
     const newFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/new-feature/SKILL.md"), "utf8");
 
-    // The `## Domains` mapping bullet reads the shared vocabulary first — same explicit-read
-    // pattern as the auto-commit knob and T002's designer instruction — before falling back
-    // to the interview's own Block 2 / Step 0 scan.
-    expect(newFeature).toContain("`## Domains` ← primero grep `.claude/rules/conventions.md` para `## Domain rules`");
-    expect(newFeature).toContain("vacío ⇒ derivá de Block 2 (archivos/módulos tocados) + el scan de Step 0");
+    // Wiring regression guard — Spanish body, per this file's convention.
+    expect(newFeature).toContain("`## Domains` ← primero corré `sdd domain-vocab`");
+    // Fallback target is unchanged: Block 2 (archivos/módulos tocados) + el scan de Step 0.
+    expect(newFeature).toContain("derivá de Block 2 (archivos/módulos tocados) + el scan de Step 0");
+    expect(newFeature).not.toContain("primero grep `.claude/rules/conventions.md` para `## Domain rules`");
 
-    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
-    expect(newFeature).toContain("el agente lee el archivo de reglas directamente, la CLI nunca lo hace");
+    // The now-false closing line is gone, replaced by the Spanish ADR 0003 wording.
+    expect(newFeature).not.toContain("el agente lee el archivo de reglas directamente, la CLI nunca lo hace");
+    expect(newFeature).toContain("Por ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`)");
   });
 
-  test("sdd-research-spike reads Domain rules for vocabulary, not for the criteria list, before filling Evaluation criteria (T004)", () => {
+  test("sdd-research-spike resolves domain vocabulary via `sdd domain-vocab`, not grep, before filling Evaluation criteria (T006)", () => {
     const researchSpike = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-research-spike.md"), "utf8");
 
-    // Explicit read instruction — same auto-commit-knob pattern as T002/T003, scoped to this file.
-    expect(researchSpike).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
+    // Sourcing mechanism changed to the CLI subcommand.
+    expect(researchSpike).toContain("run `sdd domain-vocab`");
+    expect(researchSpike).not.toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
 
-    // Substance differs from T002/T003: Domain rules names domains, not evaluation axes. The
+    // Substance preserved: § Domain rules names domains, not evaluation axes. The
     // criteria themselves always come from what's actually being evaluated, not the domain list.
     expect(researchSpike).toContain("that section names domains, not evaluation axes");
     expect(researchSpike).toContain(
       "derive the criteria themselves from what Options and Questions above are actually evaluating either way"
     );
 
-    // Explicit call-out that the CLI is not involved, same rationale as the auto-commit knob in git.md
-    expect(researchSpike).toContain("the agent reads the rules file directly, the CLI never does");
+    // The now-false "CLI never does" claim is gone, replaced by ADR 0003's wording.
+    expect(researchSpike).not.toContain("the agent reads the rules file directly, the CLI never does");
+    expect(researchSpike).toContain("Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`)");
   });
 
   describe("spec-template.md Domains section (T005)", () => {
     const specTemplatePath = path.join(repoRoot, ".specify/templates/spec-template.md");
-
-    // Sources bin/sdd's function definitions into a disposable bash process and runs the
-    // real build_pr_body_file (bin/sdd:936-953, which calls extract_section at :946/948/950)
-    // against featureDir, returning the PR body it builds. This is the actual shipped code
-    // path, not a reimplementation of the awk matcher. Going through `sdd open-pr` itself
-    // isn't possible here: its gh/remote pre-flight (bin/sdd:1004-1020) fails before ever
-    // reaching build_pr_body_file in a temp repo with no real GitHub remote.
-    function buildPrBodyViaRealPath(featureDir) {
-      // $0 is set to the real sddBin path (not a placeholder) so bin/sdd's own
-      // SDD_HOME resolution (readlink -f "$0" / realpath "$0") resolves cleanly.
-      const script = 'source "$0" help >/dev/null; build_pr_body_file "$1"';
-      const bodyFilePath = execFileSync("bash", ["-c", script, sddBin, featureDir], {
-        encoding: "utf8",
-      }).trim();
-      return fs.readFileSync(bodyFilePath, "utf8");
-    }
 
     test("replaces the fixed 8-item Domains checklist with a derived-module instruction, not an addition", () => {
       const template = fs.readFileSync(specTemplatePath, "utf8");
@@ -1206,13 +1976,29 @@ describe("sdd CLI smoke tests", () => {
       expect(planFeature).not.toContain("Touched files/modules, APIs, DB/schema, jobs, UI");
     });
 
-    test("plan-feature/SKILL.md carries the Domain vocabulary read instruction — F1's fourth consumer", () => {
+    test("plan-feature/SKILL.md resolves domain vocabulary via `sdd domain-vocab` in a new Step 2.5, ahead of Step 3 (T005)", () => {
       const planFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/plan-feature/SKILL.md"), "utf8");
 
-      // Same explicit-read pattern as T002/T003/T004 — plan-feature is the orchestrator that
-      // launches sdd-designer, so it needs the instruction too (plan.md's F1 coverage gap).
-      expect(planFeature).toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
-      expect(planFeature).toContain("the agent reads the rules file directly, the CLI never does");
+      // Wiring regression guard, not behavioral coverage — this asserts the prose
+      // instruction exists, not that an agent follows it (ADR 0003's own caveat).
+
+      // Step 2.5 exists and calls the CLI subcommand — the content-resolution path
+      // ADR 0003 chose over the grep-in-a-prompt pattern F1 originally used.
+      expect(planFeature).toContain("2.5. **Domain vocabulary**");
+      expect(planFeature).toContain("sdd domain-vocab");
+
+      // Step 3 no longer hardcodes the old fixed web taxonomy — domains now come
+      // from Step 2.5's vocabulary (or its spec-derived fallback) instead.
+      expect(planFeature).not.toContain("db, api, frontend, infra, auth, notifications, integrations");
+
+      // The empty/unavailable fallback names the spec — read in Step 2, always
+      // present — never step 4's exploration findings, which the discovery-resume
+      // path (:37) skips entirely. 021 took exactly that path.
+      expect(planFeature).not.toContain("the exploration findings you collected in step 4");
+
+      // The now-false "CLI never does" claim is gone from this file's copy of the
+      // closing sentence (the other three consumers are T006's).
+      expect(planFeature).not.toContain("the agent reads the rules file directly, the CLI never does");
     });
 
     test("sdd-designer.md fill list matches the template's new conditional shape", () => {
@@ -1224,54 +2010,253 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
-  describe("conventions.md Domain rules — vocabulary reaches the extraction chain (T008)", () => {
-    const conventionsPath = path.join(repoRoot, ".claude/rules/conventions.md");
-
-    // Sources the real extract_section (bin/sdd:905-912) into a disposable bash
-    // process — the same heading-delimited-section parser build_pr_body_file uses
-    // for spec.md's Summary/Acceptance Criteria/Rollback Plan (T005's technique).
-    // "## Domain rules" follows the identical "## <heading>" format, so this
-    // exercises the actual mechanism every consumer's "grep `.claude/rules/
-    // conventions.md` for `## Domain rules`" instruction relies on — not a
-    // reimplementation of the matcher, and not a string search over the whole file.
-    function extractSectionViaRealPath(file, heading) {
-      const script = 'source "$0" help >/dev/null; extract_section "$1" "$2"';
-      return execFileSync("bash", ["-c", script, sddBin, file, heading], {
+  describe("sdd domain-vocab (T001)", () => {
+    // Real binary, real repo, no sourcing extract_section in isolation — that
+    // was 021's own C2 finding: a test exercised a parser production never
+    // calls, while the four consumers grepped the file themselves. This runs
+    // the exact command the consumers now call.
+    test("this repo's own conventions.md carries real domain vocabulary: sdd domain-vocab prints it and exits 0", () => {
+      const output = execFileSync(sddBin, ["domain-vocab"], {
+        cwd: repoRoot,
         encoding: "utf8",
       });
-    }
 
-    // Content past the HTML comment — mirrors exactly what T002/T003/T004/T007's
-    // "Content past the comment ⇒ use that vocabulary; empty ⇒ derive ..." branch
-    // checks for.
-    function pastComment(section) {
-      return section.replace(/<!--[\s\S]*?-->/g, "").trim();
-    }
-
-    test("this repo's own conventions.md carries real, extractable domain names under Domain rules — not just the template comment", () => {
-      const section = extractSectionViaRealPath(conventionsPath, "Domain rules");
-
-      // Real parsing of the real file this repo ships: the section holds actual
-      // content past the comment, naming SDD_HOME's own functional areas — not
-      // generic/aspirational text that a fresh `sdd init` seed copy (bin/sdd:232-241)
-      // would mislead a new project with.
-      expect(pastComment(section).length).toBeGreaterThan(0);
-      expect(section).toContain("CLI surface");
-      expect(section).toContain("Phase agents");
-      expect(section).toContain("bin/sdd");
+      // SDD_HOME's own § Domain rules names its actual functional areas, not
+      // just the template comment a fresh `sdd init` seed copy ships with.
+      expect(output).toContain("CLI surface");
+      expect(output).toContain("Phase agents");
+      expect(output).toContain("bin/sdd");
     });
 
-    test("emptying Domain rules back to the template comment makes the real extractor return nothing — the exact RED every consumer's fallback branches on", () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-test-"));
-      const emptyConventions = path.join(dir, "conventions.md");
+    test("Domain rules reduced to only its HTML template comment counts as empty: no stdout, exit 3 (F1)", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
       fs.writeFileSync(
-        emptyConventions,
+        path.join(project, ".claude/rules/conventions.md"),
         "# Conventions\n\n## Domain rules\n<!-- Project-specific business logic rules -->\n",
       );
 
-      const section = extractSectionViaRealPath(emptyConventions, "Domain rules");
+      const error = sddFail(["domain-vocab"], { cwd: project });
 
-      expect(pastComment(section)).toBe("");
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
+    });
+
+    // Review fix cycle 2 (judge #1, cross #5): the emptiness filter only
+    // matched a comment opening and closing on the SAME line, so a two-line
+    // HTML comment survived and printed as vocabulary — exit 0 with the
+    // comment as stdout, contradicting the spec's "comment-only counts as
+    // empty" and AC3's empty/absent branch. Reproduced here with a
+    // multi-line comment, the shape neither 021 nor 022 originally covered
+    // because the shipped template comment is a single line.
+    test("Domain rules reduced to only a multi-line HTML comment counts as empty: no stdout, exit 3 (judge #1, cross #5)", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+      fs.writeFileSync(
+        path.join(project, ".claude/rules/conventions.md"),
+        [
+          "# Conventions",
+          "",
+          "## Domain rules",
+          "<!-- Project-specific",
+          "     business logic rules,",
+          "     spanning multiple lines -->",
+          "",
+        ].join("\n"),
+      );
+
+      const error = sddFail(["domain-vocab"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
+    });
+
+    test("no Domain rules heading at all: no stdout, exit 3 — same outcome as an empty section", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+      fs.writeFileSync(
+        path.join(project, ".claude/rules/conventions.md"),
+        "# Conventions\n\n## Naming\n- kebab-case\n",
+      );
+
+      const error = sddFail(["domain-vocab"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
+    });
+
+    test("conventions.md missing entirely: no stdout, exit 3", () => {
+      const project = makeTempProject();
+
+      const error = sddFail(["domain-vocab"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
+    });
+
+    // Review fix cycle 3 (judge, high): the emptiness filter stripped HTML
+    // comments with the regex `<!--[^-]*(-[^-]+)*-->` — a character-class
+    // trick emulating a non-greedy match, since awk gsub has no lazy
+    // quantifier. POSIX ERE's leftmost-longest semantics broke that trick
+    // the moment a comment BODY contained '--' (e.g. an em-dash in prose,
+    // which is all over this repo's own docs): the comment survived
+    // unstripped and printed as if it were real vocabulary — exit 0
+    // instead of the empty-section exit 3. That's the exact failure this
+    // whole feature exists to prevent: a consumer sees "vocabulary exists"
+    // and skips its own fallback scan.
+    describe("comment-only sections containing '--' in the body (judge, high)", () => {
+      test("single-line comment with an internal '--': no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!-- revisar esta lista -- no esta cerrada -->\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+
+      test("two-line comment with an internal '--': no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "<!-- revisar esta lista",
+            "-- no esta cerrada -->",
+            "",
+          ].join("\n"),
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+
+      test("'---' inside a comment: no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!-- nota --- pendiente -->\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+
+      test("real content plus a comment containing '--': prints the section, exit 0", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n- regla real\n<!-- nota -- pendiente -->\n",
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- regla real");
+      });
+    });
+
+    describe("comment shapes the '--' fix must not regress", () => {
+      test("unterminated comment ('<!--' with no closing '-->') still counts as real content: exit 0", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!-- revisar esta lista sin cerrar\n",
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("revisar esta lista sin cerrar");
+      });
+
+      test("empty comment '<!---->' alone still counts as empty: no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!---->\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+
+      // A nested-looking '<!-- a <!-- b -->' is still just ONE HTML comment
+      // (the first '<!--' through the first '-->' after it) with no real
+      // content outside it — so, per the same "comment-only counts as
+      // empty" rule this fix restores, it counts as empty too.
+      test("nested-looking comment ('<!-- a <!-- b -->') is one comment with no real content: exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n<!-- a <!-- b -->\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
+    });
+
+    // Review fix cycle 4: extract_section's heading compare (`$0 == heading`)
+    // is an exact string match. On a CRLF file, $0 for the heading line is
+    // "## Domain rules\r" — never equal to "## Domain rules" — so the
+    // section is never found and reads as empty regardless of its real
+    // content. Reproduced live against the unfixed binary before this test
+    // was written (see decisions.md).
+    describe("CRLF line endings (review fix cycle 4)", () => {
+      test("CRLF conventions.md with real content in Domain rules: prints it, exit 0", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\r\n\r\n## Domain rules\r\n- assign-engine\r\n",
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- assign-engine");
+      });
+
+      test("CRLF conventions.md with a comment-only Domain rules section: no stdout, exit 3", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\r\n\r\n## Domain rules\r\n<!-- Project-specific business logic rules -->\r\n",
+        );
+
+        const error = sddFail(["domain-vocab"], { cwd: project });
+
+        expect(error.status).toBe(3);
+        expect(error.stdout.toString()).toBe("");
+      });
     });
   });
 
@@ -1340,6 +2325,64 @@ describe("sdd CLI smoke tests", () => {
 
       expect(touchedAreas).toContain("bin/sdd");
       expect(touchedAreas).toContain(".specify/templates/rules/");
+    });
+  });
+
+  describe("§F: archive is not exempt from validation, and non-retryable phases exist (T004)", () => {
+    // Wiring regression guard, not behavioral coverage: these assert the instruction
+    // text is present in all five prose locations decisions.md (F3/F4) names as needing
+    // lockstep edits. They cannot verify an orchestrator actually obeys the text — only
+    // that it's there to obey. That gap is exactly how archiving 021 broke the build and
+    // still returned Status: success: the "skip if phase produces no code" hatch read
+    // literally over archive's file-move. A test that looked like coverage wasn't; this
+    // one is deliberately scoped to what it can actually check.
+    const phaseCommon = fs.readFileSync(
+      path.join(repoRoot, ".claude/skills/_shared/sdd-phase-common.md"),
+      "utf8",
+    );
+    const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
+    const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
+
+    // Distinctive substrings only — "archive" and "retry" alone already appear throughout
+    // these files and would pass before the fix. These exact clauses do not exist pre-fix
+    // (verified: zero hits for either substring in all three files before this task).
+    const notExemptClause = "is not exempt: it moves files, not prose, so this step still runs";
+    const nonRetryableClause = "zero retries, never `ESCALATED`";
+
+    test("sdd-phase-common.md §F names archive-feature as not exempt from the no-code-skip hatch", () => {
+      expect(phaseCommon).toContain(notExemptClause);
+    });
+
+    test("sdd-phase-common.md §F declares a non-retryable-phases list, checked before the retry loop", () => {
+      expect(phaseCommon).toContain("Non-retryable phases");
+      expect(phaseCommon).toContain("checked before the retry loop below starts");
+      expect(phaseCommon).toContain("`archive-feature`");
+      expect(phaseCommon).toContain(nonRetryableClause);
+    });
+
+    test("sdd-next/SKILL.md Step 4 restates the archive carve-out inline (:177)", () => {
+      expect(sddNext).toContain(notExemptClause);
+    });
+
+    test("sdd-next/SKILL.md Step 4 restates the non-retryable check before its 2-retry-then-ESCALATED logic (:196-197)", () => {
+      expect(sddNext).toContain("Non-retryable phases");
+      expect(sddNext).toContain(nonRetryableClause);
+      // The existing 2-retry-then-ESCALATED logic must survive untouched, not be replaced.
+      expect(sddNext).toContain("**Max 2 retries** per phase invocation");
+      expect(sddNext).toContain("If 2 retries are exhausted without passing, **STOP** and report with `Status: ESCALATED`");
+    });
+
+    test("sdd-auto/SKILL.md Step 3 restates the archive carve-out inline (:120)", () => {
+      expect(sddAuto).toContain(notExemptClause);
+    });
+
+    test("sdd-auto/SKILL.md restates the non-retryable check before its non-implement-task retry logic (:125)", () => {
+      expect(sddAuto).toContain("Non-retryable phases");
+      expect(sddAuto).toContain(nonRetryableClause);
+      // The existing non-implement-task retry logic must survive untouched, not be replaced.
+      expect(sddAuto).toContain(
+        "For **non-implement-task phases**: max 2 retries per phase invocation. If exhausted → ESCALATE and STOP.",
+      );
     });
   });
 });

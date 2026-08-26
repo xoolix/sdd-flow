@@ -22,11 +22,11 @@ Feature-id: `$ARGUMENTS`
 
 Create `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base.
 
-**Domain vocabulary.** Before filling any domain/module section (Domain analysis summary, Touched areas), grep `.claude/rules/conventions.md` for `## Domain rules`. Content past the comment ⇒ use that vocabulary; empty ⇒ derive names from the exploration findings provided. Mirrors the `auto-commit` knob in `git.md`: the agent reads the rules file directly, the CLI never does.
+**Domain vocabulary.** Before filling any domain/module section (Domain analysis summary, Touched areas), run `sdd domain-vocab`. Exit 0 with output ⇒ use that vocabulary; exit non-zero, or the command unavailable ⇒ derive names from the exploration findings provided. Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `auto-commit` knob in `git.md`) directly.
 
 Fill in:
 
-- **Domain analysis summary** (from the orchestrator's step 2 analysis)
+- **Domain analysis summary** (from the orchestrator's step 3 analysis)
 - **Current state** of relevant code (from exploration findings)
 - **Proposed design** — concrete approach, modules, data flow
 - **Touched areas** — a `| Module / path | Change |` table, real paths from exploration findings, no fixed sub-fields

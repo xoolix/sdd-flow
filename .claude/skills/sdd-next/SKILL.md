@@ -174,11 +174,12 @@ When the sub-agent returns, apply the **Post-Phase Validation Protocol** from `s
 
 1. **Artifacts exist** — `ls` each path listed in the `Artifacts` field of the return envelope.
 2. **Envelope complete** — verify the return envelope contains all required fields: Status, Summary, Artifacts, Next, Risks.
-3. **Lint/tests pass** — run lint, typecheck, and tests in parallel Bash calls (skip if the phase produces no code, e.g., spec or plan phases).
+3. **Lint/tests pass** — run lint, typecheck, and tests in parallel Bash calls (skip if the phase produces no code, e.g., spec or plan phases — `archive-feature` is not exempt: it moves files, not prose, so this step still runs).
 
 If **all checks pass**, proceed to Step 5.
 
 If **any check fails**:
+- **Non-retryable phases** (checked before any retry branch below): `archive-feature`. Its post-move pre-flight can't succeed on a second attempt, so on failure report `Status: blocked` with the validation output and stop — zero retries, never `ESCALATED`.
 - If the failed phase is `implement-task`, pin the retry to the same slice:
   - Extract the `Task attempted` field from the previous result envelope.
   - Parse the first task ID in that field (`Tnnn`).

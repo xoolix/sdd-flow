@@ -91,12 +91,17 @@ Usage:
   sdd branch <feature-id>        Idempotently switch to feature/<feature-id> (create if missing)
   sdd commit-slice <feature-id>  Stage --files plus the derived specs/<feature-id> dir and commit;
                                  never pushes, never 'git add -A'
-                                 (--type <t> [--task Tnnn] --title "<s>" --files <p>... ; --files last)
+                                 (--type <t> [--task Tnnn] [--moved-from <path>] --title "<s>"
+                                 --files <p>... ; --files last)
+                                 --moved-from stages the deletion of a path guarded by
+                                 'git ls-files --error-unmatch'; never-tracked ⇒ exit 3, named
   sdd open-pr <feature-id>       Pre-flight (feature branch, gh on PATH, gh auth, remote), then
                                  push + 'gh pr create --draft' with title/body built from spec.md +
                                  decisions.md; writes .pr-opened on success only. Pre-flight failure
                                  pushes nothing and prints the manual command to stderr.
   sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
+  sdd domain-vocab               Print § Domain rules from .claude/rules/conventions.md;
+                                 exit 3 (no output) if empty, comment-only, or absent
   sdd help                       Show this help
 
 Options for 'init':
@@ -809,7 +814,7 @@ resolve_feature_dir() {
 }
 
 cmd_commit_slice() {
-  local usage_msg='usage: sdd commit-slice <feature-id> --type <t> [--task Tnnn] --title "<s>" --files <p>... (--files last)'
+  local usage_msg='usage: sdd commit-slice <feature-id> --type <t> [--task Tnnn] [--moved-from <path>] --title "<s>" --files <p>... (--files last)'
 
   local feature_id="${1:-}"
   [ $# -gt 0 ] && shift
@@ -819,7 +824,7 @@ cmd_commit_slice() {
     return 2
   fi
 
-  local type="" task="" title=""
+  local type="" task="" title="" moved_from=""
   local -a files=()
 
   while [ $# -gt 0 ]; do
@@ -832,6 +837,11 @@ cmd_commit_slice() {
       --task)
         [ $# -ge 2 ] || { printf 'error: --task requires a value\n' >&2; return 2; }
         task="$2"
+        shift 2
+        ;;
+      --moved-from)
+        [ $# -ge 2 ] || { printf 'error: --moved-from requires a value\n' >&2; return 2; }
+        moved_from="$2"
         shift 2
         ;;
       --title)
@@ -853,7 +863,19 @@ cmd_commit_slice() {
     esac
   done
 
-  if [ -z "$type" ] || [ -z "$title" ] || [ "${#files[@]}" -eq 0 ]; then
+  if [ -z "$type" ] || [ -z "$title" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  # --files may be empty only when --moved-from is present: a move-only
+  # commit (e.g. archive with no delta-merge changes) is a legitimate shape
+  # -- the moved directory itself carries the staged content, added below
+  # unconditionally. Reject the truly-empty invocation (no --files, no
+  # --moved-from) right here rather than leaning on the "nothing staged"
+  # check further down, so a caller that simply forgot --files still gets
+  # the same early, unambiguous usage error it always got.
+  if [ "${#files[@]}" -eq 0 ] && [ -z "$moved_from" ]; then
     printf 'error: %s\n' "$usage_msg" >&2
     return 2
   fi
@@ -865,6 +887,16 @@ cmd_commit_slice() {
     return 3
   fi
 
+  # Snapshot every already-staged path BEFORE this invocation's own 'git add'
+  # calls touch the index. The post-commit safety net below diffs against
+  # this to tell "someone else's legitimately pre-staged work" (e.g. the 13
+  # in-flight renames from an unrelated cleanup) apart from a --files
+  # omission this invocation is responsible for catching — a file the agent
+  # edited but never staged shows up as unstaged both before and after, so
+  # it survives this snapshot and still trips the warning.
+  local pre_staged
+  pre_staged="$(git status --porcelain --no-renames 2>/dev/null | awk '{ st = substr($0, 1, 1); if (st != " " && st != "?") print substr($0, 4) }')"
+
   # Stage exactly the named files plus the derived feature dir. Never 'git add -A'.
   if [ "${#files[@]}" -gt 0 ]; then
     if ! git add -- "${files[@]}"; then
@@ -875,7 +907,56 @@ cmd_commit_slice() {
     return 4
   fi
 
-  if git diff --cached --quiet; then
+  # --moved-from: stage the deletion of a path the caller moved away from.
+  # Guard first: tracked in the INDEX ('git ls-files --error-unmatch') covers
+  # the common case and still rejects a never-tracked path — a bare 'git add'
+  # would otherwise exit 0 and stage it as a brand new addition when it still
+  # exists on disk, the opposite of what was asked, and no exit-code check on
+  # 'git add' alone catches it. But the index alone is too strict: 'git mv'
+  # (the natural way an agent stages a rename, e.g. during archive) already
+  # removes the old path from the index even though it is still tracked in
+  # HEAD and its deletion is correctly staged — so also accept a path that
+  # resolves in HEAD ('git cat-file -e'), which a never-tracked path never
+  # does, staged or not.
+  if [ -n "$moved_from" ]; then
+    local moved_from_in_index=false
+    if git ls-files --error-unmatch -- "$moved_from" >/dev/null 2>&1; then
+      moved_from_in_index=true
+    elif ! git cat-file -e "HEAD:${moved_from}" 2>/dev/null; then
+      printf 'error: --moved-from path was never tracked: %s\n' "$moved_from" >&2
+      return 3
+    fi
+    # Only stage it when it is still sitting in the index (e.g. deleted on
+    # disk but not yet added) — when it was only found via the HEAD check,
+    # the removal is already staged (a prior 'git mv') and 'git add' on a
+    # path absent from both the index and the working tree would fail with
+    # "did not match any files" for no reason: there is nothing left to add.
+    if $moved_from_in_index; then
+      if ! git add -- "$moved_from"; then
+        return 4
+      fi
+    fi
+  fi
+
+  # Commit pathspec: exactly what this invocation staged above — --files,
+  # the derived feature dir, and --moved-from when present. A bare 'git
+  # commit' would sweep in anything already staged by someone else before
+  # this command ran; scoping to this pathspec commits only these paths and
+  # leaves the rest of the index staged, untouched (7th defect).
+  # Built incrementally, never via a bare "${files[@]}" expansion: bash 3.2
+  # (macOS's /usr/bin/env bash) throws "unbound variable" expanding an empty
+  # array under 'set -u' -- the same reason the 'git add' call above guards
+  # it with a length check instead of expanding it directly.
+  local -a commit_paths=()
+  if [ "${#files[@]}" -gt 0 ]; then
+    commit_paths+=("${files[@]}")
+  fi
+  commit_paths+=("$feature_dir")
+  if [ -n "$moved_from" ]; then
+    commit_paths+=("$moved_from")
+  fi
+
+  if git diff --cached --quiet -- "${commit_paths[@]}"; then
     printf 'error: nothing staged for commit\n' >&2
     return 5
   fi
@@ -887,7 +968,7 @@ cmd_commit_slice() {
     subject="${type}(${feature_id}): ${title}"
   fi
 
-  if ! git commit -q -m "$subject"; then
+  if ! git commit -q -m "$subject" -- "${commit_paths[@]}"; then
     return 4
   fi
 
@@ -895,10 +976,25 @@ cmd_commit_slice() {
   sha="$(git rev-parse HEAD)"
   printf '%s\n' "$sha"
 
-  # Post-commit safety net: warn (stderr only — stdout must stay $()-safe) if a
-  # tracked file was left dirty, e.g. an omitted --files entry.
+  # Post-commit safety net: warn (stderr only — stdout must stay $()-safe) if
+  # a tracked file was left dirty, e.g. an omitted --files entry. Scoped to
+  # commit_paths alone made this structurally unable to catch that (an
+  # omitted file is by definition outside commit_paths) — so this looks at
+  # the WHOLE index again, like pre-020, then drops any path that was
+  # already staged in the pre_staged snapshot above: that is someone else's
+  # legitimate pre-existing work (e.g. an in-flight rename), not something
+  # this invocation should have picked up.
   local dirty
-  dirty="$(git status --porcelain 2>/dev/null | grep -v '^??' || true)"
+  dirty="$(git status --porcelain --no-renames 2>/dev/null | grep -v '^??' || true)"
+  if [ -n "$pre_staged" ] && [ -n "$dirty" ]; then
+    # Two-file NR==FNR idiom, not 'awk -v pre="$pre_staged"': the default
+    # macOS/BSD awk rejects a -v value containing embedded newlines ("newline
+    # in string"), and pre_staged is exactly that — a newline-joined path
+    # list. Feeding it as its own input file via process substitution sidesteps
+    # the -v parser entirely and works the same on gawk and mawk.
+    dirty="$(awk 'NR==FNR { seen[$0]=1; next } { path = substr($0, 4); if (!(path in seen)) print }' \
+      <(printf '%s\n' "$pre_staged") <(printf '%s\n' "$dirty"))"
+  fi
   if [ -n "$dirty" ]; then
     printf 'warning: tracked files still dirty after commit:\n%s\n' "$dirty" >&2
   fi
@@ -908,10 +1004,23 @@ cmd_commit_slice() {
 
 # ─── open-pr ───────────────────────────────────────────────────────
 
+# `gh pr create` rejects a body over GitHub's 65536-character hard limit outright.
+# Budgeted with real headroom below that: Summary/Acceptance Criteria/Rollback
+# Plan are bounded by the spec template, but decisions.md is append-only and
+# grows every review cycle, so it's the part capped when the assembled body
+# would overflow (see append_decisions_capped below).
+PR_BODY_MAX_CHARS=60000
+
 # Lines between an exact "## <heading>" line and the next "## " heading (or EOF).
+# Strips a trailing CRLF '\r' from every record before the heading compare —
+# on a CRLF file $0 for the heading line is "## Domain rules\r", which never
+# equals the LF heading string, so the section read as empty regardless of
+# its real content (review fix cycle 4). The strip is unconditional (not
+# gated on the heading match), so printed content lines lose their '\r' too.
 extract_section() {
   local file="$1" heading="## $2"
   awk -v heading="$heading" '
+    { sub(/\r$/, "") }
     $0 == heading { found=1; next }
     found && /^## / { exit }
     found { print }
@@ -936,10 +1045,67 @@ build_pr_title() {
   printf '%s\n' "$feature_id"
 }
 
+# Appends decisions_file to body_file, capping the *total* body_file at
+# PR_BODY_MAX_CHARS. decisions.md is chronological and append-only (oldest
+# entries first), so the newest reasoning -- what justifies the code as the PR
+# actually ships it -- sits at the end; that is the higher-value window for a
+# reviewer, so on overflow this keeps the TAIL and drops the head (rationale
+# recorded in decisions.md, not just here). The cut lands on a line boundary:
+# whatever partial line falls at the cut point is dropped rather than kept
+# half-written. Below the budget this is a plain `cat` -- byte-identical to
+# the uncapped assembly, so short bodies are a no-op.
+append_decisions_capped() {
+  local body_file="$1" decisions_file="$2"
+  local used total budget
+  used=$(wc -c < "$body_file")
+  total=$(wc -c < "$decisions_file")
+
+  [ "$total" -eq 0 ] && return 0
+
+  budget=$(( PR_BODY_MAX_CHARS - used ))
+  if [ "$budget" -ge "$total" ]; then
+    cat "$decisions_file" >> "$body_file"
+    return 0
+  fi
+
+  # Marker names the real path so a reader can go read what got cut. Sized and
+  # reserved out of the budget *before* sizing the kept tail, so the marker
+  # itself can never be what pushes the body over the cap. The blank-line
+  # separator written after the marker below is reserved here too (+2): a
+  # bare `printf '%s'` of a `$(...)`-captured marker previously fused the
+  # marker onto the same physical line as the first kept line, because
+  # command substitution strips ALL trailing newlines from its output --
+  # so a trailing "\n\n" in the printf format that built `marker` was
+  # silently discarded before it ever reached the variable (review fix 1).
+  local marker marker_len
+  marker="$(printf '> **Truncated** — %s is %d characters; showing the most recent portion below. Read the full file at `%s`.' \
+    "$(basename "$decisions_file")" "$total" "$decisions_file")"
+  marker_len=$(( ${#marker} + 2 ))
+
+  if [ "$budget" -le "$marker_len" ]; then
+    # Summary/Acceptance Criteria/Rollback Plan alone already fill the budget
+    # (they're supposed to be bounded, so this shouldn't happen in practice).
+    # Deterministic fallback: drop decisions.md entirely -- never a silent,
+    # unmarked partial cut -- rather than grow the body with its size.
+    printf '_decisions.md omitted: no budget left after Summary/Acceptance Criteria/Rollback Plan. Read it at `%s`._\n' \
+      "$decisions_file" >> "$body_file"
+    return 0
+  fi
+
+  local tail_budget skip
+  tail_budget=$(( budget - marker_len ))
+  skip=$(( total - tail_budget ))
+
+  printf '%s\n\n' "$marker" >> "$body_file"
+  tail -c "+$((skip + 1))" "$decisions_file" | tail -n +2 >> "$body_file"
+}
+
 # PR body: Summary + Acceptance Criteria + Rollback Plan from spec.md, plus
-# decisions.md verbatim (human decision: built from spec.md + decisions.md,
-# not `gh pr create --fill`'s commit-derived title/body). Writes to a temp
-# file and prints its path — `gh pr create --body-file` wants a path, not stdin.
+# decisions.md capped via append_decisions_capped so `gh pr create` never sees
+# a body over GitHub's hard limit (human decision: built from spec.md +
+# decisions.md, not `gh pr create --fill`'s commit-derived title/body). Writes
+# to a temp file and prints its path — `gh pr create --body-file` wants a
+# path, not stdin.
 build_pr_body_file() {
   local feature_dir="$1"
   local spec_file="$feature_dir/spec.md"
@@ -956,11 +1122,12 @@ build_pr_body_file() {
       printf '\n## Rollback Plan\n'
       extract_section "$spec_file" "Rollback Plan"
     fi
-    if [ -f "$feature_dir/decisions.md" ]; then
-      printf '\n## Decisions\n'
-      cat "$feature_dir/decisions.md"
-    fi
   } > "$body_file"
+
+  if [ -f "$feature_dir/decisions.md" ]; then
+    printf '\n## Decisions\n' >> "$body_file"
+    append_decisions_capped "$body_file" "$feature_dir/decisions.md"
+  fi
 
   printf '%s\n' "$body_file"
 }
@@ -1055,38 +1222,18 @@ cmd_open_pr() {
 
 # ─── status ────────────────────────────────────────────────────────
 
-cmd_status() {
-  local feature_id="${1:-}"
+# Computes phase, task counts, sentinel freshness, and the next command for
+# one resolved feature directory. Extracted from cmd_status so both the
+# single-feature JSON and the no-arg listing (T003/F12) derive phase the same
+# way — the single-feature JSON output is unchanged by this extraction.
+#
+# Args: feature_id, feature_dir, is_archived ("true"/"false")
+# Sets (globals): PHASE_RESULT, TASKS_TOTAL_RESULT, TASKS_REMAINING_RESULT,
+#                 SENTINEL_FRESH_RESULT ("true"/"false"), NEXT_COMMAND_RESULT
+detect_feature_phase() {
+  local feature_id="$1" feature_dir="$2" is_archived="$3"
 
-  # ── Task 2: Feature-id resolution ──────────────────────────────
-  if [ -z "$feature_id" ]; then
-    local branch
-    branch="$(git branch --show-current 2>/dev/null || true)"
-    if [[ "$branch" =~ ^feature/([0-9]{3}-.+)$ ]]; then
-      feature_id="${BASH_REMATCH[1]}"
-    else
-      printf 'error: not on a feature branch\n' >&2
-      exit 1
-    fi
-  fi
-
-  # ── Task 3: Folder lookup ───────────────────────────────────────
-  local specs_dir
-  specs_dir="$(pwd)/specs"
-
-  local feature_dir=""
-  local is_archived=false
-
-  if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
-    [ "$feature_dir" = "$specs_dir/$feature_id" ] || is_archived=true
-  fi
-
-  if [ -z "$feature_dir" ]; then
-    printf 'error: feature not found: %s\n' "$feature_id" >&2
-    exit 1
-  fi
-
-  # ── Task 4: Phase detection ─────────────────────────────────────
+  # ── Phase detection ─────────────────────────────────────────────
   local phase
 
   if $is_archived; then
@@ -1109,7 +1256,7 @@ cmd_status() {
     phase=""  # determined after task counting
   fi
 
-  # ── Task 5: Task counting ───────────────────────────────────────
+  # ── Task counting ────────────────────────────────────────────────
   local tasks_done=0
   local tasks_remaining=0
   local tasks_total=0
@@ -1144,7 +1291,7 @@ cmd_status() {
     fi
     tasks_total=$((tasks_done + tasks_remaining))
 
-    # ── Task 6: Sentinel freshness ────────────────────────────────
+    # ── Sentinel freshness ──────────────────────────────────────────
     local sentinel_fresh=false
     local sentinel_file="$feature_dir/.simplified"
     if [ -f "$sentinel_file" ]; then
@@ -1175,9 +1322,6 @@ cmd_status() {
     tasks_remaining=0
   fi
 
-  # ── Blockers array ──────────────────────────────────────────────
-  local blockers='[]'
-
   # ── Next command ────────────────────────────────────────────────
   local next_command
   case "$phase" in
@@ -1192,23 +1336,168 @@ cmd_status() {
     *)                 next_command="(unknown)" ;;
   esac
 
-  # ── Task 7: JSON emission ───────────────────────────────────────
-  # Normalise sentinel_fresh to JSON boolean
+  # Normalise sentinel_fresh to a JSON boolean string
   local sentinel_json="false"
   if ${sentinel_fresh:-false}; then
     sentinel_json="true"
   fi
 
+  PHASE_RESULT="$phase"
+  TASKS_TOTAL_RESULT="$tasks_total"
+  TASKS_REMAINING_RESULT="$tasks_remaining"
+  SENTINEL_FRESH_RESULT="$sentinel_json"
+  NEXT_COMMAND_RESULT="$next_command"
+}
+
+# No-arg status: lists every active spec (specs/*/ minus specs/archive/) as a
+# JSON array of {feature_id, phase, next_command}. Archived folders are
+# excluded on purpose (F12) — a finished-but-unarchived feature left sitting
+# in specs/ is false context the model reads as active work, and that's
+# exactly what this listing surfaces; burying it among already-archived
+# folders would defeat the point.
+cmd_status_list() {
+  local specs_dir
+  specs_dir="$(pwd)/specs"
+
+  local items="" first=true
+  local dir feature_id
+
+  if [ -d "$specs_dir" ]; then
+    for dir in "$specs_dir"/*/; do
+      [ -d "$dir" ] || continue
+      feature_id="$(basename "$dir")"
+      [ "$feature_id" = "archive" ] && continue
+
+      detect_feature_phase "$feature_id" "${dir%/}" false
+
+      local entry
+      entry="$(printf '{"feature_id": "%s", "phase": "%s", "next_command": "%s"}' \
+        "$feature_id" "$PHASE_RESULT" "$NEXT_COMMAND_RESULT")"
+
+      if $first; then
+        items="  $entry"
+        first=false
+      else
+        items="$items,
+  $entry"
+      fi
+    done
+  fi
+
+  if [ -z "$items" ]; then
+    printf '[]\n'
+  else
+    printf '[\n%s\n]\n' "$items"
+  fi
+  exit 0
+}
+
+cmd_status() {
+  local feature_id="${1:-}"
+
+  # ── Feature-id resolution ────────────────────────────────────────
+  # An omitted feature-id ALWAYS lists (AC8) — no branch-name sniffing. AC8
+  # names no condition about the current branch, and a developer running the
+  # bare command is almost always on a feature branch, which is exactly when
+  # the listing is most useful. Explicit `sdd status <id>` is unaffected.
+  if [ -z "$feature_id" ]; then
+    cmd_status_list
+    return
+  fi
+
+  # ── Folder lookup ────────────────────────────────────────────────
+  local specs_dir
+  specs_dir="$(pwd)/specs"
+
+  local feature_dir=""
+  local is_archived=false
+
+  if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    [ "$feature_dir" = "$specs_dir/$feature_id" ] || is_archived=true
+  fi
+
+  if [ -z "$feature_dir" ]; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    exit 1
+  fi
+
+  detect_feature_phase "$feature_id" "$feature_dir" "$is_archived"
+
+  # ── Blockers array ──────────────────────────────────────────────
+  local blockers='[]'
+
+  # ── JSON emission ────────────────────────────────────────────────
   printf '{\n'
   printf '  "feature_id": "%s",\n' "$feature_id"
-  printf '  "phase": "%s",\n' "$phase"
-  printf '  "tasks_total": %d,\n' "$tasks_total"
-  printf '  "tasks_remaining": %d,\n' "$tasks_remaining"
-  printf '  "sentinel_fresh": %s,\n' "$sentinel_json"
+  printf '  "phase": "%s",\n' "$PHASE_RESULT"
+  printf '  "tasks_total": %d,\n' "$TASKS_TOTAL_RESULT"
+  printf '  "tasks_remaining": %d,\n' "$TASKS_REMAINING_RESULT"
+  printf '  "sentinel_fresh": %s,\n' "$SENTINEL_FRESH_RESULT"
   printf '  "blockers": %s,\n' "$blockers"
-  printf '  "next_command": "%s"\n' "$next_command"
+  printf '  "next_command": "%s"\n' "$NEXT_COMMAND_RESULT"
   printf '}\n'
   exit 0
+}
+
+# ─── domain-vocab ───────────────────────────────────────────────────
+
+# Prints § Domain rules from .claude/rules/conventions.md so the four
+# consumers that used to grep the file directly can call the CLI instead
+# (ADR 0003: the CLI resolves content, the agent reads knobs directly).
+#
+# extract_section returns a comment-only section as non-empty content —
+# conventions.md ships with exactly that shape ("<!-- Project-specific
+# business logic rules -->", 46 chars) until a project fills it in — so
+# blank and comment-only lines are filtered out here before deciding
+# emptiness. "Empty" and "absent" collapse to the same exit code: the spec
+# treats them as one branch and no consumer distinguishes them.
+cmd_domain_vocab() {
+  local file=".claude/rules/conventions.md"
+
+  [ -f "$file" ] || return 3
+
+  local section
+  section="$(extract_section "$file" "Domain rules")"
+
+  # Strip whole '<!-- ... -->' spans before testing for emptiness, however
+  # many lines they cover. A filter that only matched a comment opening and
+  # closing on the SAME line let a two-line HTML comment survive as printed
+  # "vocabulary" — contradicting the spec's "comment-only counts as empty".
+  # awk gsub has no non-greedy quantifier, so a char-class trick
+  # ('[^-]*(-[^-]+)*') was used to fake a shortest match between '<!--' and
+  # '-->'. That trick breaks under POSIX ERE's leftmost-longest semantics
+  # the moment the comment BODY itself contains '--' (an em-dash, common in
+  # this repo's own prose): it leaves the comment unstripped, so it prints
+  # as if it were real vocabulary instead of counting as empty (review fix
+  # cycle 3, judge finding). index()/substr() sidesteps greediness
+  # entirely: find the next '<!--', find the next '-->' after it, cut that
+  # span, repeat — no regex, so no shortest-vs-longest ambiguity to get
+  # wrong. An unterminated '<!--' (no matching '-->' left in buf) stops the
+  # loop and leaves the remainder untouched, so a dangling comment marker
+  # still counts as real content, not as empty.
+  local stripped
+  stripped="$(printf '%s\n' "$section" | awk '
+    { buf = buf $0 "\n" }
+    END {
+      while ((s = index(buf, "<!--")) > 0) {
+        rest = substr(buf, s + 4)
+        e = index(rest, "-->")
+        if (e == 0) break
+        buf = substr(buf, 1, s - 1) substr(rest, e + 3)
+      }
+      printf "%s", buf
+    }
+  ')"
+
+  local filtered
+  filtered="$(printf '%s\n' "$stripped" | grep -vE '^[[:space:]]*$' || true)"
+
+  if [ -z "$filtered" ]; then
+    return 3
+  fi
+
+  printf '%s\n' "$section"
+  return 0
 }
 
 # ─── main ──────────────────────────────────────────────────────────
@@ -1222,6 +1511,7 @@ case "${1:-help}" in
   commit-slice) shift; cmd_commit_slice "$@" ;;
   open-pr)      shift; cmd_open_pr "$@" ;;
   status)       shift; cmd_status "$@" ;;
+  domain-vocab) cmd_domain_vocab ;;
   help|--help|-h) usage ;;
   version|--version|-v) echo "sdd v${VERSION}" ;;
   *)

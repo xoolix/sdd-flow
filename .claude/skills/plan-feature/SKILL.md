@@ -51,8 +51,14 @@ For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the 
 
 2. Read `specs/$ARGUMENTS/spec.md`. If it doesn't exist, tell the user to run `/new-feature` first.
 
+2.5. **Domain vocabulary** — Resolve the project's domain vocabulary before Step 3 needs it, by running `sdd domain-vocab`:
+   - Exit 0 with output ⇒ that stdout **is** the project's domain vocabulary. Step 3 identifies domains from it.
+   - Exit non-zero, or the command unavailable ⇒ derive the domain list from `spec.md` instead — already read in Step 2 and always in context. Never from Step 4's exploration findings: the discovery-resume path above skips Step 4 entirely, so on that path those findings don't exist (021 took exactly this path).
+
+   **Why this stays 2.5 instead of becoming the new Step 3** (renumbering everything after it): this file already has a `4.5` step, so a fractional insertion is the established pattern here, not a special case. Two references below are load-bearing on the *current* numbers — the discovery-resume note above ("Skip Step 4 ... and Step 4.5 ... into ... Step 5") and the designer hand-off note in Step 5 ("Domain analysis summary (from step 3)") — and both stay true untouched only because nothing was renumbered. Renumber this step and both go stale silently. Only the Domain vocabulary bullet inside Step 5 changes, into a back-pointer at this step instead of repeating the old instruction.
+
 3. **Domain analysis** — Based on the spec, identify:
-   - Which domains are involved (db, api, frontend, infra, auth, notifications, integrations, etc.)
+   - Which domains are involved — from Step 2.5's vocabulary, or from `spec.md` when Step 2.5 came back empty
    - For each domain, assess complexity: **SMALL** (trivial change), **MEDIUM** (meaningful work), **LARGE** (significant effort or risk)
    - Determine overall strategy:
      - **SMALL** (1-2 domains, all small/medium): Execute directly, minimal planning overhead
@@ -91,7 +97,7 @@ For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the 
    ```
 
 5. **Delegate design and tasks in parallel** — Launch **both sub-agents simultaneously in a single message** with two `Agent` tool calls:
-   - **Domain vocabulary.** Before launching `sdd-designer`, grep `.claude/rules/conventions.md` for `## Domain rules`. Content past the comment ⇒ pass that vocabulary to the designer; empty ⇒ the designer derives names from the exploration findings you collected in step 4. Mirrors the `auto-commit` knob in `git.md`: the agent reads the rules file directly, the CLI never does.
+   - **Domain vocabulary.** Already resolved in Step 2.5 — pass that vocabulary (or its spec-derived fallback) to `sdd-designer` unchanged; do not re-resolve it here. Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `auto-commit` knob in `git.md`) directly.
    - **`sdd-designer`**: Receives the spec + exploration findings (+ `discovery.md` content if resuming). Creates `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base. Fills in:
      - Domain analysis summary (from step 3)
      - Current state of relevant code

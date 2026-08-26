@@ -101,13 +101,15 @@ After a sub-agent completes a phase, the orchestrator MUST validate before advan
 |------|-------|-----|
 | 1. Artifacts exist | All files listed in `Artifacts` field exist on disk | `ls` each path |
 | 2. Envelope complete | Return envelope has all required fields (Status, Summary, Artifacts, Next, Risks) and optional fields where applicable (Validations-Output, Review-Feedback) | Parse sub-agent output |
-| 3. Lint/tests pass | Run lint, typecheck, and tests if applicable to the phase | Parallel Bash calls; skip if phase produces no code (e.g., spec, plan) |
+| 3. Lint/tests pass | Run lint, typecheck, and tests if applicable to the phase | Parallel Bash calls; skip if phase produces no code (e.g., spec, plan) — `archive-feature` is not exempt: it moves files, not prose, so this step still runs |
 
 A phase passes validation only when **all three steps** succeed.
 
 ### Retry Logic
 
-- **Max retries**: 2 per phase invocation.
+**Non-retryable phases** — checked before the retry loop below starts: `archive-feature`. Its pre-flight requires `specs/<id>/spec.md`, `plan.md`, and `tasks.md`; archive's own move already removed them, so a retry would fail pre-flight and produce a misleading diagnostic, not a second chance. On validation failure for a non-retryable phase, the orchestrator MUST report `Status: blocked` with the validation output and stop — zero retries, never `ESCALATED`. The archive move itself is not in question; what broke is downstream.
+
+- **Max retries**: 2 per phase invocation, for any phase not named in the non-retryable list above.
 - On failure, re-launch the sub-agent with the original prompt **plus** the error context from the failed validation step(s).
 - Each retry includes: which step(s) failed, the error output, and the retry attempt number.
 - If **2 retries are exhausted** without passing validation, the orchestrator MUST stop and report with `Status: ESCALATED`, including a diagnostic with the error output from each attempt so the human can distinguish agent errors from environment issues.
