@@ -14,7 +14,7 @@
   - verifies: AC4, AC8
   - touches: bin/sdd, tests/sdd.test.js
 
-- [ ] **T003 [AFK] `commit-slice` warns on pre-staged feature-dir files (index-state axis, 4 values)**: Normalize `feature_dir` (absolute) to repo-relative before comparing against the existing `pre_staged` snapshot (repo-relative) — otherwise the comparison never matches and the warning never fires. Warn naming any feature-dir file staged before the call; committed content is unchanged. Adds tests for: clean index; staged outside the feature dir (no warning, existing case); staged inside (warning fires, new case); both at once (both warnings fire independently, proving the opposite-polarity exclusion-set and inclusion-set warnings don't merge).
+- [x] **T003 [AFK] `commit-slice` warns on pre-staged feature-dir files (index-state axis, 4 values)**: Normalize `feature_dir` (absolute) to repo-relative before comparing against the existing `pre_staged` snapshot (repo-relative) — otherwise the comparison never matches and the warning never fires. Warn naming any feature-dir file staged before the call; committed content is unchanged. Adds tests for: clean index; staged outside the feature dir (no warning, existing case); staged inside (warning fires, new case); both at once (both warnings fire independently, proving the opposite-polarity exclusion-set and inclusion-set warnings don't merge).
   - blocked_by: none
   - verifies: AC5, AC8
   - touches: bin/sdd, tests/sdd.test.js

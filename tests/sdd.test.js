@@ -1313,6 +1313,177 @@ describe("sdd CLI smoke tests", () => {
       expect(status).toMatch(/specs\/archive\/999-other/);
     });
 
+    // T003 (AC5, AC8 index-state axis): a file inside the feature dir can be
+    // sitting in the index BEFORE commit-slice ever runs -- a HITL decision
+    // staged on purpose, or a stray edit riding along by accident. There is
+    // no reliable way to tell those apart, so the fix only warns; the
+    // feature dir keeps getting swept into the commit exactly as before
+    // (F8: feature_dir is absolute, pre_staged entries are repo-root-relative
+    // -- a naive prefix match never fires without normalizing first). Four
+    // tests below walk the full index-state axis: clean, staged outside,
+    // staged inside, and both at once -- not just the "inside" case the task
+    // is named after (022's T002 lesson: a test suite that only covers the
+    // shape named in the task text misses the corners the criterion implies).
+    test("clean index before commit-slice: no warning at all (index-state axis, T003)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).toBe("");
+    });
+
+    test("staged outside the feature dir before commit-slice: no new warning, file stays staged and out of the commit (index-state axis, T003, AC9 regression guard)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
+      execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      const sha = stdout.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).toBe("");
+
+      const files = filesInCommit(project, sha);
+      expect(files).not.toContain("ajeno.txt");
+
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).toMatch(/^A\s+ajeno\.txt$/m);
+    });
+
+    test("staged inside the feature dir before commit-slice: new warning fires naming the file, commit content unchanged (index-state axis, T003)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      // A HITL decision (or a stray edit) already staged inside the feature
+      // dir before commit-slice runs -- exactly the shape AC5 warns about.
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [x] First behavior\n- [ ] Second behavior\n",
+      );
+      execFileSync("git", ["add", "--", "specs/001-demo/tasks.md"], { cwd: project });
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      const sha = stdout.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+      expect(stderrOutput).toContain("warning: feature dir file(s) already staged before commit-slice ran");
+      expect(stderrOutput).toContain("specs/001-demo/tasks.md");
+      // The opposite-polarity post-commit safety net must not also fire --
+      // tasks.md was committed clean, nothing is dirty afterward.
+      expect(stderrOutput).not.toContain("tracked files still dirty after commit");
+
+      // Content is unchanged: the feature dir is swept in exactly as it
+      // always was, pre-staged or not.
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).toContain("specs/001-demo/tasks.md");
+
+      // tasks.md landed in the commit clean -- no leftover staged/dirty
+      // residue for it. (Not asserting the whole status is empty: the
+      // stderr-capture file above is itself untracked in this working tree.)
+      const status = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(status).not.toMatch(/tasks\.md/);
+    });
+
+    test("both a pre-staged feature-dir file and a genuinely dirty tracked file at once: both warnings fire independently, proving the inclusion-set and exclusion-set checks did not merge (index-state axis, T003)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [x] First behavior\n- [ ] Second behavior\n",
+      );
+      execFileSync("git", ["add", "--", "specs/001-demo/tasks.md"], { cwd: project });
+
+      // Reuses the post-commit hook trick from the existing dirty-safety-net
+      // test to deterministically dirty app.js -- which IS in this
+      // invocation's own commit scope, unlike tasks.md above -- right after
+      // 'git commit' returns, without racing bin/sdd's own git calls.
+      fs.writeFileSync(
+        path.join(project, ".git", "hooks", "post-commit"),
+        "#!/bin/sh\necho '// dirtied after commit' >> app.js\n",
+      );
+      fs.chmodSync(path.join(project, ".git", "hooks", "post-commit"), 0o755);
+
+      const errPath = path.join(project, ".stderr-capture");
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(
+          sddBin,
+          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
+        );
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      const sha = stdout.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      // New AC5 warning (inclusion set, computed pre-commit): the
+      // feature-dir file staged before this invocation ran.
+      expect(stderrOutput).toContain("warning: feature dir file(s) already staged before commit-slice ran");
+      expect(stderrOutput).toContain("specs/001-demo/tasks.md");
+
+      // Existing safety net (exclusion set, computed post-commit): app.js
+      // was inside this commit's own scope and got dirtied again afterward.
+      expect(stderrOutput).toContain("warning: tracked files still dirty after commit");
+      expect(stderrOutput).toMatch(/tracked files still dirty after commit:\n[^\n]*app\.js/);
+
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("app.js");
+      expect(files).toContain("specs/001-demo/tasks.md");
+    });
+
     test("--moved-from deletion still lands in a scoped commit, even with an unrelated file pre-staged", () => {
       const project = makeTempProject();
       seedCommit(project);

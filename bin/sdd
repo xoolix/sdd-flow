@@ -902,6 +902,35 @@ cmd_commit_slice() {
   local pre_staged
   pre_staged="$(git status --porcelain --no-renames 2>/dev/null | awk '{ st = substr($0, 1, 1); if (st != " " && st != "?") print substr($0, 4) }')"
 
+  # AC5: warn (never change what gets staged) when a file inside this
+  # feature's own dir was already staged BEFORE this invocation touched the
+  # index -- a HITL decision staged on purpose, or a stray edit riding along
+  # by accident. There is no reliable way to tell those two apart, and
+  # getting it wrong would *discard* work rather than merely mix it, so this
+  # only warns; the feature dir keeps getting swept into the commit exactly
+  # as before. Opposite polarity from the post-commit safety net below (that
+  # one is an EXCLUSION set over the whole index, checked after the commit;
+  # this is an INCLUSION set scoped to the feature dir, checked before it) --
+  # kept as two separate checks sharing only the one snapshot, not merged.
+  # feature_dir is absolute (built from "$(pwd)/specs") but pre_staged
+  # entries are repo-root-relative (F8) -- normalize first, or a prefix
+  # match here never fires. bin/sdd never 'cd's outside subshells, so
+  # stripping "$(pwd)/" is safe.
+  if [ -n "$pre_staged" ]; then
+    local feature_dir_rel="${feature_dir#"$(pwd)/"}"
+    local staged_path staged_in_feature_dir=""
+    while IFS= read -r staged_path; do
+      case "$staged_path" in
+        "$feature_dir_rel"/*)
+          staged_in_feature_dir="${staged_in_feature_dir:+${staged_in_feature_dir}$'\n'}${staged_path}"
+          ;;
+      esac
+    done <<< "$pre_staged"
+    if [ -n "$staged_in_feature_dir" ]; then
+      printf 'warning: feature dir file(s) already staged before commit-slice ran:\n%s\n' "$staged_in_feature_dir" >&2
+    fi
+  fi
+
   # Stage exactly the named files plus the derived feature dir. Never 'git add -A'.
   if [ "${#files[@]}" -gt 0 ]; then
     if ! git add -- "${files[@]}"; then
