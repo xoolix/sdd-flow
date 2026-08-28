@@ -781,6 +781,123 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  // cmd_base_branch had zero tests before this suite despite implementing three
+  // resolution layers (F7). These are also AC8's "resolution" axis: every value,
+  // including the ones that never failed, not just a regression test per bug.
+  describe("sdd base-branch", () => {
+    function writeGitMd(project, ref) {
+      fs.mkdirSync(path.join(project, ".claude", "rules"), { recursive: true });
+      fs.writeFileSync(path.join(project, ".claude", "rules", "git.md"), `base-branch: ${ref}\n`);
+    }
+
+    test("active feature: resolves via the specs/<id>/.parent-branch sidecar", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "release-parent"], { cwd: project });
+      fs.writeFileSync(path.join(project, "specs", "001-demo", ".parent-branch"), "release-parent\n");
+
+      const output = execFileSync(sddBin, ["base-branch", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output.trim()).toBe("release-parent");
+    });
+
+    test("dated-archive feature: resolves via specs/archive/<date>-<id>/.parent-branch", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "release-parent"], { cwd: project });
+      fs.rmSync(path.join(project, "specs", "001-demo"), { recursive: true, force: true });
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-01-001-demo");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, ".parent-branch"), "release-parent\n");
+
+      const output = execFileSync(sddBin, ["base-branch", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output.trim()).toBe("release-parent");
+    });
+
+    test("legacy archive prefix (dir name === id, no date) does not match the glob and falls through instead of using it", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+      fs.rmSync(path.join(project, "specs", "001-demo"), { recursive: true, force: true });
+      // Legacy naming predating the YYYY-MM-DD- prefix: the archived dir name IS
+      // the feature-id verbatim (this repo's own specs/archive/003-plan-discovery-checkpoint
+      // and 004-adversarial-review-agent are real examples). resolve_feature_dir's
+      // "*-<id>" glob requires a "-" immediately before the id, which this never has.
+      const legacyDir = path.join(project, "specs", "archive", "001-demo");
+      fs.mkdirSync(legacyDir, { recursive: true });
+      fs.writeFileSync(path.join(legacyDir, ".parent-branch"), "wrong-branch-must-be-ignored\n");
+      writeGitMd(project, "main");
+
+      const output = execFileSync(sddBin, ["base-branch", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output.trim()).toBe("main");
+    });
+
+    test("unresolvable id, no specs/archive dir anywhere: falls through instead of aborting under pipefail", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+      // No specs/archive directory exists in this project at all -- resolve_feature_dir's
+      // internal archive lookup errors on the missing path, and under set -euo pipefail
+      // an unguarded caller aborts the whole process here instead of falling through.
+      writeGitMd(project, "main");
+
+      const output = execFileSync(sddBin, ["base-branch", "999-totally-unresolvable"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output.trim()).toBe("main");
+    });
+
+    test("empty/whitespace sidecar falls through to Layer 2", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+      fs.writeFileSync(path.join(project, "specs", "001-demo", ".parent-branch"), "   \n");
+      writeGitMd(project, "main");
+
+      const output = execFileSync(sddBin, ["base-branch", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output.trim()).toBe("main");
+    });
+
+    test("sidecar naming a branch that does not exist locally exits 2 without falling through (Unchanged)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+      fs.writeFileSync(path.join(project, "specs", "001-demo", ".parent-branch"), "does-not-exist-branch\n");
+      writeGitMd(project, "main");
+
+      const error = sddFail(["base-branch", "001-demo"], { cwd: project });
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("does-not-exist-branch");
+    });
+
+    test("nothing resolvable anywhere exits 3 (Unchanged)", () => {
+      const project = makeTempProject();
+      // No sidecar content, no .claude/rules/git.md, and no commits yet, so
+      // Layer 3 has no develop/main/master ref to fall back on either.
+      const error = sddFail(["base-branch", "001-demo"], { cwd: project });
+
+      expect(error.status).toBe(3);
+    });
+  });
+
   describe("sdd commit-slice", () => {
     test("commits the named files with the <type>(<id>): <title> message format", () => {
       const project = makeTempProject();

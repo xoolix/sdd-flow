@@ -696,25 +696,30 @@ cmd_doctor() {
 cmd_base_branch() {
   local feature_id="${1:-}"
 
-  # ── Layer 1: per-feature sidecar (only when feature-id supplied) ──
+  # ── Layer 1: per-feature sidecar, active dir or archived (F1) ──
   if [ -n "$feature_id" ]; then
-    local sidecar="specs/${feature_id}/.parent-branch"
-    if [ -f "$sidecar" ]; then
-      # Read first line only; strip leading/trailing whitespace
-      local ref
-      ref="$(head -n1 "$sidecar" | tr -d '[:space:]')"
-      if [ -n "$ref" ]; then
-        # Non-empty after trim — must resolve
-        if git rev-parse --verify "$ref" >/dev/null 2>&1; then
-          printf '%s\n' "$ref"
-          return 0
-        else
-          printf 'error: %s references missing branch "%s"\n' "$sidecar" "$ref" >&2
-          return 2
+    local specs_dir feature_dir
+    specs_dir="$(pwd)/specs"
+    if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+      local sidecar="$feature_dir/.parent-branch"
+      if [ -f "$sidecar" ]; then
+        # Read first line only; strip leading/trailing whitespace
+        local ref
+        ref="$(head -n1 "$sidecar" | tr -d '[:space:]')"
+        if [ -n "$ref" ]; then
+          # Non-empty after trim — must resolve
+          if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+            printf '%s\n' "$ref"
+            return 0
+          else
+            printf 'error: %s references missing branch "%s"\n' "$sidecar" "$ref" >&2
+            return 2
+          fi
         fi
+        # Empty/whitespace sidecar — fall through to Layer 2
       fi
-      # Empty/whitespace sidecar — fall through to Layer 2
     fi
+    # Unresolvable feature-id (no active or archived dir) — fall through to Layer 2, never abort.
   fi
 
   # ── Layer 2: project config in .claude/rules/git.md ──────────────
