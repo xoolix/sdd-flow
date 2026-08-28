@@ -19,7 +19,7 @@
   - verifies: AC5, AC8
   - touches: bin/sdd, tests/sdd.test.js
 
-- [ ] **T004 [AFK] `/simplify-code` excludes agent and ADR docs by filter**: Add `.claude/agents/**/*.md` and `docs/adr/**/*.md` to the SDD-artifacts exclusion list in `sdd-simplify-code.md` step 3, so these are dropped by the filter, not manual judgment. Adds a wiring-regression assertion in `tests/sdd.test.js` pinning the new entries — new coverage, since nothing pins this list today; `tests/sdd.test.js:462-493` already pins other prose in the same file, so the full suite guards against collateral damage.
+- [x] **T004 [AFK] `/simplify-code` excludes agent and ADR docs by filter**: Add `.claude/agents/**/*.md` and `docs/adr/**/*.md` to the SDD-artifacts exclusion list in `sdd-simplify-code.md` step 3, so these are dropped by the filter, not manual judgment. Adds a wiring-regression assertion in `tests/sdd.test.js` pinning the new entries — new coverage, since nothing pins this list today; `tests/sdd.test.js:462-493` already pins other prose in the same file, so the full suite guards against collateral damage.
   - blocked_by: none
   - verifies: AC6
   - touches: .claude/agents/sdd-simplify-code.md, tests/sdd.test.js

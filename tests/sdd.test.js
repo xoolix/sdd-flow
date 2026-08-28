@@ -507,6 +507,29 @@ describe("sdd CLI smoke tests", () => {
     expect(gitignore).not.toContain(".pr-opened");
   });
 
+  test("simplify-code's SDD-artifacts filter drops agent docs and ADRs, not manual judgment (T004)", () => {
+    const simplifyCode = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-simplify-code.md"), "utf8");
+
+    // AC6 requires these paths excluded *by the filter list*, not by an agent
+    // re-judging them by hand on each pass -- decisions.md records five consecutive
+    // simplify passes doing exactly that for .claude/agents/**/*.md and docs/adr/**/*.md.
+    // Anchor on the SDD-artifacts bullet itself, not just anywhere in the file, so this
+    // can't pass on a mention placed elsewhere (e.g. the NEVER list) that isn't actually
+    // part of the filter -- that would satisfy the substring but not the criterion.
+    const sddArtifactsBullet = simplifyCode.split("\n").find((line) => line.includes("**SDD artifacts**:"));
+
+    expect(sddArtifactsBullet).toBeDefined();
+    expect(sddArtifactsBullet).toContain(".claude/agents/**/*.md");
+    expect(sddArtifactsBullet).toContain("docs/adr/**/*.md");
+
+    // Step 2b's IGNORED_DIRTY notice points at this same list by reference --
+    // "Apply the same exclusion filters as `SCOPED_FILES`" -- rather than duplicating
+    // it, so fixing the bullet above also fixes that call site. Wiring regression only:
+    // this cannot verify the orchestrator's scope computation actually obeys the text,
+    // only that the list it points to now includes both globs (ADR 0003's caveat).
+    expect(simplifyCode).toContain("Apply the same exclusion filters as `SCOPED_FILES`");
+  });
+
   test("archive-feature commits the archived folder as a single haiku-safe call, no branching (T008)", () => {
     const archiveFeature = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"), "utf8");
 
