@@ -9,7 +9,7 @@
   - verifies: AC1, AC8
   - touches: bin/sdd, tests/sdd.test.js
 
-- [ ] **T002 [AFK] `extract_section` ignores headings inside fences (structure + line-ending axes)**: Two independent toggles for ` ``` ` and `~~~`, tracked from file start, ignore `## ` while inside either; an unterminated fence stays "inside" through EOF (cut short, never truncate wrong). Covers both consumers, `cmd_domain_vocab` and `build_pr_body_file`. Adds fence tests for both chars on both consumers, plus a CRLF test for the PR-body consumer (today only `cmd_domain_vocab` has one).
+- [x] **T002 [AFK] `extract_section` ignores headings inside fences (structure + line-ending axes)**: Two independent toggles for ` ``` ` and `~~~`, tracked from file start, ignore `## ` while inside either; an unterminated fence stays "inside" through EOF (cut short, never truncate wrong). Covers both consumers, `cmd_domain_vocab` and `build_pr_body_file`. Adds fence tests for both chars on both consumers, plus a CRLF test for the PR-body consumer (today only `cmd_domain_vocab` has one).
   - blocked_by: none
   - verifies: AC4, AC8
   - touches: bin/sdd, tests/sdd.test.js

@@ -1734,6 +1734,228 @@ describe("sdd CLI smoke tests", () => {
         expect(body).toContain("GENUINE-ROLLBACK-MARKER");
       });
     });
+
+    // T002 / AC4 / AC8 (document-structure axis, second consumer):
+    // build_pr_body_file assembles its three spec sections through the same
+    // extract_section — a "## "-shaped line inside a fence anywhere in
+    // spec.md's Summary/Acceptance Criteria/Rollback Plan truncates the same
+    // way `cmd_domain_vocab` does. Same fix, same fixture shapes, different
+    // consumer, so the axis is proven end to end rather than just in the awk
+    // helper.
+    describe("document structure — fenced code blocks (T002)", () => {
+      test("no fence at all: body is byte-identical to the unfenced assembly (control)", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        writeMinimalSpec(featureDir);
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toBe(
+          "## Summary\n" +
+            "GENUINE-SUMMARY-MARKER\n" +
+            "\n## Acceptance Criteria\n" +
+            "- [ ] GENUINE-AC-MARKER\n" +
+            "\n## Rollback Plan\n" +
+            "GENUINE-ROLLBACK-MARKER\n",
+        );
+      });
+
+      test("a '## '-shaped line inside a ``` fence in Acceptance Criteria does not terminate the section", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "```",
+            "## Code example inside the fence, must not terminate",
+            "- [ ] more content still inside the fence",
+            "```",
+            "- [ ] AC-AFTER-FENCE-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain("## Code example inside the fence, must not terminate");
+        expect(body).toContain("more content still inside the fence");
+        expect(body).toContain("AC-AFTER-FENCE-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+
+      test("a '## '-shaped line inside a ~~~ fence in Acceptance Criteria does not terminate the section", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "~~~",
+            "## Code example inside the tilde fence, must not terminate",
+            "- [ ] more content still inside the fence",
+            "~~~",
+            "- [ ] AC-AFTER-FENCE-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain("## Code example inside the tilde fence, must not terminate");
+        expect(body).toContain("more content still inside the fence");
+        expect(body).toContain("AC-AFTER-FENCE-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+
+      // F9, second consumer: a literal '~~~' line used as content INSIDE an
+      // open ``` block must not flip a shared "closed" state — two
+      // independent toggles keep the ``` fence open regardless.
+      test("a literal '~~~' line inside an open ``` fence does not close it, so a following '## ' still does not terminate", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "```",
+            "~~~",
+            "## should not terminate: still inside the open ``` fence",
+            "- [ ] more AC content, still inside the ``` fence",
+            "```",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain("## should not terminate: still inside the open ``` fence");
+        expect(body).toContain("more AC content, still inside the ``` fence");
+      });
+
+      test("an unclosed fence in Acceptance Criteria: everything after it stays in the section through EOF, and Rollback Plan still resolves on its own", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "```",
+            "unclosed fence content, never closed before EOF",
+            "## looks like a heading but is inside the still-open fence",
+            "even more content",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain("unclosed fence content, never closed before EOF");
+        expect(body).toContain("## looks like a heading but is inside the still-open fence");
+        expect(body).toContain("even more content");
+        // Rollback Plan is extracted by its own, independent extract_section
+        // call (a fresh awk process re-scanning the file from line 1), so it
+        // still resolves correctly even though AC's own call never terminated.
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+
+      // Same mechanism as cmd_domain_vocab's equivalent case: the fence
+      // toggles are an unconditional pre-block tracked from line 1, so a
+      // fence opened in an EARLIER section (Summary) that is still open when
+      // Acceptance Criteria's own extract_section call reaches its heading
+      // keeps gating that call's terminator too.
+      test("a fence opened above the section being extracted (in Summary) still gates the terminator inside Acceptance Criteria", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "```",
+            "fence opens here in Summary, not closed yet",
+            "",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER, printed even though still inside the carried-over fence",
+            "## fake heading inside that same carried-over fence, must not terminate",
+            "- [ ] more AC content",
+            "```",
+            "- [ ] AC-AFTER-FENCE-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-SUMMARY-MARKER");
+        expect(body).toContain(
+          "GENUINE-AC-MARKER, printed even though still inside the carried-over fence",
+        );
+        expect(body).toContain(
+          "## fake heading inside that same carried-over fence, must not terminate",
+        );
+        expect(body).toContain("more AC content");
+        expect(body).toContain("AC-AFTER-FENCE-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+    });
+
+    // Line-ending axis (AC8/F13): CRLF coverage exists today only for
+    // cmd_domain_vocab — every build_pr_body_file test above uses the
+    // LF-only writeMinimalSpec fixture. This closes the gap for the second
+    // consumer so the axis is complete for both, per decisions.md.
+    describe("line endings — CRLF (T002)", () => {
+      test("a CRLF spec.md extracts all three sections cleanly, with no stray '\\r' in the body", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          "# Feature: Demo\r\n" +
+            "## Summary\r\n" +
+            "GENUINE-SUMMARY-MARKER\r\n" +
+            "## Acceptance Criteria\r\n" +
+            "- [ ] GENUINE-AC-MARKER\r\n" +
+            "## Rollback Plan\r\n" +
+            "GENUINE-ROLLBACK-MARKER\r\n",
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-SUMMARY-MARKER");
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+        expect(body).not.toContain("\r");
+      });
+    });
   });
 
   describe("sdd status — archived vs ready-to-pr (T004)", () => {
@@ -2373,6 +2595,209 @@ describe("sdd CLI smoke tests", () => {
 
         expect(error.status).toBe(3);
         expect(error.stdout.toString()).toBe("");
+      });
+    });
+
+    // T002 / AC4 / AC8 (document-structure axis): extract_section finds
+    // "## <heading>" and reads until the next "^## ", so a "## "-shaped line
+    // INSIDE a fenced code block used to end the section early — reproduced
+    // live against a § Domain rules section whose fence held a "## Code
+    // example" line. Silent: exit 0, content just missing. Fixed with two
+    // independent fence toggles (F9) tracked unconditionally from line 1, so
+    // the terminator only fires outside every fence.
+    describe("document structure — fenced code blocks (T002)", () => {
+      test("no fence at all: output is byte-identical to the unfenced case (control)", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          "# Conventions\n\n## Domain rules\n- assign-engine\n- resonador equ_servicio_id=44\n",
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toBe("- assign-engine\n- resonador equ_servicio_id=44\n");
+      });
+
+      test("a '## '-shaped line inside a ``` fence does not terminate the section", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "```",
+            "## Code example inside the fence, must not terminate",
+            "- more vocab still inside the fence",
+            "```",
+            "- vocab after the fence closes",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- real vocab before the fence");
+        expect(output).toContain("## Code example inside the fence, must not terminate");
+        expect(output).toContain("- more vocab still inside the fence");
+        expect(output).toContain("- vocab after the fence closes");
+        expect(output).not.toContain("should not appear");
+      });
+
+      test("a '## '-shaped line inside a ~~~ fence does not terminate the section", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "~~~",
+            "## Code example inside the tilde fence, must not terminate",
+            "- more vocab still inside the fence",
+            "~~~",
+            "- vocab after the fence closes",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- real vocab before the fence");
+        expect(output).toContain("## Code example inside the tilde fence, must not terminate");
+        expect(output).toContain("- more vocab still inside the fence");
+        expect(output).toContain("- vocab after the fence closes");
+        expect(output).not.toContain("should not appear");
+      });
+
+      // F9: a single shared boolean would let a literal '~~~' line INSIDE an
+      // open ``` block flip state to "closed", so the very next '## ' line
+      // would then wrongly terminate the section — the opposite of the
+      // "when unsure, cut too little" tie-breaker. Two independent toggles
+      // keep the ``` fence open regardless of what the ~~~ toggle does.
+      test("a literal '~~~' line inside an open ``` fence does not close it, so a following '## ' still does not terminate", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "```",
+            "~~~",
+            "## should not terminate: still inside the open ``` fence",
+            "- vocab after the fake heading, still inside the ``` fence",
+            "```",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- real vocab before the fence");
+        expect(output).toContain("## should not terminate: still inside the open ``` fence");
+        expect(output).toContain("- vocab after the fake heading, still inside the ``` fence");
+      });
+
+      test("an unclosed fence: everything after it stays in the section through EOF", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "```",
+            "unclosed fence content",
+            "## looks like a heading but is inside the still-open fence",
+            "even more content, never closed before EOF",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- real vocab before the fence");
+        expect(output).toContain("unclosed fence content");
+        expect(output).toContain("## looks like a heading but is inside the still-open fence");
+        expect(output).toContain("even more content, never closed before EOF");
+      });
+
+      // The fence tracking is an unconditional pre-block (alongside the CRLF
+      // strip), so state carries from line 1 regardless of `found` — a fence
+      // opened in an EARLIER section, still open when the target heading is
+      // reached, must keep gating the terminator inside the target section too.
+      test("a fence opened above the heading being extracted still gates the terminator inside the target section", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Naming",
+            "kebab-case, and a fence opens here without closing before Domain rules:",
+            "```",
+            "still open fence content, carried across the heading below",
+            "",
+            "## Domain rules",
+            "- real vocab, printed even though we're still inside the carried-over fence",
+            "## fake heading also inside that same carried-over fence, must not terminate",
+            "- more vocab",
+            "```",
+            "- vocab after the fence actually closes",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).not.toContain("kebab-case");
+        expect(output).toContain(
+          "- real vocab, printed even though we're still inside the carried-over fence",
+        );
+        expect(output).toContain(
+          "## fake heading also inside that same carried-over fence, must not terminate",
+        );
+        expect(output).toContain("- more vocab");
+        expect(output).toContain("- vocab after the fence actually closes");
+        expect(output).not.toContain("should not appear");
       });
     });
   });
