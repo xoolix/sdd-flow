@@ -1026,26 +1026,43 @@ PR_BODY_MAX_CHARS=60000
 # A "## "-shaped line INSIDE a fenced code block used to end the section
 # early — reproduced live against a § Domain rules section whose fence held
 # a "## Code example" line, exit 0 with the real content silently missing.
-# Fixed with two independent fence toggles (in_backtick_fence/in_tilde_fence,
-# discovery F9), unconditional like the CRLF strip above so state is tracked
-# from line 1 regardless of whether `found` is set yet — that's what makes a
-# fence opened BEFORE the heading still gate the terminator once inside the
-# section. Two toggles, never one shared boolean: with a single flag, a
-# literal '~~~' line appearing inside an open ``` block would flip state to
-# "closed", and a following "## " would then terminate early — the opposite
-# of this feature's tie-breaker (when unsure, cut too little). An unclosed
-# fence needs no extra code: a toggle never flipped back stays set through
-# EOF, so the terminator never fires again and the rest counts as "inside" —
-# the correct fail-direction, since cutting too little is visible while
-# cutting too much vanishes silently with exit 0.
+#
+# `fence` is ONE variable holding the delimiter of the currently open fence
+# ("```", "~~~", or "" when closed) — not two independent booleans. CommonMark
+# closes a fence only with a fence of the SAME character, so a `~~~` line
+# while `fence` is "```" is just literal text; two shared-nothing toggles
+# would instead flip their own state regardless of which fence is actually
+# open, and a stray never-repeated tilde would then stick "closed" forever
+# (`index($0, fence) == 1` matches on the delimiter, not the whole line, so a
+# ```js opener still closes on a bare ```).
+#
+# Both the terminator AND the heading match itself are gated on `fence == ""`
+# — a heading-shaped line inside a fence is fenced example text either way,
+# whether it's the one ending the section or the one that looks like it
+# starts the sought section. Recognizing it as real in either direction hands
+# a caller fabricated content at exit 0 — this feature's failure mode, just
+# at the start of a section instead of the end.
+#
+# The fence check is unconditional, like the CRLF strip above, so state is
+# tracked from line 1 regardless of `found` — a fence opened in an earlier,
+# unrelated section still gates the sought heading if still open when that
+# line is reached. An unclosed fence needs no extra code: `fence` never
+# flipped back holds through EOF, so nothing after it — headings included —
+# counts as real structure, same as an unterminated fence in real CommonMark.
 extract_section() {
   local file="$1" heading="## $2"
   awk -v heading="$heading" '
     { sub(/\r$/, "") }
-    /^```/ { in_backtick_fence = !in_backtick_fence }
-    /^~~~/ { in_tilde_fence = !in_tilde_fence }
-    $0 == heading { found=1; next }
-    found && !in_backtick_fence && !in_tilde_fence && /^## / { exit }
+    {
+      if (fence == "") {
+        if ($0 ~ /^```/)      fence = "```"
+        else if ($0 ~ /^~~~/) fence = "~~~"
+      } else if (index($0, fence) == 1) {
+        fence = ""
+      }
+    }
+    fence == "" && $0 == heading { found=1; next }
+    found && fence == "" && /^## / { exit }
     found { print }
   ' "$file"
 }
