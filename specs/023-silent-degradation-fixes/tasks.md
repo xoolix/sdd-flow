@@ -24,7 +24,7 @@
   - verifies: AC6
   - touches: .claude/agents/sdd-simplify-code.md, tests/sdd.test.js
 
-- [ ] **T005 [AFK] `sdd-designer` uses the vocabulary `plan-feature` already resolved**: In the discovery-resume path, `sdd-designer.md` currently re-runs `sdd domain-vocab` itself and falls back, on failure, to wording naming "exploration findings" that don't exist on that path (Step 4 is skipped). Use the vocabulary Step 2.5 already resolved and passed in, matching `plan-feature/SKILL.md`'s own correct fallback (spec.md, not exploration findings). Updates `tests/sdd.test.js:1810-1827` in the same slice — it asserts the buggy phrase today and must assert the corrected one.
+- [x] **T005 [AFK] `sdd-designer` uses the vocabulary `plan-feature` already resolved**: In the discovery-resume path, `sdd-designer.md` currently re-runs `sdd domain-vocab` itself and falls back, on failure, to wording naming "exploration findings" that don't exist on that path (Step 4 is skipped). Use the vocabulary Step 2.5 already resolved and passed in, matching `plan-feature/SKILL.md`'s own correct fallback (spec.md, not exploration findings). Updates `tests/sdd.test.js:1810-1827` in the same slice — it asserts the buggy phrase today and must assert the corrected one.
   - blocked_by: none
   - verifies: AC7
   - touches: .claude/agents/sdd-designer.md, tests/sdd.test.js

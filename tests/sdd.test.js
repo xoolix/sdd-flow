@@ -2370,20 +2370,39 @@ describe("sdd CLI smoke tests", () => {
     expect(initProject).toContain("If `conventions.md` already has non-template content, ask the user before overwriting.");
   });
 
-  test("sdd-designer resolves domain vocabulary via `sdd domain-vocab`, not grep, before filling domain sections (T006)", () => {
+  test("sdd-designer uses the domain vocabulary plan-feature/SKILL.md Step 2.5 already resolved, falling back to spec.md — never exploration findings (023 T005, refines T006)", () => {
     const designer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-designer.md"), "utf8");
 
     // Wiring regression guard, not behavioral coverage — asserts the prose instruction
     // exists, not that an agent follows it (ADR 0003's own caveat).
 
-    // Sourcing mechanism changed to the CLI subcommand; fallback target is unchanged
-    // (still the exploration findings this agent was already given).
-    expect(designer).toContain("run `sdd domain-vocab`");
-    expect(designer).toContain("derive names from the exploration findings provided");
+    // The designer must not re-resolve vocabulary itself anymore: the orchestrator
+    // (plan-feature/SKILL.md Step 2.5) already ran `sdd domain-vocab` once, before
+    // this agent is even launched, and hands the result over. Re-running the
+    // command here is exactly the regression this slice removes. (Note: matching
+    // on "run `sdd domain-vocab`" alone would be fooled by "re-run `sdd
+    // domain-vocab`" in the fix's own wording — "re-run" contains "run" as a
+    // substring — so this pins the specific old instruction sentence instead.)
+    expect(designer).not.toContain(
+      "Before filling any domain/module section (Domain analysis summary, Touched areas), run `sdd domain-vocab`",
+    );
+    expect(designer).toContain("do not re-run `sdd domain-vocab` yourself");
+    expect(designer).toContain("Step 2.5");
+    expect(designer).toContain("already resolved");
+
+    // Fallback target changed from exploration findings — which don't exist on the
+    // discovery-resume path, since Step 4 (Explore agents) is skipped there (021
+    // took exactly this path) — to `spec.md`, matching plan-feature/SKILL.md's own
+    // fallback. Both assertions matter: the positive one fails if the spec.md
+    // fallback is dropped or reworded away; the negative one fails the instant the
+    // old exploration-findings fallback text is reintroduced verbatim.
+    expect(designer).toContain("derive names from `spec.md`");
+    expect(designer).not.toContain("derive names from the exploration findings provided");
+
     expect(designer).not.toContain("grep `.claude/rules/conventions.md` for `## Domain rules`");
 
     // The now-false "CLI never does" claim is gone, replaced by ADR 0003's wording —
-    // same voice as T005's plan-feature/SKILL.md copy (the fourth copy of this idea).
+    // same voice as plan-feature/SKILL.md's copy of this idea.
     expect(designer).not.toContain("the agent reads the rules file directly, the CLI never does");
     expect(designer).toContain("Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`)");
 

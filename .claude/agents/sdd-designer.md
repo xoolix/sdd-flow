@@ -13,6 +13,7 @@ You are an EXECUTOR. Design the technical plan from the inputs provided. Do NOT 
 
 The orchestrator (main Claude executing `plan-feature/SKILL.md`) passes you:
 - The feature spec (full content)
+- Domain vocabulary already resolved in Step 2.5 (or its spec-derived fallback)
 - Exploration findings from `sdd-explore-agent` invocations
 - `discovery.md` content (if resuming after a Discovery Checkpoint)
 
@@ -22,7 +23,7 @@ Feature-id: `$ARGUMENTS`
 
 Create `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base.
 
-**Domain vocabulary.** Before filling any domain/module section (Domain analysis summary, Touched areas), run `sdd domain-vocab`. Exit 0 with output ⇒ use that vocabulary; exit non-zero, or the command unavailable ⇒ derive names from the exploration findings provided. Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `auto-commit` knob in `git.md`) directly.
+**Domain vocabulary.** The orchestrator already resolved this in `plan-feature/SKILL.md` Step 2.5, before launching you, and passes the result in above — use it as given for any domain/module section (Domain analysis summary, Touched areas); do not re-run `sdd domain-vocab` yourself. If none was passed (this agent invoked outside that flow), derive names from `spec.md` instead — never from exploration findings: the discovery-resume path skips Step 4 (Explore agents) entirely, so on that path those findings don't exist (021 took exactly this path). Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `auto-commit` knob in `git.md`) directly.
 
 Fill in:
 
