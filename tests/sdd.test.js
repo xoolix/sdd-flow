@@ -585,9 +585,17 @@ describe("sdd CLI smoke tests", () => {
     expect(archiveFeature).toContain("### 3.6. Print the PR gate commands");
     expect(archiveFeature).toContain("sdd base-branch $ARGUMENTS");
 
-    // The two literal commands the human is meant to copy-paste, verbatim.
+    // The two literal commands the human is meant to copy-paste, verbatim --
+    // and in this relative order. Independent toContain() checks (the previous
+    // shape of this test) don't pin order: swapping the prose so `gh pr create`
+    // reads before `git push` would still pass both, even though it's
+    // operationally backwards -- you cannot open a PR for a branch that was
+    // never pushed (re-review cycle 2, low finding).
     expect(archiveFeature).toContain("`git push -u origin HEAD`");
     expect(archiveFeature).toContain("`gh pr create --draft --base <base>`");
+    expect(archiveFeature.indexOf("`git push -u origin HEAD`")).toBeLessThan(
+      archiveFeature.indexOf("`gh pr create --draft --base <base>`"),
+    );
 
     // Success substitutes the resolved base; failure still prints both commands with
     // <base> left unresolved -- a copyable command with a hole beats printing nothing.
