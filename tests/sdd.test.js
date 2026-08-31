@@ -52,6 +52,25 @@ function sddFail(args, options) {
   throw new Error(`expected "sdd ${args.join(" ")}" to fail, but it exited 0`);
 }
 
+// Filters the current PATH down to directories that do NOT contain a `node`
+// executable, so a test can prove bin/sdd behaves correctly with Node off
+// PATH without depending on this machine's real toolchain layout. 024
+// removed bin/sdd's only Node dependency (extract_section); this helper is
+// what the resulting "the full suite passes with Node off PATH" test drives.
+function pathWithoutNode() {
+  const dirs = (process.env.PATH || "").split(path.delimiter);
+  return dirs
+    .filter((dir) => {
+      try {
+        fs.accessSync(path.join(dir, "node"), fs.constants.X_OK);
+        return false;
+      } catch {
+        return true;
+      }
+    })
+    .join(path.delimiter);
+}
+
 // Resolves a feature's spec directory the same way bin/sdd's resolve_feature_dir
 // does: specs/<feature-id> while the feature is active, else the archived
 // specs/archive/<date>-<feature-id> match once /archive-feature has moved it.
@@ -89,84 +108,6 @@ function parseTemplateLine(line) {
   return tokens.map((tok) => (tok.startsWith('"') && tok.endsWith('"') ? tok.slice(1, -1) : tok));
 }
 
-// Sources bin/sdd's function definitions into a disposable bash process and runs the
-// real build_pr_body_file (bin/sdd's "open-pr" section, which calls extract_section
-// and, since 022's dogfood fix, append_decisions_capped) against featureDir, returning
-// the PR body it builds. This is the actual shipped code path, not a reimplementation
-// of the awk matcher or the cap arithmetic. Going through `sdd open-pr` itself isn't
-// possible here: its gh/remote pre-flight fails before ever reaching build_pr_body_file
-// in a temp repo with no real GitHub remote.
-function buildPrBodyViaRealPath(featureDir) {
-  // $0 is set to the real sddBin path (not a placeholder) so bin/sdd's own
-  // SDD_HOME resolution (readlink -f "$0" / realpath "$0") resolves cleanly.
-  const script = 'source "$0" help >/dev/null; build_pr_body_file "$1"';
-  const bodyFilePath = execFileSync("bash", ["-c", script, sddBin, featureDir], {
-    encoding: "utf8",
-  }).trim();
-  return fs.readFileSync(bodyFilePath, "utf8");
-}
-
-// Companion to buildPrBodyViaRealPath above, for the failure path: that
-// function assumes build_pr_body_file succeeds and reads whatever path it
-// printed. Here we need the function's own exit status instead -- captured
-// via an `if` condition, one of the few contexts `set -e` does NOT abort
-// on, so bin/sdd's sourced `set -euo pipefail` doesn't kill the script
-// before `$?` can be read (review fix cycle 3: build_pr_body_file must
-// itself return non-zero on an extract_section failure, since that's the
-// only way cmd_open_pr's real `body_file="$(build_pr_body_file ...)"`
-// assignment aborts under set -e).
-function buildPrBodyFileExitStatus(featureDir) {
-  const script =
-    'source "$0" help >/dev/null; ' +
-    'if out="$(build_pr_body_file "$1")"; then printf "0:%s" "$out"; else printf "%s:" "$?"; fi';
-  const result = execFileSync("bash", ["-c", script, sddBin, featureDir], {
-    encoding: "utf8",
-  });
-  const sep = result.indexOf(":");
-  return { status: Number(result.slice(0, sep)), bodyFilePath: result.slice(sep + 1) };
-}
-
-// Sources bin/sdd and calls the real extract_section directly against a file,
-// bypassing build_pr_body_file's Summary/Acceptance Criteria/Rollback Plan
-// assembly entirely. Used where a fence-model assertion needs to pin ONE
-// section's extraction in isolation -- e.g. proving a fenced heading is
-// correctly rejected with nothing to fall back on -- without the surrounding
-// sections' own (independent) extraction muddying what's being asserted.
-function extractSectionViaRealPath(file, heading) {
-  const script = 'source "$0" help >/dev/null; extract_section "$1" "$2"';
-  return execFileSync("bash", ["-c", script, sddBin, file, heading], {
-    encoding: "utf8",
-  });
-}
-
-// A spec.md with exactly one line per section (no blank line before the next
-// "## " heading), so extract_section's output per section is deterministic
-// down to the byte -- lets a test assert an exact expected PR body instead of
-// just `toContain`. Used by the build_pr_body_file / decisions.md cap tests.
-function writeMinimalSpec(featureDir) {
-  fs.writeFileSync(
-    path.join(featureDir, "spec.md"),
-    "# Feature: Demo\n" +
-      "## Summary\n" +
-      "GENUINE-SUMMARY-MARKER\n" +
-      "## Acceptance Criteria\n" +
-      "- [ ] GENUINE-AC-MARKER\n" +
-      "## Rollback Plan\n" +
-      "GENUINE-ROLLBACK-MARKER\n",
-  );
-}
-
-// Builds a decisions.md well over GitHub's PR body limit without committing a
-// fixture file: `count` fixed-width numbered lines, each individually
-// greppable, so a test can tell exactly which lines survived a cap.
-function makeOversizedDecisions(count) {
-  const lines = [];
-  for (let i = 0; i < count; i++) {
-    lines.push(`LINE-${String(i).padStart(6, "0")} ` + "x".repeat(60));
-  }
-  return lines.join("\n") + "\n";
-}
-
 // Extracts the single fenced command line from sdd-archive-feature.md's
 // Step 3.5, the same block T007's test parses.
 function archiveStep35Line() {
@@ -189,6 +130,18 @@ describe("sdd CLI smoke tests", () => {
     });
 
     expect(output.trim()).toMatch(/^sdd v\d+\.\d+\.\d+$/);
+  });
+
+  test("open-pr no longer exists: unknown command in dispatch, and usage() does not list it (024 AC1)", () => {
+    const project = makeTempProject();
+
+    const error = sddFail(["open-pr", "001-demo"], { cwd: project });
+
+    expect(error.status).toBe(1);
+    expect(error.stderr).toContain("Unknown command");
+
+    const help = execFileSync(sddBin, ["help"], { cwd: project, encoding: "utf8" });
+    expect(help).not.toContain("open-pr");
   });
 
   test("reports planned status for a feature with unchecked tasks", () => {
@@ -442,12 +395,11 @@ describe("sdd CLI smoke tests", () => {
     expect(gitMd).toContain("docs/adr/0002-sdd-git-write-boundary.md");
 
     // New policy: phases commit their own work per validated slice; nothing pushes.
+    // 024 removes the `sdd open-pr` gate command — pushing and opening a PR are
+    // manual, human-run steps now (no CLI command left to pin here).
     expect(gitMd).toContain("sdd commit-slice");
     expect(gitMd).toContain("Nothing is pushed during development");
-
-    // The human-confirmed PR gate.
-    expect(gitMd).toContain("sdd open-pr <feature-id>");
-    expect(gitMd).toContain("draft");
+    expect(gitMd).not.toContain("sdd open-pr");
 
     // Auto-commit knob, mirroring testing.md's tdd: knob shape.
     expect(gitMd).toContain("auto-commit: on|off");
@@ -1765,941 +1717,7 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
-  describe("sdd open-pr", () => {
-    // Filters the current PATH down to directories that do NOT contain a `gh`
-    // executable, so the pre-flight "gh present on PATH" check deterministically
-    // fails without depending on this machine's real gh auth state (AC6).
-    function pathWithoutGh() {
-      const dirs = (process.env.PATH || "").split(path.delimiter);
-      return dirs
-        .filter((dir) => {
-          try {
-            fs.accessSync(path.join(dir, "gh"), fs.constants.X_OK);
-            return false;
-          } catch {
-            return true;
-          }
-        })
-        .join(path.delimiter);
-    }
-
-    // A real local bare repo used as "origin" so a push can be verified to have
-    // (not) happened by inspecting its refs, without touching any network.
-    function makeBareRemote() {
-      const remoteDir = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-remote-"));
-      execFileSync("git", ["init", "--bare", "-q", remoteDir]);
-      return remoteDir;
-    }
-
-    // Mirrors pathWithoutGh() above, but for `node` — used to reproduce
-    // build_pr_body_file's real failure mode (extract_section's own
-    // "Node.js ... not found on PATH" guard) through the actual `sdd
-    // open-pr` call shape, not a direct build_pr_body_file call (review fix
-    // cycle 3: the direct-call harness, buildPrBodyViaRealPath below, is
-    // exactly what let this defect ship through two prior review cycles).
-    function pathWithoutNode() {
-      const dirs = (process.env.PATH || "").split(path.delimiter);
-      return dirs
-        .filter((dir) => {
-          try {
-            fs.accessSync(path.join(dir, "node"), fs.constants.X_OK);
-            return false;
-          } catch {
-            return true;
-          }
-        })
-        .join(path.delimiter);
-    }
-
-    // A minimal fake `gh` on its own directory, prepended ahead of the real
-    // PATH, so the "Node absent" end-to-end test below can drive `sdd
-    // open-pr` past the gh-on-PATH / gh-auth-status / existing-PR-view
-    // pre-flight checks deterministically -- without depending on this
-    // machine's real `gh auth login` state (which pathWithoutNode() cannot
-    // guarantee: on a machine where `node` and `gh` are installed side by
-    // side, filtering out every directory that contains `node` would also
-    // remove the real `gh`).
-    function fakeGhDir() {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-fake-gh-"));
-      const ghPath = path.join(dir, "gh");
-      fs.writeFileSync(
-        ghPath,
-        "#!/bin/sh\n" +
-          'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then exit 0; fi\n' +
-          'if [ "$1" = "pr" ] && [ "$2" = "view" ]; then exit 1; fi\n' +
-          "exit 1\n",
-      );
-      fs.chmodSync(ghPath, 0o755);
-      return dir;
-    }
-
-    test("exits non-zero and prints usage when feature-id is missing", () => {
-      const project = makeTempProject();
-
-      const error = sddFail(["open-pr"], { cwd: project });
-
-      expect(error.status).toBe(2);
-      expect(error.stderr).toContain("open-pr");
-    });
-
-    test("exits 3 and prints the manual command when not on the feature branch", () => {
-      const project = makeTempProject();
-      seedCommit(project);
-      // Never switched to feature/001-demo — still on the default branch.
-
-      const error = sddFail(["open-pr", "001-demo"], { cwd: project });
-
-      expect(error.status).toBe(3);
-      expect(error.stderr).toContain("feature/001-demo");
-      expect(error.stderr).toContain("git push -u origin HEAD");
-      expect(error.stderr).toContain("gh pr create --draft");
-      expect(fs.existsSync(path.join(project, "specs", "001-demo", ".pr-opened"))).toBe(false);
-    });
-
-    test("exits 3, pushes nothing, and writes no sentinel when gh is absent from PATH (AC6)", () => {
-      const project = makeTempProject();
-      seedCommit(project);
-      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
-      const remoteDir = makeBareRemote();
-      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: project });
-
-      const error = sddFail(["open-pr", "001-demo"], {
-        cwd: project,
-        env: { ...process.env, PATH: pathWithoutGh() },
-      });
-
-      expect(error.status).toBe(3);
-      expect(error.stderr.toLowerCase()).toContain("gh");
-      expect(error.stderr).toContain("git push -u origin HEAD");
-      expect(error.stderr).toContain("gh pr create --draft");
-
-      // No push happened — the bare remote has no refs at all.
-      const remoteRefs = execFileSync("git", ["ls-remote", remoteDir], { encoding: "utf8" }).trim();
-      expect(remoteRefs).toBe("");
-
-      expect(fs.existsSync(path.join(project, "specs", "001-demo", ".pr-opened"))).toBe(false);
-    });
-
-    // Review fix cycle 3 (JUDGMENT-DAY-HIGH (3)): build_pr_body_file's
-    // extract_section calls run inside a `{ ... } > "$body_file"` group,
-    // then the function's LAST statement is a `printf` that always
-    // succeeds -- so a mid-group extract_section failure (Node absent from
-    // PATH, reproduced here; an unreadable spec file, reproduced below) was
-    // silently swallowed and build_pr_body_file returned 0 with a body
-    // whose Summary/Acceptance Criteria/Rollback Plan sections were all
-    // empty. cmd_open_pr's `body_file="$(build_pr_body_file "$feature_dir")"`
-    // then pushed and opened a PR on that broken body with no visible
-    // signal. This goes through the REAL nested call shape cmd_open_pr
-    // uses -- not buildPrBodyViaRealPath's direct call below, which is the
-    // convenient-but-unrepresentative harness that let this ship through
-    // two review cycles (both reviewers named the mechanism explicitly).
-    test("sdd open-pr exits non-zero, pushes nothing, and writes no sentinel when Node is absent from PATH (AC4/AC8, real nested call shape)", () => {
-      const project = makeTempProject();
-      writeMinimalSpec(path.join(project, "specs", "001-demo"));
-      seedCommit(project);
-      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
-      const remoteDir = makeBareRemote();
-      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: project });
-
-      const ghDir = fakeGhDir();
-      const testPath = [ghDir, pathWithoutNode()].join(path.delimiter);
-
-      const error = sddFail(["open-pr", "001-demo"], {
-        cwd: project,
-        env: { ...process.env, PATH: testPath },
-      });
-
-      expect(error.status).not.toBe(0);
-
-      // No push happened — the bare remote has no refs at all.
-      const remoteRefs = execFileSync("git", ["ls-remote", remoteDir], { encoding: "utf8" }).trim();
-      expect(remoteRefs).toBe("");
-
-      expect(fs.existsSync(path.join(project, "specs", "001-demo", ".pr-opened"))).toBe(false);
-    });
-
-    test("build_pr_body_file itself returns non-zero when a spec section cannot be read -- not just when Node is absent (AC4/AC8)", () => {
-      const project = makeTempProject();
-      const featureDir = path.join(project, "specs", "001-demo");
-      writeMinimalSpec(featureDir);
-      const specFile = path.join(featureDir, "spec.md");
-      fs.chmodSync(specFile, 0o000);
-
-      let result;
-      try {
-        result = buildPrBodyFileExitStatus(featureDir);
-      } finally {
-        fs.chmodSync(specFile, 0o644);
-      }
-
-      expect(result.status).not.toBe(0);
-      // On failure, build_pr_body_file must not print a body-file path at
-      // all -- and must clean up the temp file it created, not leave a
-      // partial body behind.
-      expect(result.bodyFilePath).toBe("");
-    });
-
-    test("exits 3 and reports feature not found when the feature dir cannot be resolved", () => {
-      const project = makeTempProject();
-      seedCommit(project);
-      execFileSync(sddBin, ["branch", "999-missing"], { cwd: project, encoding: "utf8" });
-
-      const error = sddFail(["open-pr", "999-missing"], { cwd: project });
-
-      expect(error.status).toBe(3);
-      expect(error.stderr).toContain("feature not found");
-    });
-
-    // 022 dogfood fix: `sdd open-pr` pushed the branch and then failed at `gh pr
-    // create` because the assembled body (spec sections + decisions.md verbatim)
-    // exceeded GitHub's 65536-character hard limit -- decisions.md is append-only
-    // and grows every review cycle, so nothing bounds it. GitHub's limit is an
-    // external fact, not an implementation detail, so it's named here rather than
-    // inlined as a bare number.
-    describe("build_pr_body_file caps decisions.md so the body never exceeds GitHub's PR body limit", () => {
-      const GITHUB_PR_BODY_LIMIT = 65536;
-
-      test("below the cap, the body is byte-identical to the uncapped assembly (no-op)", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        writeMinimalSpec(featureDir);
-        const decisionsContent = "# Decisions\n\n## Entry 1\nA short, ordinary decision.\n";
-        fs.writeFileSync(path.join(featureDir, "decisions.md"), decisionsContent);
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        const expectedBody =
-          "## Summary\n" +
-          "GENUINE-SUMMARY-MARKER\n" +
-          "\n## Acceptance Criteria\n" +
-          "- [ ] GENUINE-AC-MARKER\n" +
-          "\n## Rollback Plan\n" +
-          "GENUINE-ROLLBACK-MARKER\n" +
-          "\n## Decisions\n" +
-          decisionsContent;
-
-        expect(body).toBe(expectedBody);
-      });
-
-      test("an oversized decisions.md is capped under GitHub's limit, with real headroom, and carries a truncation marker naming the file", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        writeMinimalSpec(featureDir);
-        const decisionsPath = path.join(featureDir, "decisions.md");
-        fs.writeFileSync(decisionsPath, makeOversizedDecisions(3000));
-
-        // Sanity: the fixture itself must actually be over the limit, or this
-        // test would pass for the wrong reason.
-        expect(fs.statSync(decisionsPath).size).toBeGreaterThan(GITHUB_PR_BODY_LIMIT);
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body.length).toBeLessThan(GITHUB_PR_BODY_LIMIT);
-        // Real headroom, not a graze against the wire.
-        expect(GITHUB_PR_BODY_LIMIT - body.length).toBeGreaterThan(1000);
-
-        expect(body).toMatch(/truncated/i);
-        expect(body).toContain(decisionsPath);
-      });
-
-      test("truncation keeps the tail (most recent decisions), drops the head, and cuts on a line boundary", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        writeMinimalSpec(featureDir);
-        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        // Oldest entry (line 0, chronologically first) was dropped...
-        expect(body).not.toContain("LINE-000000 ");
-        // ...but the newest entry (last line, chronologically most recent) survived.
-        expect(body).toContain("LINE-002999 ");
-
-        // Whatever text immediately follows the truncation marker is a full,
-        // untouched numbered line -- not a fragment beginning mid-line.
-        const afterMarker = body.slice(body.search(/truncated/i));
-        const firstKeptLine = afterMarker.split("\n").find((line) => line.startsWith("LINE-"));
-        expect(firstKeptLine).toMatch(/^LINE-\d{6} x+$/);
-      });
-
-      // Regression for review fix 1 (022): the marker was built with a
-      // trailing "\n\n" in its printf format, but storing it via `$(...)`
-      // strips ALL trailing newlines from command substitution -- so the
-      // marker was written with zero trailing newlines and fused onto the
-      // same physical line as the first kept line. A `toContain`/`toMatch`
-      // check on the marker text alone (the prior test above) can't catch
-      // this: it stays green whether or not a line break follows the marker.
-      // This test asserts the marker is its own physical line, not just present.
-      test("the truncation marker occupies its own line, separate from the first kept line", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        writeMinimalSpec(featureDir);
-        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
-
-        const body = buildPrBodyViaRealPath(featureDir);
-        const lines = body.split("\n");
-        const markerLineIndex = lines.findIndex((line) => /truncated/i.test(line));
-
-        expect(markerLineIndex).toBeGreaterThanOrEqual(0);
-        // The marker line must not have absorbed the first kept line's content.
-        expect(lines[markerLineIndex]).not.toMatch(/LINE-\d{6}/);
-        // A blank line separates the marker from the kept text below it...
-        expect(lines[markerLineIndex + 1]).toBe("");
-        // ...so the first kept line starts its own block, untouched.
-        expect(lines[markerLineIndex + 2]).toMatch(/^LINE-\d{6} x+$/);
-      });
-
-      test("spec sections survive intact when decisions.md is truncated", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        writeMinimalSpec(featureDir);
-        fs.writeFileSync(path.join(featureDir, "decisions.md"), makeOversizedDecisions(3000));
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("GENUINE-SUMMARY-MARKER");
-        expect(body).toContain("GENUINE-AC-MARKER");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-      });
-    });
-
-    // T002 / AC4 / AC8 (document-structure axis, second consumer):
-    // build_pr_body_file assembles its three spec sections through the same
-    // extract_section — a "## "-shaped line inside a fence anywhere in
-    // spec.md's Summary/Acceptance Criteria/Rollback Plan truncates the same
-    // way `cmd_domain_vocab` does. Same fix, same fixture shapes, different
-    // consumer, so the axis is proven end to end rather than just in the awk
-    // helper.
-    describe("document structure — fenced code blocks (T002)", () => {
-      test("no fence at all: body is byte-identical to the unfenced assembly (control)", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        writeMinimalSpec(featureDir);
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toBe(
-          "## Summary\n" +
-            "GENUINE-SUMMARY-MARKER\n" +
-            "\n## Acceptance Criteria\n" +
-            "- [ ] GENUINE-AC-MARKER\n" +
-            "\n## Rollback Plan\n" +
-            "GENUINE-ROLLBACK-MARKER\n",
-        );
-      });
-
-      test("a '## '-shaped line inside a ``` fence in Acceptance Criteria does not terminate the section", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        fs.writeFileSync(
-          path.join(featureDir, "spec.md"),
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "```",
-            "## Code example inside the fence, must not terminate",
-            "- [ ] more content still inside the fence",
-            "```",
-            "- [ ] AC-AFTER-FENCE-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("GENUINE-AC-MARKER");
-        expect(body).toContain("## Code example inside the fence, must not terminate");
-        expect(body).toContain("more content still inside the fence");
-        expect(body).toContain("AC-AFTER-FENCE-MARKER");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-      });
-
-      test("a '## '-shaped line inside a ~~~ fence in Acceptance Criteria does not terminate the section", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        fs.writeFileSync(
-          path.join(featureDir, "spec.md"),
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "~~~",
-            "## Code example inside the tilde fence, must not terminate",
-            "- [ ] more content still inside the fence",
-            "~~~",
-            "- [ ] AC-AFTER-FENCE-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("GENUINE-AC-MARKER");
-        expect(body).toContain("## Code example inside the tilde fence, must not terminate");
-        expect(body).toContain("more content still inside the fence");
-        expect(body).toContain("AC-AFTER-FENCE-MARKER");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-      });
-
-      // F9, second consumer: a literal '~~~' line used as content INSIDE an
-      // open ``` block must not close it. The shipped design keys a single
-      // fence_char/fence_len state to the delimiter that opened the fence —
-      // a close only happens on a run of the SAME character at least as
-      // long as the opener — so a ~~~ line while fence_char is "`" is just
-      // literal text and the ``` fence stays open regardless.
-      test("a literal '~~~' line inside an open ``` fence does not close it, so a following '## ' still does not terminate", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        fs.writeFileSync(
-          path.join(featureDir, "spec.md"),
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "```",
-            "~~~",
-            "## should not terminate: still inside the open ``` fence",
-            "- [ ] more AC content, still inside the ``` fence",
-            "```",
-            "",
-          ].join("\n"),
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("GENUINE-AC-MARKER");
-        expect(body).toContain("## should not terminate: still inside the open ``` fence");
-        expect(body).toContain("more AC content, still inside the ``` fence");
-      });
-
-      test("an unclosed fence in Acceptance Criteria: everything after it stays in the section through EOF — including a real heading further down, which a genuinely unterminated fence must also swallow", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "```",
-            "unclosed fence content, never closed before EOF",
-            "## looks like a heading but is inside the still-open fence",
-            "even more content",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        // AC's own extraction over-includes through EOF -- the unclosed fence
-        // makes "## Rollback Plan" / "GENUINE-ROLLBACK-MARKER" fenced example
-        // text as far as AC's own call is concerned, so they show up as part
-        // of AC's (correctly too-generous) captured content.
-        expect(body).toContain("GENUINE-AC-MARKER");
-        expect(body).toContain("unclosed fence content, never closed before EOF");
-        expect(body).toContain("## looks like a heading but is inside the still-open fence");
-        expect(body).toContain("even more content");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-        // But Rollback Plan's OWN, independent extract_section call (a fresh
-        // re-scan of the same file from line 1) never gets to recognize its
-        // heading either: the fence opened earlier in the file is still open
-        // by the time that call reaches "## Rollback Plan" too, so the
-        // fence-gated heading match correctly refuses it. Checked directly
-        // (not via the assembled body, where AC's over-inclusion would hide
-        // this) -- a real, unclosed fence genuinely swallows the rest of a
-        // CommonMark document, including any further headings in it, for
-        // every section's extraction, not just the one it started in.
-        expect(rollbackSection).toBe("");
-      });
-
-      // Coordinator review (defect 1): the heading MATCH itself must be
-      // fence-gated, not just the terminator. Proven here with extract_section
-      // called directly per section, rather than through the assembled body,
-      // so what each call resolves to is unambiguous. The fence opens in
-      // Summary and closes partway through what would be Acceptance
-      // Criteria's content -- unbalanced with respect to the "## Acceptance
-      // Criteria" heading (still open when that line is reached) but balanced
-      // by the time "## Rollback Plan" is reached.
-      test("a fence opened above the section being extracted (in Summary) prevents that occurrence from being recognized, while a later, genuinely un-fenced heading still resolves", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "```",
-            "fence opens here in Summary, not closed yet",
-            "",
-            "## Acceptance Criteria",
-            "- [ ] this occurrence is inside the carried-over fence, not a real heading",
-            "```",
-            "- [ ] AC-AFTER-FENCE-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        // The only "## Acceptance Criteria" line in the file is textually
-        // inside the still-open fence carried over from Summary, so it is
-        // correctly NOT recognized as the section start -- nothing to fall
-        // back on here, so the extraction comes back empty.
-        expect(acSection).toBe("");
-        // "## Rollback Plan" comes after the fence has already closed
-        // (the "```" right before "AC-AFTER-FENCE-MARKER"), so THIS call's
-        // own fresh scan finds it correctly -- proving a fence that opened
-        // long before, in an unrelated section, does not leak into a later,
-        // genuinely un-fenced heading once it has actually closed.
-        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
-      });
-    });
-
-    // JUDGMENT-DAY-HIGH (decisions.md, review fix cycle 1): the prior T002
-    // fix modeled "document structure" as exactly the shapes the authors had
-    // already hit (bare ``` / ~~~ at column 0), so an INDENTED fence — the
-    // ordinary shape of a fenced example nested inside a list item — was
-    // invisible to the tracker, and a fence of 4+ delimiter characters was
-    // normalized to a fixed 3-char string. Both reproduced live. Rather than
-    // patch these two cases, extract_section now derives "what counts as a
-    // fence" from CommonMark's own fenced-code-block grammar: an opening
-    // delimiter is a run of 3+ backticks or tildes indented 0-3 spaces; the
-    // closer needs the SAME character and a run AT LEAST AS LONG as the
-    // opener (not an exact-length match), and may be indented differently
-    // from the opener; an info string may follow the delimiter on the
-    // OPENING line only — a candidate closer carrying one is just content.
-    // These tests enumerate that grammar directly, so extending the axis
-    // later means reading the spec, not the last bug (per decisions.md's
-    // discussion of the judge's finding #4).
-    describe("CommonMark fence grammar (review fix cycle 1)", () => {
-      test("a fence indented 1, 2, or 3 spaces — the ordinary shape nested inside a list item — is still tracked, so a '## '-shaped line inside any of them does not terminate", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        fs.writeFileSync(
-          path.join(featureDir, "spec.md"),
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "1. Fence indented 1 space:",
-            " ```",
-            "## indented-1 heading-shaped line, must not terminate",
-            " ```",
-            "2. Fence indented 2 spaces:",
-            "  ```",
-            "## indented-2 heading-shaped line, must not terminate",
-            "  ```",
-            "3. Fence indented 3 spaces:",
-            "   ```",
-            "## indented-3 heading-shaped line, must not terminate",
-            "   ```",
-            "- [ ] AC-AFTER-INDENTED-FENCES-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("GENUINE-AC-MARKER");
-        expect(body).toContain("## indented-1 heading-shaped line, must not terminate");
-        expect(body).toContain("## indented-2 heading-shaped line, must not terminate");
-        expect(body).toContain("## indented-3 heading-shaped line, must not terminate");
-        expect(body).toContain("AC-AFTER-INDENTED-FENCES-MARKER");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-      });
-
-      test("a fence marker indented 4 spaces is NOT tracked (CommonMark: 4+ spaces is an indented code block, not a fence) — a real heading right after it still terminates, by deliberate design", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "    ```",
-            "    content that looks fenced, but 4-space indentation means",
-            "    this is an indented code block, not a tracked fence",
-            "## TERMINATES HERE: not a real fence, so this heading is real",
-            "- [ ] SHOULD-NOT-APPEAR-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        expect(acSection).toContain("GENUINE-AC-MARKER");
-        expect(acSection).toContain("this is an indented code block, not a tracked fence");
-        expect(acSection).not.toContain("SHOULD-NOT-APPEAR-MARKER");
-        // Rollback Plan resolves normally too -- the 4-space-indented marker
-        // never opened tracked fence state, so nothing is left "stuck open".
-        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
-      });
-
-      test("a 4-backtick fence tolerates an inner triple-backtick line as content -- only a run of 4+ backticks closes it", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        fs.writeFileSync(
-          path.join(featureDir, "spec.md"),
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "````",
-            "```",
-            "## inside the quadruple-backtick fence -- the inner triple does not close it, must not terminate",
-            "````",
-            "- [ ] AC-AFTER-QUAD-FENCE-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("GENUINE-AC-MARKER");
-        expect(body).toContain(
-          "## inside the quadruple-backtick fence -- the inner triple does not close it, must not terminate",
-        );
-        expect(body).toContain("AC-AFTER-QUAD-FENCE-MARKER");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-      });
-
-      test("a closing run longer than the opening also closes it: a 3-backtick fence IS closed by a 4-backtick line, since CommonMark requires the closer to be only 'at least as long', not an exact match", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        fs.writeFileSync(
-          path.join(featureDir, "spec.md"),
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "```",
-            "content inside a triple-backtick fence",
-            "````",
-            "## TERMINATES HERE: the 4-backtick line closed the 3-backtick fence",
-            "- [ ] SHOULD-NOT-APPEAR-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("content inside a triple-backtick fence");
-        expect(body).not.toContain("SHOULD-NOT-APPEAR-MARKER");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-      });
-
-      // Checked via direct extract_section calls (acSection / rollbackSection),
-      // not just `body.toContain`: build_pr_body_file assembles AC and
-      // Rollback Plan from two INDEPENDENT extract_section calls, so if the
-      // fence never actually closes, AC's own call over-includes through
-      // EOF and would still make every `body.toContain` below pass "by
-      // accident" -- proving nothing about whether the close was recognized.
-      // Asserting `acSection` stops before GENUINE-ROLLBACK-MARKER, AND that
-      // Rollback Plan's own fresh scan resolves its heading, is what actually
-      // pins the close.
-      test("a closing fence indented differently from the opening still closes it -- CommonMark checks each fence line's own indentation independently", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "```",
-            "content in a fence opened at column 0",
-            "  ```",
-            "- [ ] AC-AFTER-CLOSE-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        expect(acSection).toContain("content in a fence opened at column 0");
-        expect(acSection).toContain("AC-AFTER-CLOSE-MARKER");
-        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
-        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
-      });
-
-      test("a line that looks like a closing fence but carries an info string does not close -- only a bare delimiter run (optionally followed by spaces) does", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "```",
-            "content before the fake closer",
-            "```js",
-            "still inside -- a closer carrying an info string is not a real closer",
-            "```",
-            "- [ ] AC-AFTER-REAL-CLOSE-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        expect(acSection).toContain("still inside -- a closer carrying an info string is not a real closer");
-        expect(acSection).toContain("AC-AFTER-REAL-CLOSE-MARKER");
-        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
-        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
-      });
-
-      test("tilde equivalents: an indented ~~~ fence is tracked, and a 4-tilde fence tolerates an inner triple-tilde line as content", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        fs.writeFileSync(
-          path.join(featureDir, "spec.md"),
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "1. Tilde fence indented 2 spaces:",
-            "  ~~~",
-            "## indented tilde heading-shaped line, must not terminate",
-            "  ~~~",
-            "~~~~",
-            "~~~",
-            "## inside the quadruple-tilde fence -- the inner triple does not close it, must not terminate",
-            "~~~~",
-            "- [ ] AC-AFTER-TILDE-FENCES-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("## indented tilde heading-shaped line, must not terminate");
-        expect(body).toContain(
-          "## inside the quadruple-tilde fence -- the inner triple does not close it, must not terminate",
-        );
-        expect(body).toContain("AC-AFTER-TILDE-FENCES-MARKER");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-      });
-
-      test("tilde mirror: a closer carrying an info string does not close a ~~~ fence -- only a bare tilde run does", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Summary",
-            "GENUINE-SUMMARY-MARKER",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "~~~",
-            "content before the fake tilde closer",
-            "~~~js",
-            "still inside -- a tilde closer carrying an info string is not a real closer",
-            "~~~",
-            "- [ ] AC-AFTER-REAL-TILDE-CLOSE-MARKER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        expect(acSection).toContain("still inside -- a tilde closer carrying an info string is not a real closer");
-        expect(acSection).toContain("AC-AFTER-REAL-TILDE-CLOSE-MARKER");
-        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
-        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
-      });
-
-      // Judge #6 (review fix cycle 2, JUDGMENT-DAY-HIGH (2)): CommonMark
-      // §4.5 -- "If the info string comes after a backtick fence, it may
-      // not contain any backtick characters." The shipped matcher accepted
-      // this line as a valid opener on run length alone, so the bogus fence
-      // never closes and swallows a real subsequent heading and its content.
-      // Using extractSectionViaRealPath directly on AC and Rollback Plan
-      // (not the assembled body) so the test depends on the close actually
-      // happening, not on the marker text merely appearing somewhere in the
-      // over-included body (the exact false-pass shape review fix cycle 1
-      // already corrected once in this file).
-      test("an opening ``` line with a backtick in its info string is not a fence, so a real heading right after it still terminates the section", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "```code`example",
-            "- [ ] GENUINE-AC-MARKER-AFTER-BOGUS-OPENER",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        expect(acSection).toContain("GENUINE-AC-MARKER-AFTER-BOGUS-OPENER");
-        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
-        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
-      });
-
-      // Judge #7 (review fix cycle 2, JUDGMENT-DAY-HIGH (2)): CommonMark
-      // §4.5 -- a closing delimiter "may be followed only by spaces or
-      // tabs, which are ignored". The shipped trim (`sub(/ +$/, "")`)
-      // stripped spaces only, so a tab-trailing closer never closed and the
-      // section leaked to EOF. Backtick branch.
-      test("a closing ``` line followed by a trailing tab still closes the fence", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "```",
-            "fenced content, ignored",
-            "```\t",
-            "- [ ] GENUINE-AC-MARKER-AFTER-FENCE",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        expect(acSection).toContain("GENUINE-AC-MARKER-AFTER-FENCE");
-        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
-        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
-      });
-
-      // Judge #7, tilde branch -- same tab-trailing-closer defect, mirrored.
-      test("a closing ~~~ line followed by a trailing tab still closes the fence", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        const specFile = path.join(featureDir, "spec.md");
-        fs.writeFileSync(
-          specFile,
-          [
-            "# Feature: Demo",
-            "## Acceptance Criteria",
-            "- [ ] GENUINE-AC-MARKER",
-            "~~~",
-            "fenced content, ignored",
-            "~~~\t",
-            "- [ ] GENUINE-AC-MARKER-AFTER-FENCE",
-            "## Rollback Plan",
-            "GENUINE-ROLLBACK-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
-        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
-
-        expect(acSection).toContain("GENUINE-AC-MARKER-AFTER-FENCE");
-        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
-        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
-      });
-    });
-
-    // Line-ending axis (AC8/F13): CRLF coverage exists today only for
-    // cmd_domain_vocab — every build_pr_body_file test above uses the
-    // LF-only writeMinimalSpec fixture. This closes the gap for the second
-    // consumer so the axis is complete for both, per decisions.md.
-    describe("line endings — CRLF (T002)", () => {
-      test("a CRLF spec.md extracts all three sections cleanly, with no stray '\\r' in the body", () => {
-        const project = makeTempProject();
-        const featureDir = path.join(project, "specs", "001-demo");
-        fs.writeFileSync(
-          path.join(featureDir, "spec.md"),
-          "# Feature: Demo\r\n" +
-            "## Summary\r\n" +
-            "GENUINE-SUMMARY-MARKER\r\n" +
-            "## Acceptance Criteria\r\n" +
-            "- [ ] GENUINE-AC-MARKER\r\n" +
-            "## Rollback Plan\r\n" +
-            "GENUINE-ROLLBACK-MARKER\r\n",
-        );
-
-        const body = buildPrBodyViaRealPath(featureDir);
-
-        expect(body).toContain("GENUINE-SUMMARY-MARKER");
-        expect(body).toContain("GENUINE-AC-MARKER");
-        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
-        expect(body).not.toContain("\r");
-      });
-    });
-  });
-
-  describe("sdd status — archived vs ready-to-pr (T004)", () => {
+  describe("sdd status — archived is unconditional (024 AC6)", () => {
     // Moves 001-demo into specs/archive/YYYY-MM-DD-<id>, exercising the real
     // find-based resolve_feature_dir fallback rather than a shortcut path.
     function archiveFeature(project) {
@@ -2711,35 +1729,33 @@ describe("sdd CLI smoke tests", () => {
       return archiveDir;
     }
 
-    test("reports ready-to-pr for an archived feature with no .pr-opened sentinel", () => {
-      const project = makeTempProject();
-      archiveFeature(project);
-
-      const output = execFileSync(sddBin, ["status", "001-demo"], {
-        cwd: project,
-        encoding: "utf8",
-      });
-
-      const status = JSON.parse(output);
-      expect(status).toMatchObject({
-        feature_id: "001-demo",
-        phase: "ready-to-pr",
-        next_command: "sdd open-pr 001-demo",
-      });
-    });
-
-    test("still reports archived when .pr-opened is present in the archived dir", () => {
+    // 024 removes `ready-to-pr` and its .pr-opened check: is_archived derives
+    // from folder location alone, never the sidecar (plan.md, "Current state").
+    // One test now covers what used to be two — with and without a stray
+    // sentinel — because both must land on the same phase.
+    test("reports archived for an archived feature whether or not a stray .pr-opened sentinel exists", () => {
       const project = makeTempProject();
       const archiveDir = archiveFeature(project);
-      fs.writeFileSync(path.join(archiveDir, ".pr-opened"), "url: https://example.com/pr/1\n");
 
-      const output = execFileSync(sddBin, ["status", "001-demo"], {
+      const withoutSentinel = execFileSync(sddBin, ["status", "001-demo"], {
         cwd: project,
         encoding: "utf8",
       });
+      expect(JSON.parse(withoutSentinel)).toMatchObject({
+        feature_id: "001-demo",
+        phase: "archived",
+        next_command: "(none — feature archived)",
+      });
 
-      const status = JSON.parse(output);
-      expect(status).toMatchObject({
+      // A leftover .pr-opened (e.g. from a pre-024 archive, per spec.md's Edge
+      // Cases) must not change the outcome.
+      fs.writeFileSync(path.join(archiveDir, ".pr-opened"), "url: https://example.com/pr/1\n");
+
+      const withSentinel = execFileSync(sddBin, ["status", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(JSON.parse(withSentinel)).toMatchObject({
         feature_id: "001-demo",
         phase: "archived",
         next_command: "(none — feature archived)",
@@ -2989,10 +2005,7 @@ describe("sdd CLI smoke tests", () => {
       expect(template).not.toContain("conventions.md` § Domain rules");
     });
 
-    test("extract_section still pulls Summary/Acceptance Criteria/Rollback Plan from a spec.md built off the changed template (genuine, not a regression guard)", () => {
-      const project = makeTempProject();
-      const featureDir = path.join(project, "specs", "001-demo");
-
+    test("spec-template.md's Summary/Acceptance Criteria/Rollback Plan placeholders stay independently fillable after the Domains rewrite (genuine, not a regression guard)", () => {
       const template = fs.readFileSync(specTemplatePath, "utf8");
       const filled = template
         .replace(
@@ -3001,7 +2014,7 @@ describe("sdd CLI smoke tests", () => {
         )
         .replace(
           "- [ ] Given [precondition], When [action], Then [expected result]\n- [ ] Given [precondition], When [action], Then [expected result]",
-          "- [ ] Given a filled spec, When extract_section reads it, Then GENUINE-AC-MARKER is returned",
+          "- [ ] Given a filled spec, When its sections are read directly, Then GENUINE-AC-MARKER is present",
         )
         .replace(
           "<!-- How do we revert if something goes wrong? -->",
@@ -3013,13 +2026,29 @@ describe("sdd CLI smoke tests", () => {
       // the assertions below passing for the wrong reason.
       expect(filled).not.toBe(template);
 
-      fs.writeFileSync(path.join(featureDir, "spec.md"), filled);
+      // 024 removes the PR-body extractor this test used to go through --
+      // slice each "## <heading>" section directly off the filled markdown
+      // instead, and assert its own marker landed there and no other
+      // section's marker bled in.
+      // Trailing sentinel guarantees the lazy match below always finds a
+      // closing "## " to stop at, including for the file's last section.
+      const withSentinel = `${filled}\n## `;
+      const section = (heading) => {
+        const match = withSentinel.match(new RegExp(`## ${heading}\\n([\\s\\S]*?)\\n## `));
+        return match ? match[1] : "";
+      };
 
-      const body = buildPrBodyViaRealPath(featureDir);
+      const summary = section("Summary");
+      const acceptanceCriteria = section("Acceptance Criteria");
+      const rollbackPlan = section("Rollback Plan");
 
-      expect(body).toContain("GENUINE-SUMMARY-MARKER");
-      expect(body).toContain("GENUINE-AC-MARKER");
-      expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      expect(summary).toContain("GENUINE-SUMMARY-MARKER");
+      expect(acceptanceCriteria).toContain("GENUINE-AC-MARKER");
+      expect(rollbackPlan).toContain("GENUINE-ROLLBACK-MARKER");
+
+      expect(summary).not.toContain("GENUINE-AC-MARKER");
+      expect(summary).not.toContain("GENUINE-ROLLBACK-MARKER");
+      expect(acceptanceCriteria).not.toContain("GENUINE-ROLLBACK-MARKER");
     });
   });
 

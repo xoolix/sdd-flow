@@ -95,10 +95,6 @@ Usage:
                                  --files <p>... ; --files last)
                                  --moved-from stages the deletion of a path guarded by
                                  'git ls-files --error-unmatch'; never-tracked ⇒ exit 3, named
-  sdd open-pr <feature-id>       Pre-flight (feature branch, gh on PATH, gh auth, remote), then
-                                 push + 'gh pr create --draft' with title/body built from spec.md +
-                                 decisions.md; writes .pr-opened on success only. Pre-flight failure
-                                 pushes nothing and prints the manual command to stderr.
   sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
   sdd domain-vocab               Print .claude/rules/domains.md;
                                  exit 3 (no output) if empty, comment-only, or absent
@@ -1040,15 +1036,6 @@ cmd_commit_slice() {
   return 0
 }
 
-# ─── open-pr ───────────────────────────────────────────────────────
-
-# `gh pr create` rejects a body over GitHub's 65536-character hard limit outright.
-# Budgeted with real headroom below that: Summary/Acceptance Criteria/Rollback
-# Plan are bounded by the spec template, but decisions.md is append-only and
-# grows every review cycle, so it's the part capped when the assembled body
-# would overflow (see append_decisions_capped below).
-PR_BODY_MAX_CHARS=60000
-
 # Lines between an exact "## <heading>" line and the next "## " heading (or
 # EOF), ignoring both inside any CommonMark fenced code block. Thin wrapper
 # around src/extract-section.js (Node) — moved out of awk in review fix
@@ -1073,221 +1060,6 @@ extract_section() {
   node "$SDD_HOME/src/extract-section.js" "$file" "$heading"
 }
 
-# PR title: the "# Feature: <title>" H1 from spec.md (or quick-spec.md for
-# fast-lane), else fall back to the raw feature-id.
-build_pr_title() {
-  local feature_dir="$1" feature_id="$2"
-  local spec_file="$feature_dir/spec.md"
-  [ -f "$spec_file" ] || spec_file="$feature_dir/quick-spec.md"
-
-  if [ -f "$spec_file" ]; then
-    local h1
-    h1="$(head -n1 "$spec_file" | sed 's/^# Feature: //')"
-    if [ -n "$h1" ]; then
-      printf '%s\n' "$h1"
-      return 0
-    fi
-  fi
-  printf '%s\n' "$feature_id"
-}
-
-# Appends decisions_file to body_file, capping the *total* body_file at
-# PR_BODY_MAX_CHARS. decisions.md is chronological and append-only (oldest
-# entries first), so the newest reasoning -- what justifies the code as the PR
-# actually ships it -- sits at the end; that is the higher-value window for a
-# reviewer, so on overflow this keeps the TAIL and drops the head (rationale
-# recorded in decisions.md, not just here). The cut lands on a line boundary:
-# whatever partial line falls at the cut point is dropped rather than kept
-# half-written. Below the budget this is a plain `cat` -- byte-identical to
-# the uncapped assembly, so short bodies are a no-op.
-append_decisions_capped() {
-  local body_file="$1" decisions_file="$2"
-  local used total budget
-  used=$(wc -c < "$body_file")
-  total=$(wc -c < "$decisions_file")
-
-  [ "$total" -eq 0 ] && return 0
-
-  budget=$(( PR_BODY_MAX_CHARS - used ))
-  if [ "$budget" -ge "$total" ]; then
-    cat "$decisions_file" >> "$body_file"
-    return 0
-  fi
-
-  # Marker names the real path so a reader can go read what got cut. Sized and
-  # reserved out of the budget *before* sizing the kept tail, so the marker
-  # itself can never be what pushes the body over the cap. The blank-line
-  # separator written after the marker below is reserved here too (+2): a
-  # bare `printf '%s'` of a `$(...)`-captured marker previously fused the
-  # marker onto the same physical line as the first kept line, because
-  # command substitution strips ALL trailing newlines from its output --
-  # so a trailing "\n\n" in the printf format that built `marker` was
-  # silently discarded before it ever reached the variable (review fix 1).
-  local marker marker_len
-  marker="$(printf '> **Truncated** — %s is %d characters; showing the most recent portion below. Read the full file at `%s`.' \
-    "$(basename "$decisions_file")" "$total" "$decisions_file")"
-  marker_len=$(( ${#marker} + 2 ))
-
-  if [ "$budget" -le "$marker_len" ]; then
-    # Summary/Acceptance Criteria/Rollback Plan alone already fill the budget
-    # (they're supposed to be bounded, so this shouldn't happen in practice).
-    # Deterministic fallback: drop decisions.md entirely -- never a silent,
-    # unmarked partial cut -- rather than grow the body with its size.
-    printf '_decisions.md omitted: no budget left after Summary/Acceptance Criteria/Rollback Plan. Read it at `%s`._\n' \
-      "$decisions_file" >> "$body_file"
-    return 0
-  fi
-
-  local tail_budget skip
-  tail_budget=$(( budget - marker_len ))
-  skip=$(( total - tail_budget ))
-
-  printf '%s\n\n' "$marker" >> "$body_file"
-  tail -c "+$((skip + 1))" "$decisions_file" | tail -n +2 >> "$body_file"
-}
-
-# PR body: Summary + Acceptance Criteria + Rollback Plan from spec.md, plus
-# decisions.md capped via append_decisions_capped so `gh pr create` never sees
-# a body over GitHub's hard limit (human decision: built from spec.md +
-# decisions.md, not `gh pr create --fill`'s commit-derived title/body). Writes
-# to a temp file and prints its path — `gh pr create --body-file` wants a
-# path, not stdin.
-build_pr_body_file() {
-  local feature_dir="$1"
-  local spec_file="$feature_dir/spec.md"
-  [ -f "$spec_file" ] || spec_file="$feature_dir/quick-spec.md"
-
-  local body_file
-  body_file="$(mktemp)"
-
-  # Each extract_section call's own exit status is captured explicitly with
-  # `|| extract_failed=1`. The three calls run inside a `{ ... } > "$body_file"`
-  # group so their stdout lands in the body in order, but a mid-group failure
-  # does NOT make the group itself fail -- the group's own exit status is
-  # whatever its LAST command returns, which here was always the final
-  # (always-succeeding) printf. Left unchecked, that meant this function
-  # returned 0 with a body whose Summary/Acceptance Criteria/Rollback Plan
-  # sections were silently empty whenever extract_section failed -- Node
-  # absent from PATH, or spec_file unreadable, both reproduced -- and
-  # cmd_open_pr's `body_file="$(build_pr_body_file ...)"` then pushed and
-  # opened a PR on that broken body with no visible signal (review fix cycle
-  # 3, decisions.md). `{ }` is a plain command group, not a `( )` subshell,
-  # so `extract_failed` set inside it is still visible once the group closes
-  # -- that's what makes tracking the failure here possible at all.
-  local extract_failed=0
-  {
-    if [ -f "$spec_file" ]; then
-      printf '## Summary\n'
-      extract_section "$spec_file" "Summary" || extract_failed=1
-      printf '\n## Acceptance Criteria\n'
-      extract_section "$spec_file" "Acceptance Criteria" || extract_failed=1
-      printf '\n## Rollback Plan\n'
-      extract_section "$spec_file" "Rollback Plan" || extract_failed=1
-    fi
-  } > "$body_file"
-
-  if [ "$extract_failed" -ne 0 ]; then
-    # Never leave a partial body behind on the failure path.
-    rm -f "$body_file"
-    return 1
-  fi
-
-  if [ -f "$feature_dir/decisions.md" ]; then
-    printf '\n## Decisions\n' >> "$body_file"
-    append_decisions_capped "$body_file" "$feature_dir/decisions.md"
-  fi
-
-  printf '%s\n' "$body_file"
-}
-
-# Written only on success — the durable PR record. NOT gitignored (T007);
-# unlike .simplified it carries no self-invalidation risk.
-write_pr_opened_sentinel() {
-  local feature_dir="$1" url="$2" branch="$3"
-  local head_sha
-  head_sha="$(git rev-parse HEAD)"
-  {
-    printf 'url: %s\n' "$url"
-    printf 'branch: %s\n' "$branch"
-    printf 'head: %s\n' "$head_sha"
-    printf 'date: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } > "$feature_dir/.pr-opened"
-}
-
-cmd_open_pr() {
-  local feature_id="${1:-}"
-
-  if [ -z "$feature_id" ]; then
-    printf 'error: usage: sdd open-pr <feature-id>\n' >&2
-    return 2
-  fi
-
-  # Printed verbatim on any pre-flight failure so the gate stays resumable by hand.
-  local manual_cmd='git push -u origin HEAD && gh pr create --draft --title "<title>" --body-file <body-file>'
-
-  local specs_dir feature_dir
-  specs_dir="$(pwd)/specs"
-  if ! feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
-    printf 'error: feature not found: %s\n' "$feature_id" >&2
-    printf 'manual: %s\n' "$manual_cmd" >&2
-    return 3
-  fi
-
-  # ── Pre-flight, in order: feature branch → gh on PATH → gh auth → remote ──
-  local branch_name="feature/${feature_id}"
-  local current_branch
-  current_branch="$(git branch --show-current 2>/dev/null || true)"
-  if [ "$current_branch" != "$branch_name" ]; then
-    printf 'error: not on %s (currently on %s)\n' "$branch_name" "${current_branch:-a detached HEAD}" >&2
-    printf 'manual: %s\n' "$manual_cmd" >&2
-    return 3
-  fi
-
-  if ! command -v gh >/dev/null 2>&1; then
-    printf 'error: gh CLI not found on PATH\n' >&2
-    printf 'manual: %s\n' "$manual_cmd" >&2
-    return 3
-  fi
-
-  if ! gh auth status >/dev/null 2>&1; then
-    printf 'error: gh auth status failed — run "gh auth login"\n' >&2
-    printf 'manual: %s\n' "$manual_cmd" >&2
-    return 3
-  fi
-
-  if ! git remote get-url origin >/dev/null 2>&1; then
-    printf 'error: no "origin" remote configured\n' >&2
-    printf 'manual: %s\n' "$manual_cmd" >&2
-    return 3
-  fi
-
-  # Reuse an already-open PR for this branch instead of creating a duplicate.
-  local existing_url
-  existing_url="$(gh pr view --json url --jq '.url' 2>/dev/null || true)"
-  if [ -n "$existing_url" ]; then
-    write_pr_opened_sentinel "$feature_dir" "$existing_url" "$branch_name"
-    printf '%s\n' "$existing_url"
-    return 0
-  fi
-
-  local pr_title body_file
-  pr_title="$(build_pr_title "$feature_dir" "$feature_id")"
-  body_file="$(build_pr_body_file "$feature_dir")"
-
-  if ! git push -u origin HEAD; then
-    return 4
-  fi
-
-  local pr_url
-  if ! pr_url="$(gh pr create --draft --title "$pr_title" --body-file "$body_file")"; then
-    return 4
-  fi
-
-  write_pr_opened_sentinel "$feature_dir" "$pr_url" "$branch_name"
-  printf '%s\n' "$pr_url"
-  return 0
-}
-
 # ─── status ────────────────────────────────────────────────────────
 
 # Computes phase, task counts, sentinel freshness, and the next command for
@@ -1305,11 +1077,7 @@ detect_feature_phase() {
   local phase
 
   if $is_archived; then
-    if [ -f "$feature_dir/.pr-opened" ]; then
-      phase="archived"
-    else
-      phase="ready-to-pr"
-    fi
+    phase="archived"
   elif [ ! -f "$feature_dir/spec.md" ] && [ ! -f "$feature_dir/quick-spec.md" ]; then
     phase="missing"
   elif [ ! -f "$feature_dir/plan.md" ] || [ ! -f "$feature_dir/tasks.md" ]; then
@@ -1400,7 +1168,6 @@ detect_feature_phase() {
     ready-to-simplify) next_command="/simplify-code ${feature_id}" ;;
     ready-to-review)   next_command="/review-feature ${feature_id}" ;;
     archived)          next_command="(none — feature archived)" ;;
-    ready-to-pr)       next_command="sdd open-pr ${feature_id}" ;;
     *)                 next_command="(unknown)" ;;
   esac
 
@@ -1580,7 +1347,6 @@ case "${1:-help}" in
   base-branch)  shift; cmd_base_branch "$@" ;;
   branch)       shift; cmd_branch "$@" ;;
   commit-slice) shift; cmd_commit_slice "$@" ;;
-  open-pr)      shift; cmd_open_pr "$@" ;;
   status)       shift; cmd_status "$@" ;;
   domain-vocab) cmd_domain_vocab ;;
   help|--help|-h) usage ;;

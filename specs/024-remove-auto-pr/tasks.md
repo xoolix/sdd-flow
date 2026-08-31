@@ -12,7 +12,7 @@
 
 ### 2. Core
 
-- [ ] **T002 [AFK] Remove the open-pr command and phase**: Delete `cmd_open_pr`, `build_pr_title`, `build_pr_body_file`, `append_decisions_capped`, `write_pr_opened_sentinel`, `PR_BODY_MAX_CHARS` from `bin/sdd` (leave `extract_section` for T003); drop the `usage()` entry and dispatch arm; collapse `detect_feature_phase`'s `.pr-opened`/`ready-to-pr` branch and case arm. Delete `describe("sdd open-pr")` (~933 lines), promoting `pathWithoutNode()` for T003. Rewrite the archived-vs-ready-to-pr status test to assert `archived`. Replace the `buildPrBodyViaRealPath`-based spec-template test with a direct read of spec.md's markers. Strip the PR-gate lines from `git.md` and its template seed.
+- [x] **T002 [AFK] Remove the open-pr command and phase**: Delete `cmd_open_pr`, `build_pr_title`, `build_pr_body_file`, `append_decisions_capped`, `write_pr_opened_sentinel`, `PR_BODY_MAX_CHARS` from `bin/sdd` (leave `extract_section` for T003); drop the `usage()` entry and dispatch arm; collapse `detect_feature_phase`'s `.pr-opened`/`ready-to-pr` branch and case arm. Delete `describe("sdd open-pr")` (~933 lines), promoting `pathWithoutNode()` for T003. Rewrite the archived-vs-ready-to-pr status test to assert `archived`. Replace the `buildPrBodyViaRealPath`-based spec-template test with a direct read of spec.md's markers. Strip the PR-gate lines from `git.md` and its template seed.
   - blocked_by: T001
   - verifies: AC1, AC6
   - touches: bin/sdd, rules, templates, tests

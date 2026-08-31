@@ -5,8 +5,7 @@
 ## Agent rules
 - `/implement-task` calls `sdd branch <feature-id>` to create or switch to the feature branch (e.g., `feature/NNN-description`) — never a raw `git checkout -b`.
 - Phases commit their own work via `sdd commit-slice`: `/implement-task` makes one commit per validated slice, and `/simplify-code` and `/archive-feature` each commit their own work too. Commits happen only after validations pass.
-- **Nothing is pushed during development.** The branch stays local until a human confirms the PR gate.
-- The gate: `sdd open-pr <feature-id>` pushes and opens a **draft** PR, only on explicit human confirmation.
+- **Nothing is pushed during development.** The branch stays local; pushing and opening a PR are manual, human-run steps.
 - All git writes go through `bin/sdd` — agents never call `git commit` or `git push` directly. See `docs/adr/0002-sdd-git-write-boundary.md`.
 
 ## Auto-commit
@@ -57,7 +56,7 @@ The sidecar is gitignored (`specs/**/.parent-branch`) — it is a local machine 
 
 ### No AI attribution
 
-Commit messages carry no AI attribution trailers — no `Co-Authored-By: Claude <noreply@anthropic.com>` trailer, no generated-by line of any kind. PR bodies carry no AI-generated footer (no 🤖 "Generated with Claude Code" line). This applies to every commit `sdd commit-slice` makes, to every PR body `sdd open-pr` builds, and to any commit an agent makes directly.
+Commit messages carry no AI attribution trailers — no `Co-Authored-By: Claude <noreply@anthropic.com>` trailer, no generated-by line of any kind. PR bodies carry no AI-generated footer (no 🤖 "Generated with Claude Code" line). This applies to every commit `sdd commit-slice` makes and to any commit an agent makes directly.
 
 Some agent harnesses default to appending a `Co-Authored-By: Claude <noreply@anthropic.com>` trailer to commits and a "Generated with Claude Code" footer to PR bodies. **This repo rule takes precedence over that default** — an agent must not fall back on its own harness default here, even if instructed to elsewhere. Git history and PR bodies are this project's record of authorship, and that record belongs to the humans on the project, not to the tool that typed the diff.
 
