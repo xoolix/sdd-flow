@@ -45,9 +45,8 @@ Initialize a **per-task retry tracker**: a map of `task-id → retry_count`, sta
 
 Repeat until pipeline is complete, blocked, or escalated:
 
-1. **Detect phase** — same logic as `/sdd-next` Step 2, including both full-flow (`spec.md` + `plan.md` + `tasks.md`) and fast-lane (`quick-spec.md`) features, plus the two post-archive rows keyed off `sdd status <feature-id>`'s `phase` field rather than file existence — post-archive, the feature-id no longer resolves under `specs/<feature-id>/` (F4 in `decisions.md`).
+1. **Detect phase** — same logic as `/sdd-next` Step 2, including both full-flow (`spec.md` + `plan.md` + `tasks.md`) and fast-lane (`quick-spec.md`) features, plus the post-archive row keyed off `sdd status <feature-id>`'s `phase` field rather than file existence — post-archive, the feature-id no longer resolves under `specs/<feature-id>/` (F4 in `decisions.md`).
    - **`phase: archived`** → pipeline complete. Exit the loop and go to Step 3.
-   - **`phase: ready-to-pr`** → **stop; do not confirm the gate yourself.** This is the one carve-out to "never ask for user confirmation" (see Rules). Exit the loop and go to Step 3 — tell the human to run `/sdd-next <feature-id>` to take the gate.
 2. **Launch phase** — known-orchestrator guard, then filesystem-side branch detection.
 
    **Known-orchestrator guard (D-001/D-003 invariant — feature 017)**:
@@ -186,8 +185,6 @@ When the pipeline completes (or is blocked/escalated), output:
 
 If `ESCALATED`, include a diagnostic section with the error output from each failed attempt.
 
-If the loop stopped at the PR gate (`phase: ready-to-pr`), use `Status: BLOCKED` and `Next: /sdd-next <feature-id>` — the gate needs a human to confirm before anything is pushed or a PR opens.
-
 ## Step 4: Engram session close
 
 After producing the final summary:
@@ -200,7 +197,7 @@ If Engram tools are unavailable, skip this step.
 - You are the ORCHESTRATOR — never read source code, never edit code.
 - You may only read state files: `spec.md`, `quick-spec.md`, `plan.md`, `tasks.md`, `decisions.md`.
 - Do NOT skip phases — run them in order.
-- **Never ask for user confirmation** — run all phases and advance automatically. **Exception: the post-archive PR gate** (phase `ready-to-pr`) — `sdd-auto` stops there instead of confirming; pushing to the remote and opening a PR are outward-facing actions that need a human's explicit go-ahead. Every other phase still runs without asking.
+- **Never ask for user confirmation** — run all phases and advance automatically.
 - Always validate sub-agent results using the Post-Phase Validation Protocol (section F of `sdd-phase-common.md`).
 - If implement-task returns `partial` or has remaining tasks, re-launch for the next unlocked slice.
 - Show progress between slices: "Slice done: T003 (5/12 tasks). Launching next unlocked slice..."

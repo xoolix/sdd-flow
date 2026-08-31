@@ -60,6 +60,17 @@ By the time this runs, the folder has already moved to `specs/archive/YYYY-MM-DD
 
 **This agent runs on `model: haiku`** — the cheapest tier in the pipeline. Before this step it does pure filesystem `mv` with no git awareness at all. Keep this step to exactly one `sdd commit-slice` call with no conditional branching beyond the on/off knob above: complex conditional git-failure reasoning does not belong here — that branching lives in `bin/sdd`. Do not "improve" this into a decision tree.
 
+### 3.6. Print the PR gate commands
+
+The pipeline ends here — there is no command and no phase to hand off to. Run `sdd base-branch $ARGUMENTS` to resolve the base branch, then print these two lines for the human to run by hand:
+
+`git push -u origin HEAD` and `gh pr create --draft --base <base>`
+
+- **On success**: substitute the resolved value for `<base>` before printing.
+- **On failure** (non-zero exit): print the same two lines with `<base>` left **unresolved** — a copyable command with a hole beats printing nothing.
+
+Do not run either command yourself — only print them.
+
 4. **Present summary** — Show the user what was archived and any deltas that were merged.
 
 5. **Engram memory — permanent feature snapshot** (skip if Engram unavailable):

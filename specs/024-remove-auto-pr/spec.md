@@ -28,7 +28,7 @@
 ## Acceptance Criteria
 - [ ] Given `sdd open-pr <id>`, When se ejecuta, Then falla como comando desconocido y `usage()` no lo lista.
 - [ ] Given `.claude/rules/domains.md` con contenido, When corre `sdd domain-vocab`, Then lo imprime y sale 0; y Given ausente o solo comentarios, Then sale 3 sin salida.
-- [ ] Given que Node no está en el PATH, When corre la suite completa, Then pasa — `bin/sdd` no depende de Node.
+- [ ] Given un PATH sin Node, When corre un comando de `bin/sdd` que antes lo necesitaba (`sdd domain-vocab` con contenido), Then funciona y sale 0; y `grep -c 'node\|npx\|src/' bin/sdd` devuelve 0.
 - [ ] Given que `/archive-feature` termina, When cierra, Then imprime los comandos de push y creación del PR con la base que resuelve `sdd base-branch <id>`.
 - [ ] Given el repo después del cambio, When un test de barrido busca los diez símbolos eliminados en `bin/`, `src/`, `.claude/**`, `.specify/templates/**` y `tests/**`, Then no encuentra ninguno. **Excluye `docs/` y `specs/`**: el barrido protege contra una instrucción o llamada colgada, no contra una mención histórica — los ADRs y los specs archivados nombran lo que cambió porque ese es su trabajo.
 - [ ] Given un feature archivado, When corre `sdd status <id>`, Then la fase es `archived` y `ready-to-pr` no existe.
@@ -38,7 +38,7 @@
 - `git revert` del commit. Es un borrado: el revert restaura el código y la mudanza del archivo. Sin flag, sin migración que deshacer.
 
 ## Success Criteria
-- La suite completa pasa **con Node fuera del PATH**.
+- `bin/sdd` no contiene ninguna referencia a `node`, `npx` ni `src/`, y sus comandos funcionan con Node ausente del PATH.
 - Un grep de los diez símbolos sobre la superficie viva (`bin/`, `src/`, `.claude/**`, `.specify/templates/**`, `tests/**`) devuelve **cero**.
 
 ## Archivos que se borran enteros

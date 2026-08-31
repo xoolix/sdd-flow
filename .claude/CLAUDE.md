@@ -53,15 +53,14 @@ The orchestrator only pauses for:
 - **ESCALATED**: Retry budget exhausted — human must diagnose and decide next steps.
 - **Architecture decisions**: Changes that affect project-wide structure or conventions.
 - **JUDGMENT-DAY-HIGH**: The judge found a high-severity spec/risk gap — human must decide whether to update the spec, accept the risk, or cancel the feature advancement.
-- **PR gate**: `/archive-feature` completed and `.pr-opened` absent (`sdd status` reports `phase: ready-to-pr`) — push and draft-PR creation are outward-facing actions that need the human's explicit go-ahead before `sdd open-pr` runs.
 
 ### SDD Commands
 
 | Command | What it does |
 |---------|-------------|
 | `/sdd-new <idea>` | Universal entrypoint — classify fix vs quick vs full, then run the right intake |
-| `/sdd-next [feature-id]` | Detect current phase and run the next one, including the post-archive PR gate |
-| `/sdd-auto [feature-id]` | Fast-forward: chain all remaining phases automatically, stopping at the PR gate for human confirmation |
+| `/sdd-next [feature-id]` | Detect current phase and run the next one |
+| `/sdd-auto [feature-id]` | Fast-forward: chain all remaining phases automatically |
 | `/sdd-hitl [feature-id] [Tnnn] ["decision"]` | List or resolve human checkpoint tasks |
 
 ### Phase Pipeline
@@ -102,10 +101,7 @@ The orchestrator only pauses for:
                  └─ still reviewer FAIL after 2 fix cycles → ESCALATE
     ↓
 /sdd-next → archive                  (archive-feature)
-    ↓
-/sdd-next → PR gate                  (human confirmation → sdd open-pr)
-                 ├─ confirmed → pre-flight (`gh auth status` + remote) → push + `gh pr create --draft` → `.pr-opened` written
-                 └─ pre-flight failure → manual command printed on stderr, `.pr-opened` not written, gate stays resumable
+                 └─ prints `git push -u origin HEAD` and `gh pr create --draft --base <base>` for the human to run by hand
 ```
 
 ### Phase Detection Logic (for /sdd-next)
@@ -125,9 +121,6 @@ The orchestrator only pauses for:
 | fast | `quick-spec.md` and no `plan.md` | Yes | No | `/simplify-code` |
 | fast | `quick-spec.md` and no `plan.md` | Yes | Yes | `/review-feature` |
 | after review passes | full or fast | — | — | `/archive-feature` |
-| any | `sdd status <feature-id>` reports `phase: ready-to-pr` | — | — | Human PR gate — confirm, then `sdd open-pr <feature-id>` |
-
-> **The `ready-to-pr` row keys off `sdd status`, not file existence.** Once `/archive-feature` moves the folder, `specs/<feature-id>/` no longer exists — the file-existence checks above can't see it (F4 in `decisions.md`). Run `sdd status <feature-id>` and read its `phase` field; the CLI's own archive-folder fallback resolves the moved path under `specs/archive/`.
 
 ### Sub-Agent Launch Pattern
 
@@ -330,8 +323,6 @@ idea
                             /review-feature
                                   ↓
                             /archive-feature
-                                  ↓
-                            PR gate (human confirm) → sdd open-pr
 ```
 
 ## Archive folder format
@@ -342,7 +333,6 @@ Archived features are stored under `specs/archive/` using this naming convention
 - **Date**: `%Y-%m-%d` format, using the archive-day local time (the day `/archive-feature` runs).
 - **Feature-id**: the original `NNN-kebab` identifier (e.g., `011-sdd-pipeline-operational-fixes`).
 - `.simplified` is intentionally deleted by `/archive-feature` — the sentinel's only purpose is the simplify→review handoff guard and has no value after archiving.
-- `.pr-opened` lives inside the archived folder and holds the PR url/branch/head-SHA/date. It is written only on a successful `sdd open-pr` gate — its presence is what flips `sdd status` from `ready-to-pr` to `archived`. Unlike `.simplified` (deleted at archive — a local sentinel with no value afterward), `.pr-opened` is deliberately **tracked** (not gitignored): it is the durable PR record, not a local-state sidecar.
 
 ## Result envelope
 All skills output a structured result envelope at the end:

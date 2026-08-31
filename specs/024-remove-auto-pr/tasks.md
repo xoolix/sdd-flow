@@ -24,7 +24,7 @@
   - touches: bin/sdd, src, tests
   - type: refactor
 
-- [ ] **T004 [AFK] Retire the PR gate from orchestration prose**: `sdd-archive-feature.md` gains a step after 3.5's fence (no fence inside that span, per `archiveStep35Line()`) printing `git push -u origin HEAD` and `gh pr create --draft --base <base>` from `sdd base-branch <feature-id>` (print unresolved on failure). Remove the `ready-to-pr` row/branch/exception from `sdd-next` Step 3a and `sdd-auto`'s mirror. Rewrite `.claude/CLAUDE.md`'s Workflow/Phase-Pipeline diagrams, Phase Detection table, PR-gate bullet, and archive-format's `.pr-opened` prose. Edit the three surviving prose-pinning tests (AI-attribution comment, simplify-code `.gitignore` assertion, git.md policy) plus the sdd-next/sdd-auto/CLAUDE.md wiring tests.
+- [x] **T004 [AFK] Retire the PR gate from orchestration prose**: `sdd-archive-feature.md` gains a step after 3.5's fence (no fence inside that span, per `archiveStep35Line()`) printing `git push -u origin HEAD` and `gh pr create --draft --base <base>` from `sdd base-branch <feature-id>` (print unresolved on failure). Remove the `ready-to-pr` row/branch/exception from `sdd-next` Step 3a and `sdd-auto`'s mirror. Rewrite `.claude/CLAUDE.md`'s Workflow/Phase-Pipeline diagrams, Phase Detection table, PR-gate bullet, and archive-format's `.pr-opened` prose. Edit the three surviving prose-pinning tests (AI-attribution comment, simplify-code `.gitignore` assertion, git.md policy) plus the sdd-next/sdd-auto/CLAUDE.md wiring tests.
   - blocked_by: T003
   - verifies: AC4
   - touches: agents, skills, docs, tests

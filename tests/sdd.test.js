@@ -419,7 +419,7 @@ describe("sdd CLI smoke tests", () => {
     expect(gitMd).toContain("Co-Authored-By: Claude <noreply@anthropic.com>");
     expect(gitMd).toContain("no AI-generated footer");
 
-    // Scope: sdd commit-slice, sdd open-pr, and direct agent commits are all covered.
+    // Scope: sdd commit-slice and direct agent commits are all covered.
     expect(gitMd).toContain("any commit an agent makes directly");
 
     // Strong enough to override a harness default that appends attribution by default.
@@ -445,7 +445,7 @@ describe("sdd CLI smoke tests", () => {
     expect(codeOnly).not.toContain("🤖");
   });
 
-  test("simplify-code commits before writing the sentinel and gitignores .simplified but not .pr-opened (T007)", () => {
+  test("simplify-code commits before writing the sentinel and gitignores .simplified (T007)", () => {
     const simplifyCode = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-simplify-code.md"), "utf8");
     const gitignore = fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
 
@@ -473,10 +473,8 @@ describe("sdd CLI smoke tests", () => {
     // Envelope gains the Commit field.
     expect(simplifyCode).toContain("- **Commit**:");
 
-    // .simplified is gitignored (same sentinel-commit hazard the ordering rule above guards against);
-    // .pr-opened must stay tracked — it is the durable PR-URL record, not a self-invalidating sentinel.
+    // .simplified is gitignored — same sentinel-commit hazard the ordering rule above guards against.
     expect(gitignore).toContain("specs/**/.simplified");
-    expect(gitignore).not.toContain(".pr-opened");
   });
 
   test("simplify-code's SDD-artifacts filter drops agent docs and ADRs, not manual judgment (T004)", () => {
@@ -571,91 +569,87 @@ describe("sdd CLI smoke tests", () => {
     expect(step35Body).not.toMatch(/\belif\b/);
   });
 
-  test("sdd-next gains the ready-to-pr gate and both orchestrators carve out the never-ask rule (T009)", () => {
+  test("sdd-next and sdd-auto drop the ready-to-pr gate and its never-ask exception (024 AC4)", () => {
     const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
     const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
 
-    // The "never ask" rule gains a bounded exception in BOTH orchestrators —
-    // worded as a carve-out, not a general softening of the rule.
-    expect(sddNext).toContain(
-      "Never ask for user confirmation — launch phases and advance automatically. **Exception: the post-archive PR gate**",
-    );
-    expect(sddAuto).toContain(
-      "**Never ask for user confirmation** — run all phases and advance automatically. **Exception: the post-archive PR gate**",
-    );
-    expect(sddNext).toContain("outward-facing actions that need a human's explicit go-ahead");
-    expect(sddAuto).toContain("outward-facing actions that need a human's explicit go-ahead");
+    // The "never ask" rule loses its carve-out in BOTH orchestrators — with the
+    // gate gone there is no longer anything left to except from the rule.
+    expect(sddNext).toContain("Never ask for user confirmation — launch phases and advance automatically.");
+    expect(sddNext).not.toContain("Exception: the post-archive PR gate");
+    expect(sddAuto).toContain("**Never ask for user confirmation** — run all phases and advance automatically.");
+    expect(sddAuto).not.toContain("Exception: the post-archive PR gate");
+    expect(sddNext).not.toContain("outward-facing actions that need a human's explicit go-ahead");
+    expect(sddAuto).not.toContain("outward-facing actions that need a human's explicit go-ahead");
 
-    // Phase-detection table gains the two post-archive rows sdd-next was missing,
-    // reconciling the drift against CLAUDE.md's master table (F3/F4 in decisions.md).
+    // Phase-detection table keeps the surviving post-archive row — `archived` still
+    // can't key off file existence, since the folder already moved under specs/archive/ —
+    // but the `ready-to-pr` row it used to sit next to is gone entirely.
     expect(sddNext).toContain("`sdd status <feature-id>` reports `phase: archived`");
-    expect(sddNext).toContain("`sdd status <feature-id>` reports `phase: ready-to-pr`");
-    // These two rows cannot key off file existence — the folder moved under specs/archive/.
+    expect(sddNext).not.toContain("phase: ready-to-pr");
     expect(sddNext).toContain("F4 in `decisions.md`");
     expect(sddNext).toContain(
       "Once `/archive-feature` moves the folder, `specs/<feature-id>/` no longer exists",
     );
 
-    // The gate itself: confirm once, then delegate the actual git/gh work to the CLI —
-    // the orchestrator never shells out to git push or gh directly (ADR 0002).
-    expect(sddNext).toContain("## Step 3a: PR gate");
-    expect(sddNext).toContain("sdd open-pr <feature-id>");
-    expect(sddNext).toContain("The orchestrator never calls `git push` or `gh` itself");
-    expect(sddNext).toContain("ADR 0002");
-    expect(sddNext).toContain(".pr-opened` was not written, so the gate stays resumable");
+    // The gate itself is gone: no Step 3a, no sdd open-pr call, no .pr-opened bookkeeping.
+    // /archive-feature prints the two follow-up commands by hand instead (see its Step 3.6).
+    expect(sddNext).not.toContain("Step 3a");
+    expect(sddNext).not.toContain("sdd open-pr");
+    expect(sddNext).not.toContain(".pr-opened");
 
-    // sdd-auto's premise is "never pause" — it must now also stop at the gate
-    // instead of confirming it, and point the human back at /sdd-next to take it.
-    expect(sddAuto).toContain("`phase: ready-to-pr`");
-    expect(sddAuto).toContain("stop; do not confirm the gate yourself");
-    expect(sddAuto).toContain("run `/sdd-next <feature-id>` to take the gate");
-    // sdd-auto must delegate the gate rather than perform it — it never calls open-pr itself.
+    // sdd-auto no longer has a gate to stop at or delegate to /sdd-next — it exits
+    // the loop on `archived` alone, same shape as before minus the ready-to-pr branch.
+    expect(sddAuto).not.toContain("phase: ready-to-pr");
+    expect(sddAuto).not.toContain("stop; do not confirm the gate yourself");
     expect(sddAuto).not.toContain("sdd open-pr");
   });
 
-  test("CLAUDE.md master docs cover the PR gate — human-input list, pipeline diagram, detection table, workflow diagram, archive format, commands, envelope (T010)", () => {
+  test("CLAUDE.md master docs retire the PR gate — human-input list, pipeline diagram, detection table, workflow diagram, archive format, commands (024 AC4)", () => {
     const claudeMd = fs.readFileSync(path.join(repoRoot, ".claude/CLAUDE.md"), "utf8");
 
-    // 1. "When Human Input Is Needed" gains a bullet for the routine ready-to-ship gate —
-    // every existing entry is an error/exhaustion state or a design decision, none covers this.
+    // 1. "When Human Input Is Needed" loses the routine ready-to-ship-gate bullet —
+    // there is no more pipeline pause for a human to take here.
+    expect(claudeMd).not.toContain("**PR gate**:");
+    expect(claudeMd).not.toContain("phase: ready-to-pr");
+
+    // 2. "Phase Pipeline" diagram loses the gate stage; /archive-feature is the last
+    // box, and it says what it prints instead of what a human confirms.
     expect(claudeMd).toContain(
-      "**PR gate**: `/archive-feature` completed and `.pr-opened` absent (`sdd status` reports `phase: ready-to-pr`)",
+      "/sdd-next → archive                  (archive-feature)\n                 └─ prints `git push -u origin HEAD` and `gh pr create --draft --base <base>` for the human to run by hand",
     );
-    expect(claudeMd).toContain("before `sdd open-pr` runs");
+    expect(claudeMd).not.toContain("/sdd-next → PR gate");
+    expect(claudeMd).not.toContain(".pr-opened` written");
 
-    // 2. "Phase Pipeline" diagram gains the gate stage in the same ├─/└─ visual style
-    // as every other stage, showing both outcomes.
-    expect(claudeMd).toContain("/sdd-next → PR gate                  (human confirmation → sdd open-pr)");
-    expect(claudeMd).toContain("`.pr-opened` written");
-    expect(claudeMd).toContain("gate stays resumable");
+    // 3. "Phase Detection Logic" table drops the ready-to-pr row and its blockquote —
+    // `/archive-feature` is the last "next phase" a fresh detection pass can name.
+    expect(claudeMd).not.toContain("Human PR gate — confirm, then `sdd open-pr");
+    expect(claudeMd).not.toContain("The `ready-to-pr` row keys off");
+    expect(claudeMd).toContain("| after review passes | full or fast | — | — | `/archive-feature` |");
 
-    // 3. "Phase Detection Logic" table gains a ready-to-pr row keyed off `sdd status`,
-    // not file existence — matching what T009 wrote into sdd-next/SKILL.md.
+    // 4. "Workflow" diagram ends at archive-feature — no gate step after it.
+    expect(claudeMd).not.toContain("PR gate (human confirm)");
+    expect(claudeMd).toMatch(/\/archive-feature\n```/);
+
+    // 5. "Archive folder format" drops the .pr-opened bullet entirely — there is no
+    // sidecar left to contrast against .simplified.
+    expect(claudeMd).not.toContain(".pr-opened");
+    expect(claudeMd).toContain("`.simplified` is intentionally deleted by `/archive-feature`");
+
+    // 6. "SDD Commands" table descriptions no longer mention a gate the pipeline
+    // stops at — both commands run straight through to the end of the pipeline.
+    expect(claudeMd).not.toContain("including the post-archive PR gate");
+    expect(claudeMd).not.toContain("stopping at the PR gate for human confirmation");
+    expect(claudeMd).toContain("| `/sdd-next [feature-id]` | Detect current phase and run the next one |");
     expect(claudeMd).toContain(
-      "| any | `sdd status <feature-id>` reports `phase: ready-to-pr` | — | — | Human PR gate — confirm, then `sdd open-pr <feature-id>` |",
+      "| `/sdd-auto [feature-id]` | Fast-forward: chain all remaining phases automatically |",
     );
-    expect(claudeMd).toContain("keys off `sdd status`, not file existence");
-    expect(claudeMd).toContain("F4 in `decisions.md`");
-
-    // 4. "Workflow" diagram gains the gate as one more step after archive-feature.
-    expect(claudeMd).toContain("PR gate (human confirm) → sdd open-pr");
-
-    // 5. "Archive folder format" documents .pr-opened, contrasted with .simplified.
-    expect(claudeMd).toContain("`.pr-opened` lives inside the archived folder");
-    expect(claudeMd).toContain("flips `sdd status` from `ready-to-pr` to `archived`");
-    expect(claudeMd).toContain("deliberately **tracked** (not gitignored)");
-
-    // 6. "SDD Commands" table descriptions reflect the pipeline now running through the gate.
-    expect(claudeMd).toContain("Detect current phase and run the next one, including the post-archive PR gate");
-    expect(claudeMd).toContain("stopping at the PR gate for human confirmation");
     // bin/sdd subcommands are not user-invocable skills — they stay out of this table.
     expect(claudeMd).not.toContain("`sdd commit-slice");
-    expect(claudeMd).not.toContain("`sdd open-pr`  |");
+    expect(claudeMd).not.toContain("`sdd open-pr`");
 
-    // 7. Result envelope line rewritten (not appended elsewhere) to include Commit —
-    // not.toContain on the exact old fenced line proves it was edited in place.
+    // 7. Result envelope keeps the Commit field 020 added — untouched by this feature.
     expect(claudeMd).toContain("Status | Summary | Artifacts | Next | Risks | Commit");
-    expect(claudeMd).not.toContain("```\nStatus | Summary | Artifacts | Next | Risks\n```");
   });
 
   test("review-feature pipeline wires in the cross-reviewer as an advisory third agent", () => {
