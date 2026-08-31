@@ -1036,30 +1036,6 @@ cmd_commit_slice() {
   return 0
 }
 
-# Lines between an exact "## <heading>" line and the next "## " heading (or
-# EOF), ignoring both inside any CommonMark fenced code block. Thin wrapper
-# around src/extract-section.js (Node) — moved out of awk in review fix
-# cycle 2 (decisions.md, 2026-08-31) after five live defects across three
-# awk rewrites in two features: the awk scanner could check structural
-# POSITION (delimiter run length, indentation) but had no natural way to
-# express full-line CONTENT constraints from CommonMark's grammar, ordinary
-# string/regex operations in JS. No awk fallback if Node is missing: two
-# implementations would mean two bug surfaces, which is the thing this move
-# removes. Node is already a dev dependency here (jest). The full grammar
-# rationale — why a fence-shaped line still isn't always a fence, and the
-# axis-not-bug-report framing this function's history forced — lives with
-# the actual matcher now, in the doc comment at the top of
-# src/extract-section.js; this is a wrapper, not a reimplementation, so
-# there is nothing left here to duplicate that comment for.
-extract_section() {
-  local file="$1" heading="$2"
-  if ! command -v node >/dev/null 2>&1; then
-    printf 'error: extract_section requires Node.js, which was not found on PATH\n' >&2
-    return 1
-  fi
-  node "$SDD_HOME/src/extract-section.js" "$file" "$heading"
-}
-
 # ─── status ────────────────────────────────────────────────────────
 
 # Computes phase, task counts, sentinel freshness, and the next command for

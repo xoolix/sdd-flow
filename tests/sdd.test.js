@@ -2333,11 +2333,27 @@ describe("sdd CLI smoke tests", () => {
     const specPath = path.join(dir021, "spec.md");
     const planPath = path.join(dir021, "plan.md");
 
-    function extractSectionViaRealPath(file, heading) {
-      const script = 'source "$0" help >/dev/null; extract_section "$1" "$2"';
-      return execFileSync("bash", ["-c", script, sddBin, file, heading], {
-        encoding: "utf8",
-      });
+    // 024 deleted bin/sdd's extract_section (and src/extract-section.js) once
+    // its last real caller moved off it — this test's own sourcing of
+    // extract_section directly was the one remaining call site (F5,
+    // decisions.md). Plain JS slicing between the heading and the next "## "
+    // heading replaces it; the assertions below are unchanged, only the
+    // mechanism is.
+    function sectionFromMarkdown(content, heading) {
+      const headingLine = `## ${heading}`;
+      const lines = content.split("\n");
+      const start = lines.findIndex((line) => line === headingLine);
+      if (start === -1) {
+        return "";
+      }
+      let end = lines.length;
+      for (let i = start + 1; i < lines.length; i += 1) {
+        if (lines[i].startsWith("## ")) {
+          end = i;
+          break;
+        }
+      }
+      return lines.slice(start + 1, end).join("\n");
     }
 
     test("spec.md no longer names sdd-reviewer.md as a Domain or requires it to accept a discard line — decisions.md REMOVED that edge case", () => {
@@ -2347,7 +2363,8 @@ describe("sdd CLI smoke tests", () => {
     });
 
     test("plan.md's Touched areas names T009's files — bin/sdd and the pristine rules seed — so the archived plan doesn't omit them", () => {
-      const touchedAreas = extractSectionViaRealPath(planPath, "Touched areas");
+      const plan = fs.readFileSync(planPath, "utf8");
+      const touchedAreas = sectionFromMarkdown(plan, "Touched areas");
 
       expect(touchedAreas).toContain("bin/sdd");
       expect(touchedAreas).toContain(".specify/templates/rules/");
@@ -2409,6 +2426,32 @@ describe("sdd CLI smoke tests", () => {
       expect(sddAuto).toContain(
         "For **non-implement-task phases**: max 2 retries per phase invocation. If exhausted → ESCALATE and STOP.",
       );
+    });
+  });
+
+  describe("T003: bin/sdd's last runtime Node dependency is gone (AC3)", () => {
+    // Inverts pathWithoutNode()'s original premise (see its doc comment above):
+    // before this feature, the only reason to strip Node off PATH was to prove
+    // extract_section fails loudly without it. extract_section is deleted now
+    // (along with src/extract-section.js), so bin/sdd has no runtime Node
+    // dependency left at all. sdd domain-vocab is the command this proves it
+    // against -- it's the one that used to depend on Node, via
+    // cmd_domain_vocab's now-removed extract_section call (T001).
+    test("sdd domain-vocab succeeds against a fixture with content, with Node off PATH", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+      fs.writeFileSync(path.join(project, ".claude/rules/domains.md"), "- regla real de dominio\n");
+
+      const output = execFileSync(sddBin, ["domain-vocab"], {
+        cwd: project,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: pathWithoutNode(),
+        },
+      });
+
+      expect(output).toContain("- regla real de dominio");
     });
   });
 });

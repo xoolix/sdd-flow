@@ -18,7 +18,7 @@
   - touches: bin/sdd, rules, templates, tests
   - type: refactor
 
-- [ ] **T003 [AFK] Remove `extract_section` and the Node dependency**: Delete the now-callerless `extract_section` wrapper from `bin/sdd`, plus `src/extract-section.js` and `tests/extract-section.test.js` (39 tests). Fix the 021-reconciliation test's locally-shadowed `extractSectionViaRealPath` to assert plan.md's "Touched areas" text directly, not through it. Using T002's promoted `pathWithoutNode()`, add a test proving `bin/sdd` succeeds with Node off PATH (AC3).
+- [x] **T003 [AFK] Remove `extract_section` and the Node dependency**: Delete the now-callerless `extract_section` wrapper from `bin/sdd`, plus `src/extract-section.js` and `tests/extract-section.test.js` (39 tests). Fix the 021-reconciliation test's locally-shadowed `extractSectionViaRealPath` to assert plan.md's "Touched areas" text directly, not through it. Using T002's promoted `pathWithoutNode()`, add a test proving `bin/sdd` succeeds with Node off PATH (AC3).
   - blocked_by: T002
   - verifies: AC3
   - touches: bin/sdd, src, tests
