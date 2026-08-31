@@ -55,8 +55,8 @@ function sddFail(args, options) {
 // Filters the current PATH down to directories that do NOT contain a `node`
 // executable, so a test can prove bin/sdd behaves correctly with Node off
 // PATH without depending on this machine's real toolchain layout. 024
-// removed bin/sdd's only Node dependency (extract_section); this helper is
-// what the resulting "the full suite passes with Node off PATH" test drives.
+// removed bin/sdd's only Node dependency; this helper is what the resulting
+// "the full suite passes with Node off PATH" test drives.
 function pathWithoutNode() {
   const dirs = (process.env.PATH || "").split(path.delimiter);
   return dirs
@@ -132,6 +132,10 @@ describe("sdd CLI smoke tests", () => {
     expect(output.trim()).toMatch(/^sdd v\d+\.\d+\.\d+$/);
   });
 
+  // sdd-sweep-exempt:start — this regression test must name the retired `open-pr`
+  // command literally to prove bin/sdd truly rejects it (AC1); a proof of removal,
+  // not a dangling reference. See tests/sweep-retired-symbols.test.js's header
+  // comment for why this is a different case than the sweep's own self-reference.
   test("open-pr no longer exists: unknown command in dispatch, and usage() does not list it (024 AC1)", () => {
     const project = makeTempProject();
 
@@ -143,6 +147,7 @@ describe("sdd CLI smoke tests", () => {
     const help = execFileSync(sddBin, ["help"], { cwd: project, encoding: "utf8" });
     expect(help).not.toContain("open-pr");
   });
+  // sdd-sweep-exempt:end
 
   test("reports planned status for a feature with unchecked tasks", () => {
     const project = makeTempProject();
@@ -395,11 +400,14 @@ describe("sdd CLI smoke tests", () => {
     expect(gitMd).toContain("docs/adr/0002-sdd-git-write-boundary.md");
 
     // New policy: phases commit their own work per validated slice; nothing pushes.
+    // sdd-sweep-exempt:start — must name the retired gate command literally to prove
+    // git.md no longer mentions it; a proof of removal, not a dangling reference.
     // 024 removes the `sdd open-pr` gate command — pushing and opening a PR are
     // manual, human-run steps now (no CLI command left to pin here).
     expect(gitMd).toContain("sdd commit-slice");
     expect(gitMd).toContain("Nothing is pushed during development");
     expect(gitMd).not.toContain("sdd open-pr");
+    // sdd-sweep-exempt:end
 
     // Auto-commit knob, mirroring testing.md's tdd: knob shape.
     expect(gitMd).toContain("auto-commit: on|off");
@@ -569,6 +577,10 @@ describe("sdd CLI smoke tests", () => {
     expect(step35Body).not.toMatch(/\belif\b/);
   });
 
+  // sdd-sweep-exempt:start — this test must name the retired gate's literal strings
+  // (`ready-to-pr`, `sdd open-pr`, `.pr-opened`) to prove sdd-next/sdd-auto no longer
+  // mention them (AC4); a proof of removal, not a dangling reference. See
+  // tests/sweep-retired-symbols.test.js's header comment for the distinction.
   test("sdd-next and sdd-auto drop the ready-to-pr gate and its never-ask exception (024 AC4)", () => {
     const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
     const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
@@ -604,7 +616,10 @@ describe("sdd CLI smoke tests", () => {
     expect(sddAuto).not.toContain("stop; do not confirm the gate yourself");
     expect(sddAuto).not.toContain("sdd open-pr");
   });
+  // sdd-sweep-exempt:end
 
+  // sdd-sweep-exempt:start — same reasoning as the test above: must name the retired
+  // gate's literal strings to prove CLAUDE.md no longer mentions them (AC4).
   test("CLAUDE.md master docs retire the PR gate — human-input list, pipeline diagram, detection table, workflow diagram, archive format, commands (024 AC4)", () => {
     const claudeMd = fs.readFileSync(path.join(repoRoot, ".claude/CLAUDE.md"), "utf8");
 
@@ -651,6 +666,7 @@ describe("sdd CLI smoke tests", () => {
     // 7. Result envelope keeps the Commit field 020 added — untouched by this feature.
     expect(claudeMd).toContain("Status | Summary | Artifacts | Next | Risks | Commit");
   });
+  // sdd-sweep-exempt:end
 
   test("review-feature pipeline wires in the cross-reviewer as an advisory third agent", () => {
     const reviewFeature = fs.readFileSync(path.join(repoRoot, ".claude/skills/review-feature/SKILL.md"), "utf8");
@@ -1723,6 +1739,9 @@ describe("sdd CLI smoke tests", () => {
       return archiveDir;
     }
 
+    // sdd-sweep-exempt:start — must name the retired gate's literal strings to explain
+    // and then prove a stray leftover sentinel doesn't change the outcome; a proof of
+    // removal (of its effect), not a dangling reference.
     // 024 removes `ready-to-pr` and its .pr-opened check: is_archived derives
     // from folder location alone, never the sidecar (plan.md, "Current state").
     // One test now covers what used to be two — with and without a stray
@@ -1755,6 +1774,7 @@ describe("sdd CLI smoke tests", () => {
         next_command: "(none — feature archived)",
       });
     });
+    // sdd-sweep-exempt:end
   });
 
   describe("sdd status — no-arg lists specs/ (T003)", () => {
@@ -2143,8 +2163,8 @@ describe("sdd CLI smoke tests", () => {
   });
 
   describe("sdd domain-vocab (T001, repointed to domains.md by 024)", () => {
-    // Real binary, real repo. extract_section's fence/CRLF/comment-shape axes (its
-    // predecessor tests) all existed to find and bound a "## Domain rules" SECTION
+    // Real binary, real repo. The old section-extraction helper's fence/CRLF/comment-shape
+    // axes (its predecessor tests) all existed to find and bound a "## Domain rules" SECTION
     // inside a larger file -- heading match, fence-gated terminator, CRLF-safe
     // compare. None of that applies anymore: cmd_domain_vocab reads
     // .claude/rules/domains.md whole, so there is no heading to find and no
@@ -2207,7 +2227,7 @@ describe("sdd CLI smoke tests", () => {
       expect(error.stdout.toString()).toBe("");
     });
 
-    // Judge finding (review fix cycle 3, carried over from extract_section's era): a
+    // Judge finding (review fix cycle 3, carried over from the old section-extraction era): a
     // comment BODY containing '--' (an em-dash, common in this repo's own prose) used
     // to survive a naive regex strip and print as if it were real vocabulary. The
     // index()/substr() loop that replaced it is unchanged by this feature -- still
@@ -2327,10 +2347,10 @@ describe("sdd CLI smoke tests", () => {
     const specPath = path.join(dir021, "spec.md");
     const planPath = path.join(dir021, "plan.md");
 
-    // 024 deleted bin/sdd's extract_section (and src/extract-section.js) once
-    // its last real caller moved off it — this test's own sourcing of
-    // extract_section directly was the one remaining call site (F5,
-    // decisions.md). Plain JS slicing between the heading and the next "## "
+    // 024 deleted bin/sdd's old section-extraction helper (and its Node port,
+    // src/extract-section.js) once its last real caller moved off it — this
+    // test's own sourcing of that helper directly was the one remaining call
+    // site (F5, decisions.md). Plain JS slicing between the heading and the next "## "
     // heading replaces it; the assertions below are unchanged, only the
     // mechanism is.
     function sectionFromMarkdown(content, heading) {
@@ -2426,11 +2446,11 @@ describe("sdd CLI smoke tests", () => {
   describe("T003: bin/sdd's last runtime Node dependency is gone (AC3)", () => {
     // Inverts pathWithoutNode()'s original premise (see its doc comment above):
     // before this feature, the only reason to strip Node off PATH was to prove
-    // extract_section fails loudly without it. extract_section is deleted now
-    // (along with src/extract-section.js), so bin/sdd has no runtime Node
+    // the old section-extraction helper failed loudly without it. That helper is deleted
+    // now (along with src/extract-section.js), so bin/sdd has no runtime Node
     // dependency left at all. sdd domain-vocab is the command this proves it
     // against -- it's the one that used to depend on Node, via
-    // cmd_domain_vocab's now-removed extract_section call (T001).
+    // cmd_domain_vocab's now-removed call into that helper (T001).
     test("sdd domain-vocab succeeds against a fixture with content, with Node off PATH", () => {
       const project = makeTempProject();
       fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });

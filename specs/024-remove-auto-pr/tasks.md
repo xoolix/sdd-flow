@@ -32,7 +32,7 @@
 
 ### 3. Validation
 
-- [ ] **T005 [AFK] AC5 sweep + full-suite proof**: Add the grep sweep for the ten symbols retired in T002-T004 in a new `tests/sweep-retired-symbols.test.js`, excluding only its path from the walk over `bin/`, `src/`, `.claude/**`, `.specify/templates/**`, `tests/**` (excluding `docs/`, `specs/`) — its source must contain all ten literals and would otherwise self-match and stay red; every other file, `sdd.test.js` included, stays swept. Assert zero hits; run the suite with Node on and off PATH.
+- [x] **T005 [AFK] AC5 sweep + full-suite proof**: Add the grep sweep for the ten symbols retired in T002-T004 in a new `tests/sweep-retired-symbols.test.js`, excluding only its path from the walk over `bin/`, `src/`, `.claude/**`, `.specify/templates/**`, `tests/**` (excluding `docs/`, `specs/`) — its source must contain all ten literals and would otherwise self-match and stay red; every other file, `sdd.test.js` included, stays swept. Assert zero hits; run the suite with Node on and off PATH.
   - blocked_by: T004
   - verifies: AC5
   - touches: tests
