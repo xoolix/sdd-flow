@@ -53,7 +53,7 @@ This guarantees that any post-edit failure later is attributable to simplify-cod
    - **Lockfiles**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Cargo.lock`
    - **Migrations**: `**/migrations/**`, `**/db/migrate/**`
    - **Configs**: `*.config.*`, `.env*`, `docker-compose.*`, `tsconfig.json`, `vite.config.*`
-   - **SDD artifacts**: `specs/**/*.md`, `.claude/skills/**/*.md`, `.claude/CLAUDE.md`, `.specify/templates/*.md` — spec, plan, tasks, quick-spec, SKILL.md, templates, and orchestrator docs are prose artifacts, not code. KISS/DRY/YAGNI applied to these is out of scope and can corrupt load-bearing structure (e.g., `## Tasks` checkboxes).
+   - **SDD artifacts**: `specs/**/*.md`, `.claude/skills/**/*.md`, `.claude/agents/**/*.md`, `.claude/CLAUDE.md`, `.specify/templates/*.md`, `docs/adr/**/*.md` — spec, plan, tasks, quick-spec, SKILL.md, agent instructions, templates, orchestrator docs, and architecture decision records are prose artifacts, not code. KISS/DRY/YAGNI applied to these is out of scope and can corrupt load-bearing structure (e.g., `## Tasks` checkboxes).
 4. Record the remaining list as `SCOPED_FILES` — this is the revert target list.
 5. **If `SCOPED_FILES` is empty** → skip straight to step 6 and report `Commit: none`; write the sentinel with `Summary: no changes needed` and return `Status: success`. Skip steps 4, 5, and 5.5 — there is nothing to simplify and nothing to commit.
 

@@ -696,25 +696,30 @@ cmd_doctor() {
 cmd_base_branch() {
   local feature_id="${1:-}"
 
-  # ── Layer 1: per-feature sidecar (only when feature-id supplied) ──
+  # ── Layer 1: per-feature sidecar, active dir or archived (F1) ──
   if [ -n "$feature_id" ]; then
-    local sidecar="specs/${feature_id}/.parent-branch"
-    if [ -f "$sidecar" ]; then
-      # Read first line only; strip leading/trailing whitespace
-      local ref
-      ref="$(head -n1 "$sidecar" | tr -d '[:space:]')"
-      if [ -n "$ref" ]; then
-        # Non-empty after trim — must resolve
-        if git rev-parse --verify "$ref" >/dev/null 2>&1; then
-          printf '%s\n' "$ref"
-          return 0
-        else
-          printf 'error: %s references missing branch "%s"\n' "$sidecar" "$ref" >&2
-          return 2
+    local specs_dir feature_dir
+    specs_dir="$(pwd)/specs"
+    if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+      local sidecar="$feature_dir/.parent-branch"
+      if [ -f "$sidecar" ]; then
+        # Read first line only; strip leading/trailing whitespace
+        local ref
+        ref="$(head -n1 "$sidecar" | tr -d '[:space:]')"
+        if [ -n "$ref" ]; then
+          # Non-empty after trim — must resolve
+          if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+            printf '%s\n' "$ref"
+            return 0
+          else
+            printf 'error: %s references missing branch "%s"\n' "$sidecar" "$ref" >&2
+            return 2
+          fi
         fi
+        # Empty/whitespace sidecar — fall through to Layer 2
       fi
-      # Empty/whitespace sidecar — fall through to Layer 2
     fi
+    # Unresolvable feature-id (no active or archived dir) — fall through to Layer 2, never abort.
   fi
 
   # ── Layer 2: project config in .claude/rules/git.md ──────────────
@@ -795,6 +800,10 @@ cmd_branch() {
 # archived specs/archive/*-<feature-id> match. Prints the resolved absolute
 # path on stdout and returns 0 on success; returns 1 with no output otherwise.
 # Shared by cmd_status and cmd_commit_slice (F2) so both stay in sync.
+# Must be called as an `if`/`while` condition (the guarded idiom used by all
+# four call sites), never a bare assignment -- under `set -euo pipefail` a
+# bare `feature_dir="$(resolve_feature_dir ...)"` on a miss aborts the script
+# silently, with no error text naming what failed.
 resolve_feature_dir() {
   local feature_id="$1" specs_dir="$2"
 
@@ -896,6 +905,35 @@ cmd_commit_slice() {
   # it survives this snapshot and still trips the warning.
   local pre_staged
   pre_staged="$(git status --porcelain --no-renames 2>/dev/null | awk '{ st = substr($0, 1, 1); if (st != " " && st != "?") print substr($0, 4) }')"
+
+  # AC5: warn (never change what gets staged) when a file inside this
+  # feature's own dir was already staged BEFORE this invocation touched the
+  # index -- a HITL decision staged on purpose, or a stray edit riding along
+  # by accident. There is no reliable way to tell those two apart, and
+  # getting it wrong would *discard* work rather than merely mix it, so this
+  # only warns; the feature dir keeps getting swept into the commit exactly
+  # as before. Opposite polarity from the post-commit safety net below (that
+  # one is an EXCLUSION set over the whole index, checked after the commit;
+  # this is an INCLUSION set scoped to the feature dir, checked before it) --
+  # kept as two separate checks sharing only the one snapshot, not merged.
+  # feature_dir is absolute (built from "$(pwd)/specs") but pre_staged
+  # entries are repo-root-relative (F8) -- normalize first, or a prefix
+  # match here never fires. bin/sdd never 'cd's outside subshells, so
+  # stripping "$(pwd)/" is safe.
+  if [ -n "$pre_staged" ]; then
+    local feature_dir_rel="${feature_dir#"$(pwd)/"}"
+    local staged_path staged_in_feature_dir=""
+    while IFS= read -r staged_path; do
+      case "$staged_path" in
+        "$feature_dir_rel"/*)
+          staged_in_feature_dir="${staged_in_feature_dir:+${staged_in_feature_dir}$'\n'}${staged_path}"
+          ;;
+      esac
+    done <<< "$pre_staged"
+    if [ -n "$staged_in_feature_dir" ]; then
+      printf 'warning: feature dir file(s) already staged before commit-slice ran:\n%s\n' "$staged_in_feature_dir" >&2
+    fi
+  fi
 
   # Stage exactly the named files plus the derived feature dir. Never 'git add -A'.
   if [ "${#files[@]}" -gt 0 ]; then
@@ -1011,20 +1049,28 @@ cmd_commit_slice() {
 # would overflow (see append_decisions_capped below).
 PR_BODY_MAX_CHARS=60000
 
-# Lines between an exact "## <heading>" line and the next "## " heading (or EOF).
-# Strips a trailing CRLF '\r' from every record before the heading compare —
-# on a CRLF file $0 for the heading line is "## Domain rules\r", which never
-# equals the LF heading string, so the section read as empty regardless of
-# its real content (review fix cycle 4). The strip is unconditional (not
-# gated on the heading match), so printed content lines lose their '\r' too.
+# Lines between an exact "## <heading>" line and the next "## " heading (or
+# EOF), ignoring both inside any CommonMark fenced code block. Thin wrapper
+# around src/extract-section.js (Node) — moved out of awk in review fix
+# cycle 2 (decisions.md, 2026-08-31) after five live defects across three
+# awk rewrites in two features: the awk scanner could check structural
+# POSITION (delimiter run length, indentation) but had no natural way to
+# express full-line CONTENT constraints from CommonMark's grammar, ordinary
+# string/regex operations in JS. No awk fallback if Node is missing: two
+# implementations would mean two bug surfaces, which is the thing this move
+# removes. Node is already a dev dependency here (jest). The full grammar
+# rationale — why a fence-shaped line still isn't always a fence, and the
+# axis-not-bug-report framing this function's history forced — lives with
+# the actual matcher now, in the doc comment at the top of
+# src/extract-section.js; this is a wrapper, not a reimplementation, so
+# there is nothing left here to duplicate that comment for.
 extract_section() {
-  local file="$1" heading="## $2"
-  awk -v heading="$heading" '
-    { sub(/\r$/, "") }
-    $0 == heading { found=1; next }
-    found && /^## / { exit }
-    found { print }
-  ' "$file"
+  local file="$1" heading="$2"
+  if ! command -v node >/dev/null 2>&1; then
+    printf 'error: extract_section requires Node.js, which was not found on PATH\n' >&2
+    return 1
+  fi
+  node "$SDD_HOME/src/extract-section.js" "$file" "$heading"
 }
 
 # PR title: the "# Feature: <title>" H1 from spec.md (or quick-spec.md for
@@ -1113,16 +1159,38 @@ build_pr_body_file() {
 
   local body_file
   body_file="$(mktemp)"
+
+  # Each extract_section call's own exit status is captured explicitly with
+  # `|| extract_failed=1`. The three calls run inside a `{ ... } > "$body_file"`
+  # group so their stdout lands in the body in order, but a mid-group failure
+  # does NOT make the group itself fail -- the group's own exit status is
+  # whatever its LAST command returns, which here was always the final
+  # (always-succeeding) printf. Left unchecked, that meant this function
+  # returned 0 with a body whose Summary/Acceptance Criteria/Rollback Plan
+  # sections were silently empty whenever extract_section failed -- Node
+  # absent from PATH, or spec_file unreadable, both reproduced -- and
+  # cmd_open_pr's `body_file="$(build_pr_body_file ...)"` then pushed and
+  # opened a PR on that broken body with no visible signal (review fix cycle
+  # 3, decisions.md). `{ }` is a plain command group, not a `( )` subshell,
+  # so `extract_failed` set inside it is still visible once the group closes
+  # -- that's what makes tracking the failure here possible at all.
+  local extract_failed=0
   {
     if [ -f "$spec_file" ]; then
       printf '## Summary\n'
-      extract_section "$spec_file" "Summary"
+      extract_section "$spec_file" "Summary" || extract_failed=1
       printf '\n## Acceptance Criteria\n'
-      extract_section "$spec_file" "Acceptance Criteria"
+      extract_section "$spec_file" "Acceptance Criteria" || extract_failed=1
       printf '\n## Rollback Plan\n'
-      extract_section "$spec_file" "Rollback Plan"
+      extract_section "$spec_file" "Rollback Plan" || extract_failed=1
     fi
   } > "$body_file"
+
+  if [ "$extract_failed" -ne 0 ]; then
+    # Never leave a partial body behind on the failure path.
+    rm -f "$body_file"
+    return 1
+  fi
 
   if [ -f "$feature_dir/decisions.md" ]; then
     printf '\n## Decisions\n' >> "$body_file"
