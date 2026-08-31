@@ -1159,16 +1159,38 @@ build_pr_body_file() {
 
   local body_file
   body_file="$(mktemp)"
+
+  # Each extract_section call's own exit status is captured explicitly with
+  # `|| extract_failed=1`. The three calls run inside a `{ ... } > "$body_file"`
+  # group so their stdout lands in the body in order, but a mid-group failure
+  # does NOT make the group itself fail -- the group's own exit status is
+  # whatever its LAST command returns, which here was always the final
+  # (always-succeeding) printf. Left unchecked, that meant this function
+  # returned 0 with a body whose Summary/Acceptance Criteria/Rollback Plan
+  # sections were silently empty whenever extract_section failed -- Node
+  # absent from PATH, or spec_file unreadable, both reproduced -- and
+  # cmd_open_pr's `body_file="$(build_pr_body_file ...)"` then pushed and
+  # opened a PR on that broken body with no visible signal (review fix cycle
+  # 3, decisions.md). `{ }` is a plain command group, not a `( )` subshell,
+  # so `extract_failed` set inside it is still visible once the group closes
+  # -- that's what makes tracking the failure here possible at all.
+  local extract_failed=0
   {
     if [ -f "$spec_file" ]; then
       printf '## Summary\n'
-      extract_section "$spec_file" "Summary"
+      extract_section "$spec_file" "Summary" || extract_failed=1
       printf '\n## Acceptance Criteria\n'
-      extract_section "$spec_file" "Acceptance Criteria"
+      extract_section "$spec_file" "Acceptance Criteria" || extract_failed=1
       printf '\n## Rollback Plan\n'
-      extract_section "$spec_file" "Rollback Plan"
+      extract_section "$spec_file" "Rollback Plan" || extract_failed=1
     fi
   } > "$body_file"
+
+  if [ "$extract_failed" -ne 0 ]; then
+    # Never leave a partial body behind on the failure path.
+    rm -f "$body_file"
+    return 1
+  fi
 
   if [ -f "$feature_dir/decisions.md" ]; then
     printf '\n## Decisions\n' >> "$body_file"

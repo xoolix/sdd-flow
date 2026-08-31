@@ -106,6 +106,26 @@ function buildPrBodyViaRealPath(featureDir) {
   return fs.readFileSync(bodyFilePath, "utf8");
 }
 
+// Companion to buildPrBodyViaRealPath above, for the failure path: that
+// function assumes build_pr_body_file succeeds and reads whatever path it
+// printed. Here we need the function's own exit status instead -- captured
+// via an `if` condition, one of the few contexts `set -e` does NOT abort
+// on, so bin/sdd's sourced `set -euo pipefail` doesn't kill the script
+// before `$?` can be read (review fix cycle 3: build_pr_body_file must
+// itself return non-zero on an extract_section failure, since that's the
+// only way cmd_open_pr's real `body_file="$(build_pr_body_file ...)"`
+// assignment aborts under set -e).
+function buildPrBodyFileExitStatus(featureDir) {
+  const script =
+    'source "$0" help >/dev/null; ' +
+    'if out="$(build_pr_body_file "$1")"; then printf "0:%s" "$out"; else printf "%s:" "$?"; fi';
+  const result = execFileSync("bash", ["-c", script, sddBin, featureDir], {
+    encoding: "utf8",
+  });
+  const sep = result.indexOf(":");
+  return { status: Number(result.slice(0, sep)), bodyFilePath: result.slice(sep + 1) };
+}
+
 // Sources bin/sdd and calls the real extract_section directly against a file,
 // bypassing build_pr_body_file's Summary/Acceptance Criteria/Rollback Plan
 // assembly entirely. Used where a fence-model assertion needs to pin ONE
@@ -1771,6 +1791,48 @@ describe("sdd CLI smoke tests", () => {
       return remoteDir;
     }
 
+    // Mirrors pathWithoutGh() above, but for `node` — used to reproduce
+    // build_pr_body_file's real failure mode (extract_section's own
+    // "Node.js ... not found on PATH" guard) through the actual `sdd
+    // open-pr` call shape, not a direct build_pr_body_file call (review fix
+    // cycle 3: the direct-call harness, buildPrBodyViaRealPath below, is
+    // exactly what let this defect ship through two prior review cycles).
+    function pathWithoutNode() {
+      const dirs = (process.env.PATH || "").split(path.delimiter);
+      return dirs
+        .filter((dir) => {
+          try {
+            fs.accessSync(path.join(dir, "node"), fs.constants.X_OK);
+            return false;
+          } catch {
+            return true;
+          }
+        })
+        .join(path.delimiter);
+    }
+
+    // A minimal fake `gh` on its own directory, prepended ahead of the real
+    // PATH, so the "Node absent" end-to-end test below can drive `sdd
+    // open-pr` past the gh-on-PATH / gh-auth-status / existing-PR-view
+    // pre-flight checks deterministically -- without depending on this
+    // machine's real `gh auth login` state (which pathWithoutNode() cannot
+    // guarantee: on a machine where `node` and `gh` are installed side by
+    // side, filtering out every directory that contains `node` would also
+    // remove the real `gh`).
+    function fakeGhDir() {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sdd-fake-gh-"));
+      const ghPath = path.join(dir, "gh");
+      fs.writeFileSync(
+        ghPath,
+        "#!/bin/sh\n" +
+          'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then exit 0; fi\n' +
+          'if [ "$1" = "pr" ] && [ "$2" = "view" ]; then exit 1; fi\n' +
+          "exit 1\n",
+      );
+      fs.chmodSync(ghPath, 0o755);
+      return dir;
+    }
+
     test("exits non-zero and prints usage when feature-id is missing", () => {
       const project = makeTempProject();
 
@@ -1816,6 +1878,65 @@ describe("sdd CLI smoke tests", () => {
       expect(remoteRefs).toBe("");
 
       expect(fs.existsSync(path.join(project, "specs", "001-demo", ".pr-opened"))).toBe(false);
+    });
+
+    // Review fix cycle 3 (JUDGMENT-DAY-HIGH (3)): build_pr_body_file's
+    // extract_section calls run inside a `{ ... } > "$body_file"` group,
+    // then the function's LAST statement is a `printf` that always
+    // succeeds -- so a mid-group extract_section failure (Node absent from
+    // PATH, reproduced here; an unreadable spec file, reproduced below) was
+    // silently swallowed and build_pr_body_file returned 0 with a body
+    // whose Summary/Acceptance Criteria/Rollback Plan sections were all
+    // empty. cmd_open_pr's `body_file="$(build_pr_body_file "$feature_dir")"`
+    // then pushed and opened a PR on that broken body with no visible
+    // signal. This goes through the REAL nested call shape cmd_open_pr
+    // uses -- not buildPrBodyViaRealPath's direct call below, which is the
+    // convenient-but-unrepresentative harness that let this ship through
+    // two review cycles (both reviewers named the mechanism explicitly).
+    test("sdd open-pr exits non-zero, pushes nothing, and writes no sentinel when Node is absent from PATH (AC4/AC8, real nested call shape)", () => {
+      const project = makeTempProject();
+      writeMinimalSpec(path.join(project, "specs", "001-demo"));
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
+      const remoteDir = makeBareRemote();
+      execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: project });
+
+      const ghDir = fakeGhDir();
+      const testPath = [ghDir, pathWithoutNode()].join(path.delimiter);
+
+      const error = sddFail(["open-pr", "001-demo"], {
+        cwd: project,
+        env: { ...process.env, PATH: testPath },
+      });
+
+      expect(error.status).not.toBe(0);
+
+      // No push happened — the bare remote has no refs at all.
+      const remoteRefs = execFileSync("git", ["ls-remote", remoteDir], { encoding: "utf8" }).trim();
+      expect(remoteRefs).toBe("");
+
+      expect(fs.existsSync(path.join(project, "specs", "001-demo", ".pr-opened"))).toBe(false);
+    });
+
+    test("build_pr_body_file itself returns non-zero when a spec section cannot be read -- not just when Node is absent (AC4/AC8)", () => {
+      const project = makeTempProject();
+      const featureDir = path.join(project, "specs", "001-demo");
+      writeMinimalSpec(featureDir);
+      const specFile = path.join(featureDir, "spec.md");
+      fs.chmodSync(specFile, 0o000);
+
+      let result;
+      try {
+        result = buildPrBodyFileExitStatus(featureDir);
+      } finally {
+        fs.chmodSync(specFile, 0o644);
+      }
+
+      expect(result.status).not.toBe(0);
+      // On failure, build_pr_body_file must not print a body-file path at
+      // all -- and must clean up the temp file it created, not leave a
+      // partial body behind.
+      expect(result.bodyFilePath).toBe("");
     });
 
     test("exits 3 and reports feature not found when the feature dir cannot be resolved", () => {

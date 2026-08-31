@@ -1,4 +1,10 @@
+const { execFileSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { extractSection } = require("../src/extract-section");
+
+const scriptPath = path.resolve(__dirname, "..", "src", "extract-section.js");
 
 // Direct unit tests of src/extract-section.js's pure `extractSection`
 // function -- no `source bin/sdd`, no spawned bash process, no temp git
@@ -247,5 +253,69 @@ describe("extractSection", () => {
       const result = extractionOf(["## Heading", "```", "fenced", "\t```", "after", "## Next"]);
       expect(result).toBe("```\nfenced\n\t```\nafter\n## Next\n");
     });
+  });
+});
+
+// The CLI entry point (`main()`) has its own two error branches, exercised
+// here via a real spawned `node` process (the module's actual public
+// interface when invoked from bin/sdd's extract_section wrapper) rather
+// than by calling `main()` in-process -- neither had test coverage before
+// this (review fix cycle 3, added alongside the build_pr_body_file fix
+// while already in this file). Both branches are pre-existing, correct
+// behavior -- this is coverage only, not a bug fix.
+describe("extract-section.js CLI", () => {
+  test("missing arguments (no file, no heading) exits 2 with a usage message on stderr", () => {
+    let error;
+    try {
+      execFileSync("node", [scriptPath], { encoding: "utf8" });
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeDefined();
+    expect(error.status).toBe(2);
+    expect(error.stderr).toBe("usage: extract-section.js <file> <heading>\n");
+  });
+
+  test("a file argument with no heading argument also exits 2 with the same usage message", () => {
+    let error;
+    try {
+      execFileSync("node", [scriptPath, "/some/file.md"], { encoding: "utf8" });
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeDefined();
+    expect(error.status).toBe(2);
+    expect(error.stderr).toBe("usage: extract-section.js <file> <heading>\n");
+  });
+
+  test("an unreadable file exits 1 and names the file on stderr", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-section-cli-"));
+    const filePath = path.join(dir, "spec.md");
+    fs.writeFileSync(filePath, "## Heading\ncontent\n");
+    fs.chmodSync(filePath, 0o000);
+
+    let error;
+    try {
+      execFileSync("node", [scriptPath, filePath, "Heading"], { encoding: "utf8" });
+    } catch (err) {
+      error = err;
+    } finally {
+      fs.chmodSync(filePath, 0o644);
+    }
+
+    expect(error).toBeDefined();
+    expect(error.status).toBe(1);
+    expect(error.stderr).toContain(filePath);
+    expect(error.stderr).toContain("cannot read");
+  });
+
+  test("an existing, readable file with a present heading exits 0 and prints the section on stdout", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-section-cli-"));
+    const filePath = path.join(dir, "spec.md");
+    fs.writeFileSync(filePath, "## Heading\ncontent\n## Next\n");
+
+    const stdout = execFileSync("node", [scriptPath, filePath, "Heading"], { encoding: "utf8" });
+
+    expect(stdout).toBe("content\n");
   });
 });
