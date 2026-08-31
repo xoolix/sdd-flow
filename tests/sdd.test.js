@@ -2871,20 +2871,28 @@ describe("sdd CLI smoke tests", () => {
     expect(buildRegistry).toContain("5-15 lines");
   });
 
-  test("init-project asks for functional domains and fills Domain rules instead of TODO (T001)", () => {
+  test("init-project asks for functional domains and fills domains.md instead of TODO (T001, repointed 024)", () => {
     const initProject = fs.readFileSync(path.join(repoRoot, ".claude/skills/init-project/SKILL.md"), "utf8");
 
     // Step 1's Explore prompt gains an 11th ask for functional domains (business areas, not directories)
     expect(initProject).toContain("11. Functional domains");
     expect(initProject).toContain("business/functional areas");
 
-    // Step 3's Domain rules bullet is filled from the Step 1 scan, not left as a TODO
-    expect(initProject).toContain("**Domain rules**: Fill with the functional domains detected in Step 1");
+    // Domain rules moved out of Step 3 (conventions.md) into its own Step 3a, targeting
+    // domains.md, not left as a TODO (024: conventions.md no longer owns this vocabulary).
+    expect(initProject).not.toContain("**Domain rules**: Fill with the functional domains detected in Step 1");
+    expect(initProject).toContain("### 3a. Pre-fill domain rules");
+    expect(initProject).toContain("Update `.claude/rules/domains.md` with the functional domains detected in Step 1");
     expect(initProject).toContain("shared domain vocabulary");
     expect(initProject).not.toContain("Leave as TODO for the user to fill");
 
-    // The existing overwrite guard is reused verbatim — it already covers the whole conventions.md file
+    // Each file's own overwrite guard is reused verbatim.
     expect(initProject).toContain("If `conventions.md` already has non-template content, ask the user before overwriting.");
+    expect(initProject).toContain("If `domains.md` already has non-template content, ask the user before overwriting.");
+
+    // Summary block and closing checklist point at domains.md too.
+    expect(initProject).toContain("Domains:      .claude/rules/domains.md ✔");
+    expect(initProject).toContain("- [ ] Review and adjust domains.md");
   });
 
   test("sdd-designer uses the domain vocabulary plan-feature/SKILL.md Step 2.5 already resolved, falling back to spec.md — never exploration findings (023 T005, refines T006)", () => {
@@ -2973,10 +2981,12 @@ describe("sdd CLI smoke tests", () => {
       expect(template).not.toContain("- [ ] Other:");
 
       // The section keeps its name — new-feature/SKILL.md:172 maps to it — and now
-      // instructs real-module derivation sourced from conventions.md § Domain rules.
+      // instructs real-module derivation sourced from domains.md (024: repointed off
+      // conventions.md § Domain rules, which no longer exists).
       expect(template).toContain("## Domains");
       expect(template).toContain("Name the real modules touched");
-      expect(template).toContain("conventions.md` § Domain rules");
+      expect(template).toContain("`.claude/rules/domains.md`");
+      expect(template).not.toContain("conventions.md` § Domain rules");
     });
 
     test("extract_section still pulls Summary/Acceptance Criteria/Rollback Plan from a spec.md built off the changed template (genuine, not a regression guard)", () => {
@@ -3109,30 +3119,44 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
-  describe("sdd domain-vocab (T001)", () => {
-    // Real binary, real repo, no sourcing extract_section in isolation — that
-    // was 021's own C2 finding: a test exercised a parser production never
-    // calls, while the four consumers grepped the file themselves. This runs
-    // the exact command the consumers now call.
-    test("this repo's own conventions.md carries real domain vocabulary: sdd domain-vocab prints it and exits 0", () => {
+  describe("sdd domain-vocab (T001, repointed to domains.md by 024)", () => {
+    // Real binary, real repo. extract_section's fence/CRLF/comment-shape axes (its
+    // predecessor tests) all existed to find and bound a "## Domain rules" SECTION
+    // inside a larger file -- heading match, fence-gated terminator, CRLF-safe
+    // compare. None of that applies anymore: cmd_domain_vocab reads
+    // .claude/rules/domains.md whole, so there is no heading to find and no
+    // terminator to fence-gate. What survives is the comment-stripping awk loop
+    // (index()/substr()) and the blank-line emptiness filter, both unchanged by
+    // this feature -- the cases below exercise those, plus the file's three exit
+    // states named by AC2 (content => 0, absent => 3, comment-only => 3).
+    test("this repo's own domains.md carries real domain vocabulary: sdd domain-vocab prints it and exits 0", () => {
       const output = execFileSync(sddBin, ["domain-vocab"], {
         cwd: repoRoot,
         encoding: "utf8",
       });
 
-      // SDD_HOME's own § Domain rules names its actual functional areas, not
-      // just the template comment a fresh `sdd init` seed copy ships with.
+      // SDD_HOME's own domains.md names its actual functional areas, not just the
+      // template comment a fresh `sdd init` seed copy ships with.
       expect(output).toContain("CLI surface");
       expect(output).toContain("Phase agents");
       expect(output).toContain("bin/sdd");
     });
 
-    test("Domain rules reduced to only its HTML template comment counts as empty: no stdout, exit 3 (F1)", () => {
+    test("domains.md missing entirely: no stdout, exit 3 (AC2)", () => {
+      const project = makeTempProject();
+
+      const error = sddFail(["domain-vocab"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stdout.toString()).toBe("");
+    });
+
+    test("domains.md reduced to only its HTML template comment counts as empty: no stdout, exit 3 (AC2)", () => {
       const project = makeTempProject();
       fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
       fs.writeFileSync(
-        path.join(project, ".claude/rules/conventions.md"),
-        "# Conventions\n\n## Domain rules\n<!-- Project-specific business logic rules -->\n",
+        path.join(project, ".claude/rules/domains.md"),
+        "<!-- Project-specific business logic rules -->\n",
       );
 
       const error = sddFail(["domain-vocab"], { cwd: project });
@@ -3141,22 +3165,12 @@ describe("sdd CLI smoke tests", () => {
       expect(error.stdout.toString()).toBe("");
     });
 
-    // Review fix cycle 2 (judge #1, cross #5): the emptiness filter only
-    // matched a comment opening and closing on the SAME line, so a two-line
-    // HTML comment survived and printed as vocabulary — exit 0 with the
-    // comment as stdout, contradicting the spec's "comment-only counts as
-    // empty" and AC3's empty/absent branch. Reproduced here with a
-    // multi-line comment, the shape neither 021 nor 022 originally covered
-    // because the shipped template comment is a single line.
-    test("Domain rules reduced to only a multi-line HTML comment counts as empty: no stdout, exit 3 (judge #1, cross #5)", () => {
+    test("domains.md reduced to only a multi-line HTML comment counts as empty: no stdout, exit 3", () => {
       const project = makeTempProject();
       fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
       fs.writeFileSync(
-        path.join(project, ".claude/rules/conventions.md"),
+        path.join(project, ".claude/rules/domains.md"),
         [
-          "# Conventions",
-          "",
-          "## Domain rules",
           "<!-- Project-specific",
           "     business logic rules,",
           "     spanning multiple lines -->",
@@ -3170,12 +3184,18 @@ describe("sdd CLI smoke tests", () => {
       expect(error.stdout.toString()).toBe("");
     });
 
-    test("no Domain rules heading at all: no stdout, exit 3 — same outcome as an empty section", () => {
+    // Judge finding (review fix cycle 3, carried over from extract_section's era): a
+    // comment BODY containing '--' (an em-dash, common in this repo's own prose) used
+    // to survive a naive regex strip and print as if it were real vocabulary. The
+    // index()/substr() loop that replaced it is unchanged by this feature -- still
+    // exercised here because it is still live code, just reading a whole file instead
+    // of an extracted section.
+    test("comment-only content with an internal '--' in the body still counts as empty: no stdout, exit 3", () => {
       const project = makeTempProject();
       fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
       fs.writeFileSync(
-        path.join(project, ".claude/rules/conventions.md"),
-        "# Conventions\n\n## Naming\n- kebab-case\n",
+        path.join(project, ".claude/rules/domains.md"),
+        "<!-- revisar esta lista -- no esta cerrada -->\n",
       );
 
       const error = sddFail(["domain-vocab"], { cwd: project });
@@ -3184,933 +3204,47 @@ describe("sdd CLI smoke tests", () => {
       expect(error.stdout.toString()).toBe("");
     });
 
-    test("conventions.md missing entirely: no stdout, exit 3", () => {
+    test("real content plus a comment containing '--': prints the file, exit 0", () => {
       const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+      fs.writeFileSync(
+        path.join(project, ".claude/rules/domains.md"),
+        "- regla real\n<!-- nota -- pendiente -->\n",
+      );
+
+      const output = execFileSync(sddBin, ["domain-vocab"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output).toContain("- regla real");
+    });
+
+    test("an unterminated comment ('<!--' with no closing '-->') still counts as real content: exit 0", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+      fs.writeFileSync(
+        path.join(project, ".claude/rules/domains.md"),
+        "<!-- revisar esta lista sin cerrar\n",
+      );
+
+      const output = execFileSync(sddBin, ["domain-vocab"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+
+      expect(output).toContain("revisar esta lista sin cerrar");
+    });
+
+    test("an empty comment '<!---->' alone still counts as empty: no stdout, exit 3", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+      fs.writeFileSync(path.join(project, ".claude/rules/domains.md"), "<!---->\n");
 
       const error = sddFail(["domain-vocab"], { cwd: project });
 
       expect(error.status).toBe(3);
       expect(error.stdout.toString()).toBe("");
-    });
-
-    // Review fix cycle 3 (judge, high): the emptiness filter stripped HTML
-    // comments with the regex `<!--[^-]*(-[^-]+)*-->` — a character-class
-    // trick emulating a non-greedy match, since awk gsub has no lazy
-    // quantifier. POSIX ERE's leftmost-longest semantics broke that trick
-    // the moment a comment BODY contained '--' (e.g. an em-dash in prose,
-    // which is all over this repo's own docs): the comment survived
-    // unstripped and printed as if it were real vocabulary — exit 0
-    // instead of the empty-section exit 3. That's the exact failure this
-    // whole feature exists to prevent: a consumer sees "vocabulary exists"
-    // and skips its own fallback scan.
-    describe("comment-only sections containing '--' in the body (judge, high)", () => {
-      test("single-line comment with an internal '--': no stdout, exit 3", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\n\n## Domain rules\n<!-- revisar esta lista -- no esta cerrada -->\n",
-        );
-
-        const error = sddFail(["domain-vocab"], { cwd: project });
-
-        expect(error.status).toBe(3);
-        expect(error.stdout.toString()).toBe("");
-      });
-
-      test("two-line comment with an internal '--': no stdout, exit 3", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "<!-- revisar esta lista",
-            "-- no esta cerrada -->",
-            "",
-          ].join("\n"),
-        );
-
-        const error = sddFail(["domain-vocab"], { cwd: project });
-
-        expect(error.status).toBe(3);
-        expect(error.stdout.toString()).toBe("");
-      });
-
-      test("'---' inside a comment: no stdout, exit 3", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\n\n## Domain rules\n<!-- nota --- pendiente -->\n",
-        );
-
-        const error = sddFail(["domain-vocab"], { cwd: project });
-
-        expect(error.status).toBe(3);
-        expect(error.stdout.toString()).toBe("");
-      });
-
-      test("real content plus a comment containing '--': prints the section, exit 0", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\n\n## Domain rules\n- regla real\n<!-- nota -- pendiente -->\n",
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- regla real");
-      });
-    });
-
-    describe("comment shapes the '--' fix must not regress", () => {
-      test("unterminated comment ('<!--' with no closing '-->') still counts as real content: exit 0", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\n\n## Domain rules\n<!-- revisar esta lista sin cerrar\n",
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("revisar esta lista sin cerrar");
-      });
-
-      test("empty comment '<!---->' alone still counts as empty: no stdout, exit 3", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\n\n## Domain rules\n<!---->\n",
-        );
-
-        const error = sddFail(["domain-vocab"], { cwd: project });
-
-        expect(error.status).toBe(3);
-        expect(error.stdout.toString()).toBe("");
-      });
-
-      // A nested-looking '<!-- a <!-- b -->' is still just ONE HTML comment
-      // (the first '<!--' through the first '-->' after it) with no real
-      // content outside it — so, per the same "comment-only counts as
-      // empty" rule this fix restores, it counts as empty too.
-      test("nested-looking comment ('<!-- a <!-- b -->') is one comment with no real content: exit 3", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\n\n## Domain rules\n<!-- a <!-- b -->\n",
-        );
-
-        const error = sddFail(["domain-vocab"], { cwd: project });
-
-        expect(error.status).toBe(3);
-        expect(error.stdout.toString()).toBe("");
-      });
-    });
-
-    // Review fix cycle 4: extract_section's heading compare (`$0 == heading`)
-    // is an exact string match. On a CRLF file, $0 for the heading line is
-    // "## Domain rules\r" — never equal to "## Domain rules" — so the
-    // section is never found and reads as empty regardless of its real
-    // content. Reproduced live against the unfixed binary before this test
-    // was written (see decisions.md).
-    describe("CRLF line endings (review fix cycle 4)", () => {
-      test("CRLF conventions.md with real content in Domain rules: prints it, exit 0", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\r\n\r\n## Domain rules\r\n- assign-engine\r\n",
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- assign-engine");
-      });
-
-      test("CRLF conventions.md with a comment-only Domain rules section: no stdout, exit 3", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\r\n\r\n## Domain rules\r\n<!-- Project-specific business logic rules -->\r\n",
-        );
-
-        const error = sddFail(["domain-vocab"], { cwd: project });
-
-        expect(error.status).toBe(3);
-        expect(error.stdout.toString()).toBe("");
-      });
-    });
-
-    // T002 / AC4 / AC8 (document-structure axis): extract_section finds
-    // "## <heading>" and reads until the next "^## ", so a "## "-shaped line
-    // INSIDE a fenced code block used to end the section early — reproduced
-    // live against a § Domain rules section whose fence held a "## Code
-    // example" line. Silent: exit 0, content just missing. Fixed with a
-    // single fence_char/fence_len state (F9) keyed to the delimiter that
-    // opened the current fence — not independent per-character toggles —
-    // tracked unconditionally from line 1, so the terminator only fires
-    // outside every fence. Ported to Node in review fix cycle 2
-    // (decisions.md, 2026-08-31); see tests/extract-section.test.js and
-    // src/extract-section.js for the current implementation and its own
-    // grammar rationale.
-    describe("document structure — fenced code blocks (T002)", () => {
-      test("no fence at all: output is byte-identical to the unfenced case (control)", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          "# Conventions\n\n## Domain rules\n- assign-engine\n- resonador equ_servicio_id=44\n",
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toBe("- assign-engine\n- resonador equ_servicio_id=44\n");
-      });
-
-      test("a '## '-shaped line inside a ``` fence does not terminate the section", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "```",
-            "## Code example inside the fence, must not terminate",
-            "- more vocab still inside the fence",
-            "```",
-            "- vocab after the fence closes",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- real vocab before the fence");
-        expect(output).toContain("## Code example inside the fence, must not terminate");
-        expect(output).toContain("- more vocab still inside the fence");
-        expect(output).toContain("- vocab after the fence closes");
-        expect(output).not.toContain("should not appear");
-      });
-
-      test("a '## '-shaped line inside a ~~~ fence does not terminate the section", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "~~~",
-            "## Code example inside the tilde fence, must not terminate",
-            "- more vocab still inside the fence",
-            "~~~",
-            "- vocab after the fence closes",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- real vocab before the fence");
-        expect(output).toContain("## Code example inside the tilde fence, must not terminate");
-        expect(output).toContain("- more vocab still inside the fence");
-        expect(output).toContain("- vocab after the fence closes");
-        expect(output).not.toContain("should not appear");
-      });
-
-      // F9: a naive single shared boolean would let a literal '~~~' line
-      // INSIDE an open ``` block flip state to "closed", so the very next
-      // '## ' line would then wrongly terminate the section — the opposite
-      // of the "when unsure, cut too little" tie-breaker. The shipped
-      // fence_char/fence_len state avoids this without needing two
-      // independent toggles: a close only happens on a run of the SAME
-      // character (at least as long as the opener), so a ~~~ line while
-      // fence_char is "`" is just literal text and the ``` fence stays open.
-      test("a literal '~~~' line inside an open ``` fence does not close it, so a following '## ' still does not terminate", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "```",
-            "~~~",
-            "## should not terminate: still inside the open ``` fence",
-            "- vocab after the fake heading, still inside the ``` fence",
-            "```",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- real vocab before the fence");
-        expect(output).toContain("## should not terminate: still inside the open ``` fence");
-        expect(output).toContain("- vocab after the fake heading, still inside the ``` fence");
-      });
-
-      test("an unclosed fence: everything after it stays in the section through EOF", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "```",
-            "unclosed fence content",
-            "## looks like a heading but is inside the still-open fence",
-            "even more content, never closed before EOF",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- real vocab before the fence");
-        expect(output).toContain("unclosed fence content");
-        expect(output).toContain("## looks like a heading but is inside the still-open fence");
-        expect(output).toContain("even more content, never closed before EOF");
-      });
-
-      // Coordinator review (defect 1): the fence tracking is an unconditional
-      // pre-block (alongside the CRLF strip), so state carries from line 1
-      // regardless of `found` — but that means a fence opened in an EARLIER
-      // section, still open when the target heading is reached, makes THAT
-      // occurrence of the heading fenced content, not a real section start.
-      // The heading match is fence-gated exactly like the terminator: with
-      // no real, un-fenced "## Domain rules" anywhere else in the file,
-      // nothing is found at all. (Corrects this test's own prior version,
-      // which assumed the opposite — that a fenced heading still counted.)
-      test("a fence opened above the heading being extracted, still open when the heading is reached, means that occurrence is not recognized: no real section exists, so nothing is found", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Naming",
-            "kebab-case, and a fence opens here without closing before Domain rules:",
-            "```",
-            "still open fence content, carried across the heading below",
-            "",
-            "## Domain rules",
-            "- this occurrence is inside the carried-over fence, not a real heading",
-            "```",
-            "- prose after the fence actually closes — still not a real Domain rules section",
-            "",
-          ].join("\n"),
-        );
-
-        const error = sddFail(["domain-vocab"], { cwd: project });
-
-        expect(error.status).toBe(3);
-        expect(error.stdout.toString()).toBe("");
-      });
-    });
-
-    // Coordinator review: two defects found live against the committed T002
-    // fix. (1) The terminator was fence-gated but `$0 == heading { found=1 }`
-    // was not, so a heading-shaped line INSIDE a fence was taken as the real
-    // section start — example text handed out as real content, exit 0. (2)
-    // Two independent per-character toggles are not how fences nest: in
-    // CommonMark a fence is closed only by a fence of the SAME character, so
-    // a `~~~` line inside an open ``` block is literal text, not a delimiter
-    // — treating it as one let a stray tilde get "stuck", never closing.
-    // Fixed by keying a single `fence` state to the delimiter that opened it
-    // (empty when closed), gating BOTH the heading match and the terminator
-    // on `fence == ""`. One state, not two booleans: a second, opposite-
-    // character delimiter encountered while `fence` is already set is just
-    // content — only a repeat of the SAME delimiter closes it.
-    describe("fence model corrections: the heading match is fence-gated too, and fences nest by matching delimiter (coordinator review)", () => {
-      test("a heading-shaped line inside a fence, with no real section anywhere: exit 3, no stdout", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Ejemplo de uso",
-            "```",
-            "## Domain rules",
-            "- ESTO ES UN EJEMPLO, no vocabulario real",
-            "```",
-            "",
-            "## Otra cosa",
-            "- nada",
-            "",
-          ].join("\n"),
-        );
-
-        const error = sddFail(["domain-vocab"], { cwd: project });
-
-        expect(error.status).toBe(3);
-        expect(error.stdout.toString()).toBe("");
-      });
-
-      test("a heading-shaped line inside a fence, plus a real section afterward: returns only the real section's content", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Ejemplo de uso",
-            "```",
-            "## Domain rules",
-            "- ESTO ES UN EJEMPLO, no vocabulario real",
-            "```",
-            "",
-            "## Domain rules",
-            "- vocabulario real",
-            "",
-            "## Otra cosa",
-            "- nada",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- vocabulario real");
-        expect(output).not.toContain("ESTO ES UN EJEMPLO");
-        expect(output).not.toContain("- nada");
-      });
-
-      test("a '~~~' line inside an open ``` block is literal text, not a delimiter — a following real '## ' heading still terminates the section", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- vocabulario real",
-            "```",
-            "~~~",
-            "```",
-            "",
-            "## Otra seccion",
-            "- NO debe aparecer",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- vocabulario real");
-        expect(output).toContain("~~~");
-        expect(output).not.toContain("NO debe aparecer");
-      });
-
-      test("a '```' line inside an open ~~~ block is literal text, not a delimiter — the mirror case", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- vocabulario real",
-            "~~~",
-            "```",
-            "~~~",
-            "",
-            "## Otra seccion",
-            "- NO debe aparecer",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- vocabulario real");
-        expect(output).toContain("```");
-        expect(output).not.toContain("NO debe aparecer");
-      });
-
-      test("a fence opened with an info string (```js) is still closed by a bare ``` — the delimiter, not the whole line, is what's tracked", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- vocabulario real",
-            "```js",
-            "const x = 1;",
-            "```",
-            "- after fence",
-            "",
-            "## Otra seccion",
-            "- NO debe aparecer",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- vocabulario real");
-        expect(output).toContain("const x = 1;");
-        expect(output).toContain("- after fence");
-        expect(output).not.toContain("NO debe aparecer");
-      });
-    });
-
-    // JUDGMENT-DAY-HIGH (decisions.md, review fix cycle 1): same grammar-
-    // derived rules as the build_pr_body_file describe block above, proven
-    // for this consumer too so the axis is covered end to end, not just in
-    // the shared awk helper. See that block's header comment for the
-    // CommonMark rules being enumerated.
-    describe("CommonMark fence grammar (review fix cycle 1)", () => {
-      test("a fence indented 1, 2, or 3 spaces — the ordinary shape nested inside a list item — is still tracked, so a '## '-shaped line inside any of them does not terminate", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fences",
-            "1. Fence indented 1 space:",
-            " ```",
-            "## indented-1 heading-shaped line, must not terminate",
-            " ```",
-            "2. Fence indented 2 spaces:",
-            "  ```",
-            "## indented-2 heading-shaped line, must not terminate",
-            "  ```",
-            "3. Fence indented 3 spaces:",
-            "   ```",
-            "## indented-3 heading-shaped line, must not terminate",
-            "   ```",
-            "- vocab after the indented fences",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- real vocab before the fences");
-        expect(output).toContain("## indented-1 heading-shaped line, must not terminate");
-        expect(output).toContain("## indented-2 heading-shaped line, must not terminate");
-        expect(output).toContain("## indented-3 heading-shaped line, must not terminate");
-        expect(output).toContain("- vocab after the indented fences");
-        expect(output).not.toContain("should not appear");
-      });
-
-      test("a fence marker indented 4 spaces is NOT tracked (CommonMark: 4+ spaces is an indented code block, not a fence) — a real heading right after it still terminates, by deliberate design", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the marker",
-            "    ```",
-            "    content that looks fenced, but 4-space indentation means",
-            "    this is an indented code block, not a tracked fence",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- real vocab before the marker");
-        expect(output).toContain("this is an indented code block, not a tracked fence");
-        expect(output).not.toContain("should not appear");
-      });
-
-      test("a 4-backtick fence tolerates an inner triple-backtick line as content -- only a run of 4+ backticks closes it", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "````",
-            "```",
-            "## inside the quadruple-backtick fence -- the inner triple does not close it, must not terminate",
-            "````",
-            "- vocab after the quad fence closes",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- real vocab before the fence");
-        expect(output).toContain(
-          "## inside the quadruple-backtick fence -- the inner triple does not close it, must not terminate",
-        );
-        expect(output).toContain("- vocab after the quad fence closes");
-        expect(output).not.toContain("should not appear");
-      });
-
-      test("a closing run longer than the opening also closes it: a 3-backtick fence IS closed by a 4-backtick line, since CommonMark requires the closer to be only 'at least as long', not an exact match", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "```",
-            "content inside a triple-backtick fence",
-            "````",
-            "- real vocab after the fence closes: the 4-backtick line already closed it",
-            "",
-            "## Next Section",
-            "should not appear: the fence is closed, so this is a real terminator",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("- real vocab before the fence");
-        expect(output).toContain("content inside a triple-backtick fence");
-        // The 4-backtick line closed the fence, so this line is real,
-        // un-fenced section content and DOES appear.
-        expect(output).toContain("- real vocab after the fence closes: the 4-backtick line already closed it");
-        // ...and because the fence is closed by then, "## Next Section" is a
-        // real terminator, so its own content is excluded.
-        expect(output).not.toContain("should not appear: the fence is closed, so this is a real terminator");
-      });
-
-      test("a closing fence indented differently from the opening still closes it -- CommonMark checks each fence line's own indentation independently", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "```",
-            "content in a fence opened at column 0",
-            "  ```",
-            "- vocab after the differently-indented close",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("content in a fence opened at column 0");
-        expect(output).toContain("- vocab after the differently-indented close");
-        expect(output).not.toContain("should not appear");
-      });
-
-      test("a line that looks like a closing fence but carries an info string does not close -- only a bare delimiter run (optionally followed by spaces) does", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "```",
-            "content before the fake closer",
-            "```js",
-            "still inside -- a closer carrying an info string is not a real closer",
-            "```",
-            "- vocab after the real close",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("still inside -- a closer carrying an info string is not a real closer");
-        expect(output).toContain("- vocab after the real close");
-        expect(output).not.toContain("should not appear");
-      });
-
-      test("tilde equivalents: an indented ~~~ fence is tracked, and a 4-tilde fence tolerates an inner triple-tilde line as content", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fences",
-            "1. Tilde fence indented 2 spaces:",
-            "  ~~~",
-            "## indented tilde heading-shaped line, must not terminate",
-            "  ~~~",
-            "~~~~",
-            "~~~",
-            "## inside the quadruple-tilde fence -- the inner triple does not close it, must not terminate",
-            "~~~~",
-            "- vocab after the tilde fences",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("## indented tilde heading-shaped line, must not terminate");
-        expect(output).toContain(
-          "## inside the quadruple-tilde fence -- the inner triple does not close it, must not terminate",
-        );
-        expect(output).toContain("- vocab after the tilde fences");
-        expect(output).not.toContain("should not appear");
-      });
-
-      test("tilde mirror: a closer carrying an info string does not close a ~~~ fence -- only a bare tilde run does", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- real vocab before the fence",
-            "~~~",
-            "content before the fake tilde closer",
-            "~~~js",
-            "still inside -- a tilde closer carrying an info string is not a real closer",
-            "~~~",
-            "- vocab after the real tilde close",
-            "",
-            "## Next Section",
-            "should not appear",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("still inside -- a tilde closer carrying an info string is not a real closer");
-        expect(output).toContain("- vocab after the real tilde close");
-        expect(output).not.toContain("should not appear");
-      });
-
-      // Judge #6 (review fix cycle 2, JUDGMENT-DAY-HIGH (2)): CommonMark
-      // §4.5 -- a backtick in a backtick fence's info string is illegal, so
-      // the line never opens a fence. The shipped matcher accepted it on
-      // run length alone, so an unclosed bogus fence swallowed the real
-      // "## Next Section" heading and its content into Domain rules.
-      test("an opening ``` line with a backtick in its info string is not a fence, so a real heading right after it still terminates the section", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- GENUINE-VOCAB-BEFORE",
-            "```code`example",
-            "- GENUINE-VOCAB-AFTER-BOGUS-OPENER",
-            "",
-            "## Next Section",
-            "SHOULD-NOT-APPEAR-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("GENUINE-VOCAB-BEFORE");
-        expect(output).toContain("GENUINE-VOCAB-AFTER-BOGUS-OPENER");
-        expect(output).not.toContain("SHOULD-NOT-APPEAR-MARKER");
-      });
-
-      // Judge #7 (review fix cycle 2, JUDGMENT-DAY-HIGH (2)): CommonMark
-      // §4.5 -- a closing delimiter "may be followed only by spaces or
-      // tabs, which are ignored". The shipped trim stripped spaces only,
-      // so a tab-trailing closer never closed and the section leaked to
-      // EOF. Backtick branch.
-      test("a closing ``` line followed by a trailing tab still closes the fence", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- GENUINE-VOCAB-BEFORE",
-            "```",
-            "fenced content, ignored",
-            "```\t",
-            "- GENUINE-VOCAB-AFTER-FENCE",
-            "",
-            "## Next Section",
-            "SHOULD-NOT-APPEAR-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("GENUINE-VOCAB-BEFORE");
-        expect(output).toContain("GENUINE-VOCAB-AFTER-FENCE");
-        expect(output).not.toContain("SHOULD-NOT-APPEAR-MARKER");
-      });
-
-      // Judge #7, tilde branch -- same tab-trailing-closer defect, mirrored.
-      test("a closing ~~~ line followed by a trailing tab still closes the fence", () => {
-        const project = makeTempProject();
-        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
-        fs.writeFileSync(
-          path.join(project, ".claude/rules/conventions.md"),
-          [
-            "# Conventions",
-            "",
-            "## Domain rules",
-            "- GENUINE-VOCAB-BEFORE",
-            "~~~",
-            "fenced content, ignored",
-            "~~~\t",
-            "- GENUINE-VOCAB-AFTER-FENCE",
-            "",
-            "## Next Section",
-            "SHOULD-NOT-APPEAR-MARKER",
-            "",
-          ].join("\n"),
-        );
-
-        const output = execFileSync(sddBin, ["domain-vocab"], {
-          cwd: project,
-          encoding: "utf8",
-        });
-
-        expect(output).toContain("GENUINE-VOCAB-BEFORE");
-        expect(output).toContain("GENUINE-VOCAB-AFTER-FENCE");
-        expect(output).not.toContain("SHOULD-NOT-APPEAR-MARKER");
-      });
     });
   });
 
@@ -4129,17 +3263,26 @@ describe("sdd CLI smoke tests", () => {
         path.join(project, ".claude/rules/conventions.md"),
         "utf8",
       );
+      const domains = fs.readFileSync(path.join(project, ".claude/rules/domains.md"), "utf8");
       const modelOverrides = fs.readFileSync(
         path.join(project, ".claude/rules/model-overrides.md"),
         "utf8",
       );
       const gitMd = fs.readFileSync(path.join(project, ".claude/rules/git.md"), "utf8");
 
-      // None of SDD_HOME's own domain vocabulary (T008) leaks into a new project.
-      expect(conventions).not.toContain("CLI surface");
-      expect(conventions).not.toContain("Phase agents");
-      expect(conventions).not.toContain("bin/sdd` subcommands");
-      expect(conventions).toContain("## Domain rules");
+      // 024: Domain rules moved out of conventions.md into its own file — the seed
+      // no longer carries the section at all, and the seed copy loop (`cmd_init`'s
+      // generic `*.md` glob over .specify/templates/rules/) picks up domains.md
+      // without any dedicated code for it.
+      expect(conventions).not.toContain("## Domain rules");
+
+      // None of SDD_HOME's own domain vocabulary (T008, moved to domains.md by 024)
+      // leaks into a new project's domains.md either — the seed copy is a pristine
+      // placeholder, not this repo's own filled-in file (021 T009's SEED-CONTAMINATION).
+      expect(domains).not.toContain("CLI surface");
+      expect(domains).not.toContain("Phase agents");
+      expect(domains).not.toContain("bin/sdd` subcommands");
+      expect(domains).toContain("<!-- Project-specific business logic rules -->");
 
       // None of SDD_HOME's own model override row leaks into a new project.
       expect(modelOverrides).not.toContain("haiku");

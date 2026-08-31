@@ -13,6 +13,3 @@
 
 ## Lint / Format
 <!-- e.g. ESLint, Prettier, Ruff, etc. -->
-
-## Domain rules
-<!-- Project-specific business logic rules -->

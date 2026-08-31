@@ -14,7 +14,7 @@
 
 ## Domains
 <!-- Name the real modules touched. No checklist. Names come from
-     `.claude/rules/conventions.md` § Domain rules if it has content,
+     `.claude/rules/domains.md` if it has content,
      else from your Step 0 scan. One line per module. -->
 - `<path/or/module>` — <what changes>
 

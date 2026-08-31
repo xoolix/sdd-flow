@@ -100,7 +100,7 @@ Usage:
                                  decisions.md; writes .pr-opened on success only. Pre-flight failure
                                  pushes nothing and prints the manual command to stderr.
   sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
-  sdd domain-vocab               Print § Domain rules from .claude/rules/conventions.md;
+  sdd domain-vocab               Print .claude/rules/domains.md;
                                  exit 3 (no output) if empty, comment-only, or absent
   sdd help                       Show this help
 
@@ -1509,23 +1509,26 @@ cmd_status() {
 
 # ─── domain-vocab ───────────────────────────────────────────────────
 
-# Prints § Domain rules from .claude/rules/conventions.md so the four
-# consumers that used to grep the file directly can call the CLI instead
-# (ADR 0003: the CLI resolves content, the agent reads knobs directly).
+# Prints .claude/rules/domains.md whole so the four consumers that used to
+# grep the file directly can call the CLI instead (ADR 0003: the CLI
+# resolves content, the agent reads knobs directly). No heading to find and
+# no section to extract: the domain vocabulary owns its whole file now, so
+# this reads it byte-for-byte and goes straight to the emptiness check
+# below.
 #
-# extract_section returns a comment-only section as non-empty content —
-# conventions.md ships with exactly that shape ("<!-- Project-specific
-# business logic rules -->", 46 chars) until a project fills it in — so
-# blank and comment-only lines are filtered out here before deciding
-# emptiness. "Empty" and "absent" collapse to the same exit code: the spec
-# treats them as one branch and no consumer distinguishes them.
+# A comment-only file counts as empty — domains.md ships with exactly that
+# shape ("<!-- Project-specific business logic rules -->", 46 chars) until
+# a project fills it in — so blank and comment-only lines are filtered out
+# here before deciding emptiness. "Empty" and "absent" collapse to the same
+# exit code: the spec treats them as one branch and no consumer
+# distinguishes them.
 cmd_domain_vocab() {
-  local file=".claude/rules/conventions.md"
+  local file=".claude/rules/domains.md"
 
   [ -f "$file" ] || return 3
 
   local section
-  section="$(extract_section "$file" "Domain rules")"
+  section="$(cat "$file")"
 
   # Strip whole '<!-- ... -->' spans before testing for emptiness, however
   # many lines they cover. A filter that only matched a comment opening and
