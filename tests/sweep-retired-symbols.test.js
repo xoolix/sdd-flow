@@ -233,3 +233,47 @@ describe("sweep: walk() symlink containment (re-review cycle 2, low finding #3)"
     }
   });
 });
+
+// Judge medium, re-review cycle 3 (accepted, taken before archiving — see
+// decisions.md): EXCLUDED_PATHS and the two files it names had no automated pin.
+// A silent third exclusion, or unrelated content landing inside the excluded
+// proof file, depended entirely on a reviewer noticing the diff -- the same
+// "trust the reviewer" exposure this feature's history shows reviewers already
+// missed twice. Unlike the four content-validating rules that failed across
+// three review rounds (marker balance, span content, span count), this pin has
+// no content logic for a crafted construction to satisfy sideways: it is a set
+// equality and a title/count comparison, nothing else. Do not turn it into a
+// parser -- if a test is ever added, removed, or renamed here on purpose, this
+// pin is what's supposed to change, not survive unnoticed.
+describe("sweep: the two-file exclusion hatch is pinned (re-review cycle 3, medium)", () => {
+  test("EXCLUDED_PATHS names exactly these two files and no others", () => {
+    expect(EXCLUDED_PATHS).toEqual(
+      new Set(["tests/sweep-retired-symbols.test.js", "tests/retired-symbol-proofs.test.js"]),
+    );
+  });
+
+  test("tests/retired-symbol-proofs.test.js contains exactly these five tests, pinned by title", () => {
+    const proofsPath = path.join(repoRoot, "tests", "retired-symbol-proofs.test.js");
+    const content = fs.readFileSync(proofsPath, "utf8");
+
+    // The file's entire content-by-design promise (see its own header comment):
+    // exactly these five named proofs of removal, nothing else.
+    const expectedTitles = [
+      "open-pr no longer exists: unknown command in dispatch, and usage() does not list it (024 AC1)",
+      "git.md rewrites the never-commit policy to commit-per-slice + auto-commit knob (T013)",
+      "sdd-next and sdd-auto drop the ready-to-pr gate and its never-ask exception (024 AC4)",
+      "CLAUDE.md master docs retire the PR gate — human-input list, pipeline diagram, detection table, workflow diagram, archive format, commands (024 AC4)",
+      "reports archived for an archived feature whether or not a stray .pr-opened sentinel exists",
+    ];
+
+    for (const title of expectedTitles) {
+      // Renaming a title breaks this line, independent of the count check below.
+      expect(content).toContain(`test("${title}"`);
+    }
+
+    // Adding a sixth test (or deleting one without updating this list) breaks
+    // the count, independent of which titles still match above.
+    const testCallCount = (content.match(/\btest\(/g) || []).length;
+    expect(testCallCount).toBe(expectedTitles.length);
+  });
+});

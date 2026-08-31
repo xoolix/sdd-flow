@@ -158,3 +158,46 @@ Implementada la resolución de JUDGMENT-DAY-HIGH (3) tal como se decidió: sacar
 Aritmética de la suite: **107 → 101 tests** (2 → 3 suites). Se explica en dos movimientos independientes: mudar los cinco tests de prueba-de-eliminación es neto cero (salen de `sdd.test.js`, entran a `retired-symbol-proofs.test.js`: 97→92 y 0→5); borrar los seis tests que custodiaban el mecanismo de marcadores en `tests/sweep-retired-symbols.test.js` es neto −6 (10→4, sin reemplazo — no hay nada que reemplace un test que probaba una función que ya no existe). 92 + 4 + 5 = 101.
 
 No se tocó `bin/sdd` — intacto desde T003, sin ninguna referencia a los diez símbolos retirados salvo dentro de las mutaciones de control, las tres revertidas. Tampoco se tocaron las exclusiones de directorio (`docs/`, `specs/`), el containment de symlinks, ni el test de orden de AC4 (`indexOf`) — se mudó intacto junto con el test de AC4 al que pertenece.
+
+## Simplify: 2026-08-31 — /simplify-code (cuarta pasada)
+- **Files simplified**: none
+- **Alcance recalculado** (`sdd base-branch 024-remove-auto-pr` vía el sidecar `.parent-branch` → `cba3f9a`, `git diff --name-only cba3f9a..HEAD`): 25 archivos brutos. Tras el filtro de tests y el filtro extendido de artefactos SDD de `.claude/agents/sdd-simplify-code.md` (que ya incluye `.claude/agents/**/*.md` y `docs/adr/**/*.md`), `SCOPED_FILES` queda idéntico al de la tercera pasada: `.claude/rules/{conventions,domains,git}.md`, `.specify/templates/rules/{conventions,domains,git}.md` y `bin/sdd`. `src/extract-section.js` aparece en el diff crudo pero está borrado (`D`, por T003) — no existe para leer.
+- **Confirmado byte-idéntico a las tres pasadas anteriores**: `git log --oneline -1 -- <archivo>` para cada uno de los siete apunta a T001 (`2a302aa`), T002 (`aaf746e`) o T003 (`5b96fd5`) — ninguno de los tres commits de review fix cycle (`54819c8`, `b071cb3`, `13b3202`) los toca; `git diff --name-only 54819c8..HEAD` devuelve solo `decisions.md` y los dos archivos de test. Se carga el juicio de las tres pasadas anteriores hacia adelante sin releer letra por letra, tal como pidió el brief de esta pasada: `bin/sdd` es diff de pura eliminación ya revisado línea por línea; las seis páginas de `rules`/`templates` son prosa de convenciones ya leída y sin nesting ni lógica.
+- **`tests/sweep-retired-symbols.test.js` (235 líneas) y `tests/retired-symbol-proofs.test.js` (230 líneas, nuevo) leídos completos** — son los únicos archivos que cambiaron desde la tercera pasada. Ambos son archivos de test: excluidos por el filtro de alcance y por la NEVER list ("never touch test files"). Confirmado que leen con claridad: un comentario de cabecera por archivo que explica el diseño y por qué existe la exclusión por ruta, nombres explícitos (`isWithin`, `walk`, `livingSurfaceFiles`, `findHits`, `EXCLUDED_PATHS`, `makeTempProject`, `sddFail`), un comentario por invariante no obvio (symlink vía `statSync` en vez de `Dirent.isDirectory()`, "scans less noise, not less coverage"). `tests/retired-symbol-proofs.test.js` contiene exactamente los cinco tests movidos (AC1 unknown-command, la política de `git.md`, las dos de wiring de AC4, el sentinel colgado de AC6) y nada más — confirma la afirmación de la pasada anterior de que el hueco no se ensanchó.
+- **Nada genuinamente incorrecto encontrado.** No se hizo ninguna edición.
+- **Baseline**: pass (101/101, 3 suites) | **Post-edit**: pass (101/101, 3 suites, sin cambios de código — working tree limpio antes y después)
+- **Commit**: none — cero archivos terminaron con una modificación real; `git status --short` limpio antes y después, nada que stagear (equivalente al camino "SCOPED_FILES vacío" del protocolo, mismo tratamiento que la tercera pasada).
+
+## REVIEW-CONSOLIDATION (re-review ciclo 3) — PASS WITH WARNINGS
+
+Reviewer: **PASS**. Judge: **PASS WITH WARNINGS** (un medium). Los dos atacaron el diseño nuevo por separado y los dos concluyen que la regresión termina.
+
+**Respuesta del judge a la meta-pregunta, octava y última vez — y esta vez es limpia**: los tres JUDGMENT-DAY-HIGH previos fueron bugs en la **lógica de un validador de contenido** (ubicación del marcador, balance, contenido del span, conteo de spans). Cada arreglo cerró el bug demostrado y dejó el resto de la lógica para volver a sondear. Borrar el mecanismo es un movimiento de otra clase: **ya no hay parser en el que pueda haber un bug de parseo**. La exclusión por ruta no tiene reglas, ni estado, ni conteo — nada que una entrada fabricada pueda derrotar, porque no intenta distinguir contenido bueno de malo. *"Angostar quién puede usar una escotilla converge a custodiarla para siempre; sacarla elimina la categoría de ataque, no la instancia más reciente."*
+
+Ninguno de los dos lo aceptó de palabra:
+- El judge diffeó los cinco tests mudados byte a byte contra su forma en `b071cb3` (idénticos salvo indentación), reprodujo el ataque del ciclo 3 (agarrado), corrió tres mutaciones de control (las tres agarradas) y probó el modo de falla de la exclusión: renombrarla con un typo pone el suite en rojo con 32 hits, **no lo abre en silencio**.
+- El reviewer replicó el ataque de comentario de bloque adentro de un span existente —el que derrotó los dos mecanismos a la vez— y ahora se agarra (`tests/sdd.test.js:126`). Después atacó el punto débil nuevo: un test colgado adentro del archivo excluido pasa en silencio, confirmando que el agujero declarado es real.
+
+**La distinción del reviewer sobre por qué el agujero nuevo no es el viejo con otra forma**: el viejo era un mecanismo que *parecía* funcionar y engañó a tres rondas de review; el nuevo es un archivo de 230 líneas, de un solo propósito, cuyo encabezado dice qué va adentro. Violarlo es un desajuste de propósito, no una regla satisfecha con una construcción astuta.
+
+**Medium del judge, aceptado y en alcance**: `EXCLUDED_PATHS` y los dos archivos que nombra no tienen pin automatizado — una tercera exclusión silenciosa, o contenido ajeno adentro del archivo excluido, dependen de que alguien lo vea en el diff. Es la misma clase de exposición "confiá en el revisor" que la historia de este feature muestra que los revisores ya fallaron dos veces.
+
+[2026-08-31] Resolución: **tomar el pin antes de archivar**. Fijar que `EXCLUDED_PATHS` sea exactamente esas dos rutas y que `tests/retired-symbol-proofs.test.js` tenga exactamente los cinco tests con sus títulos. Razón para tomarlo pese al veredicto habilitante: convierte el último punto de confianza en un chequeo, y **no puede reabrir la regresión** — es una igualdad sobre un conjunto y un conteo de títulos, sin lógica de contenido que una construcción pueda satisfacer torcidamente. Es la diferencia entre este pin y las cuatro reglas que fallaron antes.
+
+## Implementación: 2026-08-31 — pin de EXCLUDED_PATHS + títulos (cierra el medium de re-review ciclo 3)
+
+Agregadas dos aserciones en un `describe` nuevo al final de `tests/sweep-retired-symbols.test.js`, sin tocar `bin/sdd` ni ningún archivo de producción:
+
+- **`EXCLUDED_PATHS` es exactamente ese Set de dos rutas** — `expect(EXCLUDED_PATHS).toEqual(new Set([...]))` — una tercera exclusión silenciosa rompe esta línea sola.
+- **`tests/retired-symbol-proofs.test.js` tiene exactamente esos cinco tests, fijados por título** — para cada uno de los cinco títulos esperados, `content.toContain(`test("${title}"`)`; y por separado, `(content.match(/\btest\(/g) || []).length` debe ser 5. Las dos mitades cubren fallos distintos a propósito: renombrar un título rompe la primera sin tocar la segunda; agregar un sexto test (real o colgado) rompe la segunda sin tocar la primera.
+
+Sin lógica de parseo: ninguna de las dos aserciones distingue contenido bueno de malo, así que no hay nada en lo que un ataque de construcción pueda apoyarse — la razón por la que el usuario aceptó tomar el pin pese a que el veredicto ya habilitaba archivar.
+
+**Tres mutaciones de control, todas revertidas después de confirmar el rojo real** (ver salidas abajo):
+1. Agregar una tercera ruta a `EXCLUDED_PATHS` → rojo en la aserción del Set (`toEqual` muestra la ruta de más).
+2. Agregar un sexto test a `tests/retired-symbol-proofs.test.js` → rojo en el conteo (`Expected: 5, Received: 6`).
+3. Renombrar uno de los cinco títulos → rojo en el `toContain` de ese título, antes de llegar al conteo.
+
+Lo ya verificado en rondas anteriores sigue vigente sin cambios: el ataque de comentario de bloque contra `tests/sdd.test.js` sigue detectado, una referencia colgada real en `bin/sdd` sigue detectada, una instrucción colgada en la prosa de un agente sigue detectada, y los cinco tests mudados corren con sus aserciones intactas.
+
+**Aritmética de la suite**: 101 → 103 tests (3 suites sin cambio) — los dos tests nuevos del pin, netos, nada más se movió ni se borró.
