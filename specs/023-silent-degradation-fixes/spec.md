@@ -23,6 +23,7 @@ Cinco puntos donde la herramienta se degrada sin avisar, más lo que evita que v
 - Fence abierto **antes** del heading buscado, y fence sin cerrar: ante la duda, cortar de menos.
 - `cmd_base_branch` pasa de un consumidor (la terminal) a dos: no debe cambiar para el primero.
 - Archivo del feature dir stageado a propósito por una decisión HITL: se avisa, no se descarta.
+- **Riesgo aceptado, fuera de alcance** (judge #3, review fix cycle 1): `specs/archive/003-plan-discovery-checkpoint` y `004-adversarial-review-agent` son anteriores al prefijo `YYYY-MM-DD-`, así que el glob `*-<id>` de `resolve_feature_dir` nunca los matchea. Hoy es inocuo porque ninguno de los dos tiene `.parent-branch`; si alguno lo tuviera, `cmd_base_branch` caería en silencio a la capa 2/3 — la misma forma de degradación que AC1 arregla. Se deja registrado, no se corrige: no forma parte de este feature.
 
 ## Acceptance Criteria
 - [ ] Given un feature archivado en `specs/archive/<fecha>-<id>/` cuyo `.parent-branch` nombra una rama existente, When corre `sdd base-branch <id>`, Then imprime esa rama y no la autodetectada.

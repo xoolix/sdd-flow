@@ -1056,26 +1056,43 @@ PR_BODY_MAX_CHARS=60000
 # early — reproduced live against a § Domain rules section whose fence held
 # a "## Code example" line, exit 0 with the real content silently missing.
 #
-# `fence` is ONE variable holding the delimiter of the currently open fence
-# ("```", "~~~", or "" when closed) — not two independent booleans. CommonMark
-# closes a fence only with a fence of the SAME character, so a `~~~` line
-# while `fence` is "```" is just literal text; two shared-nothing toggles
-# would instead flip their own state regardless of which fence is actually
-# open, and a stray never-repeated tilde would then stick "closed" forever
-# (`index($0, fence) == 1` matches on the delimiter, not the whole line, so a
-# ```js opener still closes on a bare ```).
+# Both the terminator AND the heading match itself are gated on being
+# outside any fence — a heading-shaped line inside a fence is fenced example
+# text either way, whether it's the one ending the section or the one that
+# looks like it starts the sought section. Recognizing it as real in either
+# direction hands a caller fabricated content at exit 0 — this feature's
+# failure mode, just at the start of a section instead of the end.
 #
-# Both the terminator AND the heading match itself are gated on `fence == ""`
-# — a heading-shaped line inside a fence is fenced example text either way,
-# whether it's the one ending the section or the one that looks like it
-# starts the sought section. Recognizing it as real in either direction hands
-# a caller fabricated content at exit 0 — this feature's failure mode, just
-# at the start of a section instead of the end.
+# WHAT COUNTS AS A FENCE is derived from CommonMark's fenced-code-block
+# grammar (spec.commonmark.org §4.5), not from the specific shapes past bugs
+# happened to hit — this is the THIRD pass over this function in two
+# features, and each prior pass closed exactly the case that had just been
+# reproduced live, leaving the next value of the same axis undiscovered
+# (decisions.md, review fix cycle 1). The grammar, so the next person extends
+# the value list by reading the spec instead of the last bug report:
+#   - an opening delimiter is a run of 3+ backticks or 3+ tildes;
+#   - the opening may be indented up to 3 spaces — 4+ spaces is an indented
+#     code block, not a fence, and is deliberately left untracked (a heading
+#     inside one is NOT protected; this is the documented, intentional
+#     boundary of what this scanner treats as a fence);
+#   - the closer must use the SAME character and a run AT LEAST AS LONG as
+#     the opener's (not an exact-length match) — so a 4-backtick line closes
+#     a 3-backtick fence, and a 4-backtick fence needs 4+ to close, tolerating
+#     a triple-backtick example nested inside it;
+#   - the closer's own indentation is checked independently (also up to 3
+#     spaces) and need not match the opener's;
+#   - an info string may follow the delimiter on the OPENING line only — a
+#     candidate closer carrying anything beyond the delimiter and trailing
+#     spaces is not a real closer, just fenced content.
+# `fence_char` ("`", "~", or "" when closed) plus `fence_len` (the opener's
+# run length) is still ONE state, not independent per-character toggles:
+# CommonMark closes a fence only with the SAME character, so a `~~~` line
+# while a ``` fence is open is just literal text, exactly as before.
 #
 # The fence check is unconditional, like the CRLF strip above, so state is
 # tracked from line 1 regardless of `found` — a fence opened in an earlier,
 # unrelated section still gates the sought heading if still open when that
-# line is reached. An unclosed fence needs no extra code: `fence` never
+# line is reached. An unclosed fence needs no extra code: `fence_char` never
 # flipped back holds through EOF, so nothing after it — headings included —
 # counts as real structure, same as an unterminated fence in real CommonMark.
 extract_section() {
@@ -1083,15 +1100,28 @@ extract_section() {
   awk -v heading="$heading" '
     { sub(/\r$/, "") }
     {
-      if (fence == "") {
-        if ($0 ~ /^```/)      fence = "```"
-        else if ($0 ~ /^~~~/) fence = "~~~"
-      } else if (index($0, fence) == 1) {
-        fence = ""
+      match($0, /^ */)
+      indent = RLENGTH
+      rest = substr($0, indent + 1)
+
+      if (fence_char == "") {
+        if (indent <= 3 && match(rest, /^`+/) && RLENGTH >= 3) {
+          fence_char = "`"; fence_len = RLENGTH
+        } else if (indent <= 3 && match(rest, /^~+/) && RLENGTH >= 3) {
+          fence_char = "~"; fence_len = RLENGTH
+        }
+      } else if (indent <= 3) {
+        closer = rest
+        sub(/ +$/, "", closer)
+        if (fence_char == "`" && closer ~ /^`+$/ && length(closer) >= fence_len) {
+          fence_char = ""; fence_len = 0
+        } else if (fence_char == "~" && closer ~ /^~+$/ && length(closer) >= fence_len) {
+          fence_char = ""; fence_len = 0
+        }
       }
     }
-    fence == "" && $0 == heading { found=1; next }
-    found && fence == "" && /^## / { exit }
+    fence_char == "" && $0 == heading { found=1; next }
+    found && fence_char == "" && /^## / { exit }
     found { print }
   ' "$file"
 }

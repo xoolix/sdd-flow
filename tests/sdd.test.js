@@ -2030,8 +2030,11 @@ describe("sdd CLI smoke tests", () => {
       });
 
       // F9, second consumer: a literal '~~~' line used as content INSIDE an
-      // open ``` block must not flip a shared "closed" state — two
-      // independent toggles keep the ``` fence open regardless.
+      // open ``` block must not close it. The shipped design keys a single
+      // fence_char/fence_len state to the delimiter that opened the fence —
+      // a close only happens on a run of the SAME character at least as
+      // long as the opener — so a ~~~ line while fence_char is "`" is just
+      // literal text and the ``` fence stays open regardless.
       test("a literal '~~~' line inside an open ``` fence does not close it, so a following '## ' still does not terminate", () => {
         const project = makeTempProject();
         const featureDir = path.join(project, "specs", "001-demo");
@@ -2149,6 +2152,301 @@ describe("sdd CLI smoke tests", () => {
         // own fresh scan finds it correctly -- proving a fence that opened
         // long before, in an unrelated section, does not leak into a later,
         // genuinely un-fenced heading once it has actually closed.
+        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
+      });
+    });
+
+    // JUDGMENT-DAY-HIGH (decisions.md, review fix cycle 1): the prior T002
+    // fix modeled "document structure" as exactly the shapes the authors had
+    // already hit (bare ``` / ~~~ at column 0), so an INDENTED fence — the
+    // ordinary shape of a fenced example nested inside a list item — was
+    // invisible to the tracker, and a fence of 4+ delimiter characters was
+    // normalized to a fixed 3-char string. Both reproduced live. Rather than
+    // patch these two cases, extract_section now derives "what counts as a
+    // fence" from CommonMark's own fenced-code-block grammar: an opening
+    // delimiter is a run of 3+ backticks or tildes indented 0-3 spaces; the
+    // closer needs the SAME character and a run AT LEAST AS LONG as the
+    // opener (not an exact-length match), and may be indented differently
+    // from the opener; an info string may follow the delimiter on the
+    // OPENING line only — a candidate closer carrying one is just content.
+    // These tests enumerate that grammar directly, so extending the axis
+    // later means reading the spec, not the last bug (per decisions.md's
+    // discussion of the judge's finding #4).
+    describe("CommonMark fence grammar (review fix cycle 1)", () => {
+      test("a fence indented 1, 2, or 3 spaces — the ordinary shape nested inside a list item — is still tracked, so a '## '-shaped line inside any of them does not terminate", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "1. Fence indented 1 space:",
+            " ```",
+            "## indented-1 heading-shaped line, must not terminate",
+            " ```",
+            "2. Fence indented 2 spaces:",
+            "  ```",
+            "## indented-2 heading-shaped line, must not terminate",
+            "  ```",
+            "3. Fence indented 3 spaces:",
+            "   ```",
+            "## indented-3 heading-shaped line, must not terminate",
+            "   ```",
+            "- [ ] AC-AFTER-INDENTED-FENCES-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain("## indented-1 heading-shaped line, must not terminate");
+        expect(body).toContain("## indented-2 heading-shaped line, must not terminate");
+        expect(body).toContain("## indented-3 heading-shaped line, must not terminate");
+        expect(body).toContain("AC-AFTER-INDENTED-FENCES-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+
+      test("a fence marker indented 4 spaces is NOT tracked (CommonMark: 4+ spaces is an indented code block, not a fence) — a real heading right after it still terminates, by deliberate design", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        const specFile = path.join(featureDir, "spec.md");
+        fs.writeFileSync(
+          specFile,
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "    ```",
+            "    content that looks fenced, but 4-space indentation means",
+            "    this is an indented code block, not a tracked fence",
+            "## TERMINATES HERE: not a real fence, so this heading is real",
+            "- [ ] SHOULD-NOT-APPEAR-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
+        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
+
+        expect(acSection).toContain("GENUINE-AC-MARKER");
+        expect(acSection).toContain("this is an indented code block, not a tracked fence");
+        expect(acSection).not.toContain("SHOULD-NOT-APPEAR-MARKER");
+        // Rollback Plan resolves normally too -- the 4-space-indented marker
+        // never opened tracked fence state, so nothing is left "stuck open".
+        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
+      });
+
+      test("a 4-backtick fence tolerates an inner triple-backtick line as content -- only a run of 4+ backticks closes it", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "````",
+            "```",
+            "## inside the quadruple-backtick fence -- the inner triple does not close it, must not terminate",
+            "````",
+            "- [ ] AC-AFTER-QUAD-FENCE-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("GENUINE-AC-MARKER");
+        expect(body).toContain(
+          "## inside the quadruple-backtick fence -- the inner triple does not close it, must not terminate",
+        );
+        expect(body).toContain("AC-AFTER-QUAD-FENCE-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+
+      test("a closing run longer than the opening also closes it: a 3-backtick fence IS closed by a 4-backtick line, since CommonMark requires the closer to be only 'at least as long', not an exact match", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "```",
+            "content inside a triple-backtick fence",
+            "````",
+            "## TERMINATES HERE: the 4-backtick line closed the 3-backtick fence",
+            "- [ ] SHOULD-NOT-APPEAR-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("content inside a triple-backtick fence");
+        expect(body).not.toContain("SHOULD-NOT-APPEAR-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+
+      // Checked via direct extract_section calls (acSection / rollbackSection),
+      // not just `body.toContain`: build_pr_body_file assembles AC and
+      // Rollback Plan from two INDEPENDENT extract_section calls, so if the
+      // fence never actually closes, AC's own call over-includes through
+      // EOF and would still make every `body.toContain` below pass "by
+      // accident" -- proving nothing about whether the close was recognized.
+      // Asserting `acSection` stops before GENUINE-ROLLBACK-MARKER, AND that
+      // Rollback Plan's own fresh scan resolves its heading, is what actually
+      // pins the close.
+      test("a closing fence indented differently from the opening still closes it -- CommonMark checks each fence line's own indentation independently", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        const specFile = path.join(featureDir, "spec.md");
+        fs.writeFileSync(
+          specFile,
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "```",
+            "content in a fence opened at column 0",
+            "  ```",
+            "- [ ] AC-AFTER-CLOSE-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
+        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
+
+        expect(acSection).toContain("content in a fence opened at column 0");
+        expect(acSection).toContain("AC-AFTER-CLOSE-MARKER");
+        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
+        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
+      });
+
+      test("a line that looks like a closing fence but carries an info string does not close -- only a bare delimiter run (optionally followed by spaces) does", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        const specFile = path.join(featureDir, "spec.md");
+        fs.writeFileSync(
+          specFile,
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "```",
+            "content before the fake closer",
+            "```js",
+            "still inside -- a closer carrying an info string is not a real closer",
+            "```",
+            "- [ ] AC-AFTER-REAL-CLOSE-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
+        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
+
+        expect(acSection).toContain("still inside -- a closer carrying an info string is not a real closer");
+        expect(acSection).toContain("AC-AFTER-REAL-CLOSE-MARKER");
+        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
+        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
+      });
+
+      test("tilde equivalents: an indented ~~~ fence is tracked, and a 4-tilde fence tolerates an inner triple-tilde line as content", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        fs.writeFileSync(
+          path.join(featureDir, "spec.md"),
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "1. Tilde fence indented 2 spaces:",
+            "  ~~~",
+            "## indented tilde heading-shaped line, must not terminate",
+            "  ~~~",
+            "~~~~",
+            "~~~",
+            "## inside the quadruple-tilde fence -- the inner triple does not close it, must not terminate",
+            "~~~~",
+            "- [ ] AC-AFTER-TILDE-FENCES-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const body = buildPrBodyViaRealPath(featureDir);
+
+        expect(body).toContain("## indented tilde heading-shaped line, must not terminate");
+        expect(body).toContain(
+          "## inside the quadruple-tilde fence -- the inner triple does not close it, must not terminate",
+        );
+        expect(body).toContain("AC-AFTER-TILDE-FENCES-MARKER");
+        expect(body).toContain("GENUINE-ROLLBACK-MARKER");
+      });
+
+      test("tilde mirror: a closer carrying an info string does not close a ~~~ fence -- only a bare tilde run does", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        const specFile = path.join(featureDir, "spec.md");
+        fs.writeFileSync(
+          specFile,
+          [
+            "# Feature: Demo",
+            "## Summary",
+            "GENUINE-SUMMARY-MARKER",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "~~~",
+            "content before the fake tilde closer",
+            "~~~js",
+            "still inside -- a tilde closer carrying an info string is not a real closer",
+            "~~~",
+            "- [ ] AC-AFTER-REAL-TILDE-CLOSE-MARKER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
+        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
+
+        expect(acSection).toContain("still inside -- a tilde closer carrying an info string is not a real closer");
+        expect(acSection).toContain("AC-AFTER-REAL-TILDE-CLOSE-MARKER");
+        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
         expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
       });
     });
@@ -2933,11 +3231,14 @@ describe("sdd CLI smoke tests", () => {
         expect(output).not.toContain("should not appear");
       });
 
-      // F9: a single shared boolean would let a literal '~~~' line INSIDE an
-      // open ``` block flip state to "closed", so the very next '## ' line
-      // would then wrongly terminate the section — the opposite of the
-      // "when unsure, cut too little" tie-breaker. Two independent toggles
-      // keep the ``` fence open regardless of what the ~~~ toggle does.
+      // F9: a naive single shared boolean would let a literal '~~~' line
+      // INSIDE an open ``` block flip state to "closed", so the very next
+      // '## ' line would then wrongly terminate the section — the opposite
+      // of the "when unsure, cut too little" tie-breaker. The shipped
+      // fence_char/fence_len state avoids this without needing two
+      // independent toggles: a close only happens on a run of the SAME
+      // character (at least as long as the opener), so a ~~~ line while
+      // fence_char is "`" is just literal text and the ``` fence stays open.
       test("a literal '~~~' line inside an open ``` fence does not close it, so a following '## ' still does not terminate", () => {
         const project = makeTempProject();
         fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
@@ -3196,6 +3497,293 @@ describe("sdd CLI smoke tests", () => {
         expect(output).toContain("const x = 1;");
         expect(output).toContain("- after fence");
         expect(output).not.toContain("NO debe aparecer");
+      });
+    });
+
+    // JUDGMENT-DAY-HIGH (decisions.md, review fix cycle 1): same grammar-
+    // derived rules as the build_pr_body_file describe block above, proven
+    // for this consumer too so the axis is covered end to end, not just in
+    // the shared awk helper. See that block's header comment for the
+    // CommonMark rules being enumerated.
+    describe("CommonMark fence grammar (review fix cycle 1)", () => {
+      test("a fence indented 1, 2, or 3 spaces — the ordinary shape nested inside a list item — is still tracked, so a '## '-shaped line inside any of them does not terminate", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fences",
+            "1. Fence indented 1 space:",
+            " ```",
+            "## indented-1 heading-shaped line, must not terminate",
+            " ```",
+            "2. Fence indented 2 spaces:",
+            "  ```",
+            "## indented-2 heading-shaped line, must not terminate",
+            "  ```",
+            "3. Fence indented 3 spaces:",
+            "   ```",
+            "## indented-3 heading-shaped line, must not terminate",
+            "   ```",
+            "- vocab after the indented fences",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- real vocab before the fences");
+        expect(output).toContain("## indented-1 heading-shaped line, must not terminate");
+        expect(output).toContain("## indented-2 heading-shaped line, must not terminate");
+        expect(output).toContain("## indented-3 heading-shaped line, must not terminate");
+        expect(output).toContain("- vocab after the indented fences");
+        expect(output).not.toContain("should not appear");
+      });
+
+      test("a fence marker indented 4 spaces is NOT tracked (CommonMark: 4+ spaces is an indented code block, not a fence) — a real heading right after it still terminates, by deliberate design", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the marker",
+            "    ```",
+            "    content that looks fenced, but 4-space indentation means",
+            "    this is an indented code block, not a tracked fence",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- real vocab before the marker");
+        expect(output).toContain("this is an indented code block, not a tracked fence");
+        expect(output).not.toContain("should not appear");
+      });
+
+      test("a 4-backtick fence tolerates an inner triple-backtick line as content -- only a run of 4+ backticks closes it", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "````",
+            "```",
+            "## inside the quadruple-backtick fence -- the inner triple does not close it, must not terminate",
+            "````",
+            "- vocab after the quad fence closes",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- real vocab before the fence");
+        expect(output).toContain(
+          "## inside the quadruple-backtick fence -- the inner triple does not close it, must not terminate",
+        );
+        expect(output).toContain("- vocab after the quad fence closes");
+        expect(output).not.toContain("should not appear");
+      });
+
+      test("a closing run longer than the opening also closes it: a 3-backtick fence IS closed by a 4-backtick line, since CommonMark requires the closer to be only 'at least as long', not an exact match", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "```",
+            "content inside a triple-backtick fence",
+            "````",
+            "- real vocab after the fence closes: the 4-backtick line already closed it",
+            "",
+            "## Next Section",
+            "should not appear: the fence is closed, so this is a real terminator",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("- real vocab before the fence");
+        expect(output).toContain("content inside a triple-backtick fence");
+        // The 4-backtick line closed the fence, so this line is real,
+        // un-fenced section content and DOES appear.
+        expect(output).toContain("- real vocab after the fence closes: the 4-backtick line already closed it");
+        // ...and because the fence is closed by then, "## Next Section" is a
+        // real terminator, so its own content is excluded.
+        expect(output).not.toContain("should not appear: the fence is closed, so this is a real terminator");
+      });
+
+      test("a closing fence indented differently from the opening still closes it -- CommonMark checks each fence line's own indentation independently", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "```",
+            "content in a fence opened at column 0",
+            "  ```",
+            "- vocab after the differently-indented close",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("content in a fence opened at column 0");
+        expect(output).toContain("- vocab after the differently-indented close");
+        expect(output).not.toContain("should not appear");
+      });
+
+      test("a line that looks like a closing fence but carries an info string does not close -- only a bare delimiter run (optionally followed by spaces) does", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "```",
+            "content before the fake closer",
+            "```js",
+            "still inside -- a closer carrying an info string is not a real closer",
+            "```",
+            "- vocab after the real close",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("still inside -- a closer carrying an info string is not a real closer");
+        expect(output).toContain("- vocab after the real close");
+        expect(output).not.toContain("should not appear");
+      });
+
+      test("tilde equivalents: an indented ~~~ fence is tracked, and a 4-tilde fence tolerates an inner triple-tilde line as content", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fences",
+            "1. Tilde fence indented 2 spaces:",
+            "  ~~~",
+            "## indented tilde heading-shaped line, must not terminate",
+            "  ~~~",
+            "~~~~",
+            "~~~",
+            "## inside the quadruple-tilde fence -- the inner triple does not close it, must not terminate",
+            "~~~~",
+            "- vocab after the tilde fences",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("## indented tilde heading-shaped line, must not terminate");
+        expect(output).toContain(
+          "## inside the quadruple-tilde fence -- the inner triple does not close it, must not terminate",
+        );
+        expect(output).toContain("- vocab after the tilde fences");
+        expect(output).not.toContain("should not appear");
+      });
+
+      test("tilde mirror: a closer carrying an info string does not close a ~~~ fence -- only a bare tilde run does", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- real vocab before the fence",
+            "~~~",
+            "content before the fake tilde closer",
+            "~~~js",
+            "still inside -- a tilde closer carrying an info string is not a real closer",
+            "~~~",
+            "- vocab after the real tilde close",
+            "",
+            "## Next Section",
+            "should not appear",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("still inside -- a tilde closer carrying an info string is not a real closer");
+        expect(output).toContain("- vocab after the real tilde close");
+        expect(output).not.toContain("should not appear");
       });
     });
   });
