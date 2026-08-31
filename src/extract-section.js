@@ -94,7 +94,9 @@ function extractSection(content, headingText) {
   for (const raw of lines) {
     const line = raw.replace(/\r$/, "");
 
-    const indent = (line.match(/^ */) || [""])[0].length;
+    // /^ */ always matches (possibly empty) at position 0, so this never
+    // returns null — no fallback needed for a case that can't occur.
+    const indent = line.match(/^ */)[0].length;
     const rest = line.slice(indent);
 
     if (fenceChar === "") {
