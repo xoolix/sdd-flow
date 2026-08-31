@@ -88,7 +88,7 @@
 
 ### 3. Human checkpoint
 
-- [ ] **T011 [HITL] Dogfood the pipeline on a real slice**: run implement→simplify→review→archive→gate; confirm one commit/slice, no unrelated files, `ready-to-pr` post-archive, gate works with/without `gh` auth.
+- [x] **T011 [HITL] Dogfood the pipeline on a real slice**: run implement→simplify→review→archive→gate; confirm one commit/slice, no unrelated files, `ready-to-pr` post-archive, gate works with/without `gh` auth.
   - blocked_by: T010
   - verifies: AC1, AC2, AC3, AC4, AC5, AC6, Success Criteria
   - decision: run /sdd-hitl 020-commit-per-slice-pr-gate T011 "<decision>"

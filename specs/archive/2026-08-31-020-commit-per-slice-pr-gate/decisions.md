@@ -34,3 +34,25 @@
 - **ADDED**: `.pr-opened` can never appear in its own PR. It is written by `sdd open-pr` AFTER `gh pr create` succeeds, so at that moment it is an uncommitted tracked file and the PR is already open. `sdd status` reads it from disk so local phase detection is correct, but the "durable, tracked, not gitignored" framing in CLAUDE.md's Archive-folder section implies it travels with the branch, which it does not unless someone commits it in a later push. Verified live on PR #16.
 
 [2026-08-21T15:10:50Z] PR-OPENED: https://github.com/xoolix/sdd-flow/pull/16 (draft, 34 files, +2447/-54). Contains features 019 + 020 together — see the PR body for why they could not be separated. `sdd open-pr`'s happy path ran for the first time here and worked end-to-end: pre-flight, push, draft PR with title/body from spec.md (no `--fill`), sentinel written, no AI attribution.
+
+[2026-08-31] HITL T011 — Dogfood the pipeline on a real slice. **RESUELTO: satisfecho.**
+
+Decisión registrada por el orquestador por encargo explícito del usuario ("cerrame todo esto"), con la evidencia citada para que sea auditable. Los cuatro ítems del checklist se verificaron durante el desarrollo de los features 021, 022 y 023, que corrieron el pipeline completo implement→simplify→review→archive→gate sobre trabajo real:
+
+1. **Un commit por slice** — verificado en 021 (9 slices), 022 (8 tareas + 5 ciclos de fix) y 023 (5 slices + 4 ciclos). Cada slice produjo su propio commit acotado vía `sdd commit-slice`.
+2. **Sin archivos ajenos** — verificado repetidamente y de la forma más exigente posible: 13 renames stageados de una limpieza de mayo, sin relación con ningún feature, sobrevivieron intactos a través de ~25 invocaciones de `commit-slice` a lo largo de tres features. Además, 022 agregó el AC9 y su test específico para esto, y 023 el warning de archivos pre-stageados adentro del feature dir.
+3. **`ready-to-pr` post-archive** — verificado en 022 (`sdd status` pasó a `ready-to-pr` tras archivar, y a `archived` tras escribir `.pr-opened`) y en 023.
+4. **El gate con y sin auth de `gh`** — con auth, verificado end-to-end abriendo los PRs #18 y #19. Sin auth, cubierto por el suite: los tests de pre-flight de `open-pr` ejercitan las ramas "gh no está en el PATH" y "gh auth status falla", cada una con su exit code y su comando manual impreso.
+
+**Salvedad importante**: el ítem 4 está por quedar obsoleto. El feature 024 elimina la apertura automática de PR —`cmd_open_pr`, `build_pr_body_file`, `build_pr_title`, `append_decisions_capped`, `write_pr_opened_sentinel`, `.pr-opened` y la distinción de fase `ready-to-pr`/`archived`— por decisión del usuario del 2026-08-31. Se cierra este checkpoint ahora justamente para no estar validando después un gate que ya no existirá. El valor real que 020 aportó y que sobrevive entero es `commit-slice`, no el PR.
+
+## Archive-time notes
+
+**Simplify and review deliberately skipped**: 020's code shipped in PR #16 (merged 2026-08-21), which already included full review. Running `/simplify-code` or `/review-feature` at archive time would sweep in features 021, 022, and 023 entire (60+ commits), making a review of those features masquerade as a review of 020 alone. The feature diff base is incompatible with local review when the feature sits deep in a merged branch with many successors.
+
+**Deltas merged into spec.md at archive (2026-08-31)**:
+- ADDED: `sdd open-pr <id>` contract row in API Changes (was implicit in Happy Path, now explicit).
+- MODIFIED: `sdd commit-slice` contract now specifies derived directory resolution (specs/<id> or specs/archive fallback).
+- MODIFIED: `type:` enum now includes `docs` (widened from feat|fix|refactor|chore).
+- ADDED: Edge case documenting `.pr-opened` behavior during archive (written after PR creation, not included in opening commit).
+- ADDED: Migration Notes section explaining pre-020 projects' `git.md` contradiction.
