@@ -2449,6 +2449,104 @@ describe("sdd CLI smoke tests", () => {
         expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
         expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
       });
+
+      // Judge #6 (review fix cycle 2, JUDGMENT-DAY-HIGH (2)): CommonMark
+      // §4.5 -- "If the info string comes after a backtick fence, it may
+      // not contain any backtick characters." The shipped matcher accepted
+      // this line as a valid opener on run length alone, so the bogus fence
+      // never closes and swallows a real subsequent heading and its content.
+      // Using extractSectionViaRealPath directly on AC and Rollback Plan
+      // (not the assembled body) so the test depends on the close actually
+      // happening, not on the marker text merely appearing somewhere in the
+      // over-included body (the exact false-pass shape review fix cycle 1
+      // already corrected once in this file).
+      test("an opening ``` line with a backtick in its info string is not a fence, so a real heading right after it still terminates the section", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        const specFile = path.join(featureDir, "spec.md");
+        fs.writeFileSync(
+          specFile,
+          [
+            "# Feature: Demo",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "```code`example",
+            "- [ ] GENUINE-AC-MARKER-AFTER-BOGUS-OPENER",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
+        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
+
+        expect(acSection).toContain("GENUINE-AC-MARKER-AFTER-BOGUS-OPENER");
+        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
+        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
+      });
+
+      // Judge #7 (review fix cycle 2, JUDGMENT-DAY-HIGH (2)): CommonMark
+      // §4.5 -- a closing delimiter "may be followed only by spaces or
+      // tabs, which are ignored". The shipped trim (`sub(/ +$/, "")`)
+      // stripped spaces only, so a tab-trailing closer never closed and the
+      // section leaked to EOF. Backtick branch.
+      test("a closing ``` line followed by a trailing tab still closes the fence", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        const specFile = path.join(featureDir, "spec.md");
+        fs.writeFileSync(
+          specFile,
+          [
+            "# Feature: Demo",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "```",
+            "fenced content, ignored",
+            "```\t",
+            "- [ ] GENUINE-AC-MARKER-AFTER-FENCE",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
+        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
+
+        expect(acSection).toContain("GENUINE-AC-MARKER-AFTER-FENCE");
+        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
+        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
+      });
+
+      // Judge #7, tilde branch -- same tab-trailing-closer defect, mirrored.
+      test("a closing ~~~ line followed by a trailing tab still closes the fence", () => {
+        const project = makeTempProject();
+        const featureDir = path.join(project, "specs", "001-demo");
+        const specFile = path.join(featureDir, "spec.md");
+        fs.writeFileSync(
+          specFile,
+          [
+            "# Feature: Demo",
+            "## Acceptance Criteria",
+            "- [ ] GENUINE-AC-MARKER",
+            "~~~",
+            "fenced content, ignored",
+            "~~~\t",
+            "- [ ] GENUINE-AC-MARKER-AFTER-FENCE",
+            "## Rollback Plan",
+            "GENUINE-ROLLBACK-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const acSection = extractSectionViaRealPath(specFile, "Acceptance Criteria");
+        const rollbackSection = extractSectionViaRealPath(specFile, "Rollback Plan");
+
+        expect(acSection).toContain("GENUINE-AC-MARKER-AFTER-FENCE");
+        expect(acSection).not.toContain("GENUINE-ROLLBACK-MARKER");
+        expect(rollbackSection).toBe("GENUINE-ROLLBACK-MARKER\n");
+      });
     });
 
     // Line-ending axis (AC8/F13): CRLF coverage exists today only for
@@ -3143,9 +3241,14 @@ describe("sdd CLI smoke tests", () => {
     // "## <heading>" and reads until the next "^## ", so a "## "-shaped line
     // INSIDE a fenced code block used to end the section early — reproduced
     // live against a § Domain rules section whose fence held a "## Code
-    // example" line. Silent: exit 0, content just missing. Fixed with two
-    // independent fence toggles (F9) tracked unconditionally from line 1, so
-    // the terminator only fires outside every fence.
+    // example" line. Silent: exit 0, content just missing. Fixed with a
+    // single fence_char/fence_len state (F9) keyed to the delimiter that
+    // opened the current fence — not independent per-character toggles —
+    // tracked unconditionally from line 1, so the terminator only fires
+    // outside every fence. Ported to Node in review fix cycle 2
+    // (decisions.md, 2026-08-31); see tests/extract-section.test.js and
+    // src/extract-section.js for the current implementation and its own
+    // grammar rationale.
     describe("document structure — fenced code blocks (T002)", () => {
       test("no fence at all: output is byte-identical to the unfenced case (control)", () => {
         const project = makeTempProject();
@@ -3784,6 +3887,108 @@ describe("sdd CLI smoke tests", () => {
         expect(output).toContain("still inside -- a tilde closer carrying an info string is not a real closer");
         expect(output).toContain("- vocab after the real tilde close");
         expect(output).not.toContain("should not appear");
+      });
+
+      // Judge #6 (review fix cycle 2, JUDGMENT-DAY-HIGH (2)): CommonMark
+      // §4.5 -- a backtick in a backtick fence's info string is illegal, so
+      // the line never opens a fence. The shipped matcher accepted it on
+      // run length alone, so an unclosed bogus fence swallowed the real
+      // "## Next Section" heading and its content into Domain rules.
+      test("an opening ``` line with a backtick in its info string is not a fence, so a real heading right after it still terminates the section", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- GENUINE-VOCAB-BEFORE",
+            "```code`example",
+            "- GENUINE-VOCAB-AFTER-BOGUS-OPENER",
+            "",
+            "## Next Section",
+            "SHOULD-NOT-APPEAR-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("GENUINE-VOCAB-BEFORE");
+        expect(output).toContain("GENUINE-VOCAB-AFTER-BOGUS-OPENER");
+        expect(output).not.toContain("SHOULD-NOT-APPEAR-MARKER");
+      });
+
+      // Judge #7 (review fix cycle 2, JUDGMENT-DAY-HIGH (2)): CommonMark
+      // §4.5 -- a closing delimiter "may be followed only by spaces or
+      // tabs, which are ignored". The shipped trim stripped spaces only,
+      // so a tab-trailing closer never closed and the section leaked to
+      // EOF. Backtick branch.
+      test("a closing ``` line followed by a trailing tab still closes the fence", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- GENUINE-VOCAB-BEFORE",
+            "```",
+            "fenced content, ignored",
+            "```\t",
+            "- GENUINE-VOCAB-AFTER-FENCE",
+            "",
+            "## Next Section",
+            "SHOULD-NOT-APPEAR-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("GENUINE-VOCAB-BEFORE");
+        expect(output).toContain("GENUINE-VOCAB-AFTER-FENCE");
+        expect(output).not.toContain("SHOULD-NOT-APPEAR-MARKER");
+      });
+
+      // Judge #7, tilde branch -- same tab-trailing-closer defect, mirrored.
+      test("a closing ~~~ line followed by a trailing tab still closes the fence", () => {
+        const project = makeTempProject();
+        fs.mkdirSync(path.join(project, ".claude/rules"), { recursive: true });
+        fs.writeFileSync(
+          path.join(project, ".claude/rules/conventions.md"),
+          [
+            "# Conventions",
+            "",
+            "## Domain rules",
+            "- GENUINE-VOCAB-BEFORE",
+            "~~~",
+            "fenced content, ignored",
+            "~~~\t",
+            "- GENUINE-VOCAB-AFTER-FENCE",
+            "",
+            "## Next Section",
+            "SHOULD-NOT-APPEAR-MARKER",
+            "",
+          ].join("\n"),
+        );
+
+        const output = execFileSync(sddBin, ["domain-vocab"], {
+          cwd: project,
+          encoding: "utf8",
+        });
+
+        expect(output).toContain("GENUINE-VOCAB-BEFORE");
+        expect(output).toContain("GENUINE-VOCAB-AFTER-FENCE");
+        expect(output).not.toContain("SHOULD-NOT-APPEAR-MARKER");
       });
     });
   });

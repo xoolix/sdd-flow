@@ -800,6 +800,10 @@ cmd_branch() {
 # archived specs/archive/*-<feature-id> match. Prints the resolved absolute
 # path on stdout and returns 0 on success; returns 1 with no output otherwise.
 # Shared by cmd_status and cmd_commit_slice (F2) so both stay in sync.
+# Must be called as an `if`/`while` condition (the guarded idiom used by all
+# four call sites), never a bare assignment -- under `set -euo pipefail` a
+# bare `feature_dir="$(resolve_feature_dir ...)"` on a miss aborts the script
+# silently, with no error text naming what failed.
 resolve_feature_dir() {
   local feature_id="$1" specs_dir="$2"
 
@@ -1045,85 +1049,28 @@ cmd_commit_slice() {
 # would overflow (see append_decisions_capped below).
 PR_BODY_MAX_CHARS=60000
 
-# Lines between an exact "## <heading>" line and the next "## " heading (or EOF).
-# Strips a trailing CRLF '\r' from every record before the heading compare —
-# on a CRLF file $0 for the heading line is "## Domain rules\r", which never
-# equals the LF heading string, so the section read as empty regardless of
-# its real content (review fix cycle 4). The strip is unconditional (not
-# gated on the heading match), so printed content lines lose their '\r' too.
-#
-# A "## "-shaped line INSIDE a fenced code block used to end the section
-# early — reproduced live against a § Domain rules section whose fence held
-# a "## Code example" line, exit 0 with the real content silently missing.
-#
-# Both the terminator AND the heading match itself are gated on being
-# outside any fence — a heading-shaped line inside a fence is fenced example
-# text either way, whether it's the one ending the section or the one that
-# looks like it starts the sought section. Recognizing it as real in either
-# direction hands a caller fabricated content at exit 0 — this feature's
-# failure mode, just at the start of a section instead of the end.
-#
-# WHAT COUNTS AS A FENCE is derived from CommonMark's fenced-code-block
-# grammar (spec.commonmark.org §4.5), not from the specific shapes past bugs
-# happened to hit — this is the THIRD pass over this function in two
-# features, and each prior pass closed exactly the case that had just been
-# reproduced live, leaving the next value of the same axis undiscovered
-# (decisions.md, review fix cycle 1). The grammar, so the next person extends
-# the value list by reading the spec instead of the last bug report:
-#   - an opening delimiter is a run of 3+ backticks or 3+ tildes;
-#   - the opening may be indented up to 3 spaces — 4+ spaces is an indented
-#     code block, not a fence, and is deliberately left untracked (a heading
-#     inside one is NOT protected; this is the documented, intentional
-#     boundary of what this scanner treats as a fence);
-#   - the closer must use the SAME character and a run AT LEAST AS LONG as
-#     the opener's (not an exact-length match) — so a 4-backtick line closes
-#     a 3-backtick fence, and a 4-backtick fence needs 4+ to close, tolerating
-#     a triple-backtick example nested inside it;
-#   - the closer's own indentation is checked independently (also up to 3
-#     spaces) and need not match the opener's;
-#   - an info string may follow the delimiter on the OPENING line only — a
-#     candidate closer carrying anything beyond the delimiter and trailing
-#     spaces is not a real closer, just fenced content.
-# `fence_char` ("`", "~", or "" when closed) plus `fence_len` (the opener's
-# run length) is still ONE state, not independent per-character toggles:
-# CommonMark closes a fence only with the SAME character, so a `~~~` line
-# while a ``` fence is open is just literal text, exactly as before.
-#
-# The fence check is unconditional, like the CRLF strip above, so state is
-# tracked from line 1 regardless of `found` — a fence opened in an earlier,
-# unrelated section still gates the sought heading if still open when that
-# line is reached. An unclosed fence needs no extra code: `fence_char` never
-# flipped back holds through EOF, so nothing after it — headings included —
-# counts as real structure, same as an unterminated fence in real CommonMark.
+# Lines between an exact "## <heading>" line and the next "## " heading (or
+# EOF), ignoring both inside any CommonMark fenced code block. Thin wrapper
+# around src/extract-section.js (Node) — moved out of awk in review fix
+# cycle 2 (decisions.md, 2026-08-31) after five live defects across three
+# awk rewrites in two features: the awk scanner could check structural
+# POSITION (delimiter run length, indentation) but had no natural way to
+# express full-line CONTENT constraints from CommonMark's grammar, ordinary
+# string/regex operations in JS. No awk fallback if Node is missing: two
+# implementations would mean two bug surfaces, which is the thing this move
+# removes. Node is already a dev dependency here (jest). The full grammar
+# rationale — why a fence-shaped line still isn't always a fence, and the
+# axis-not-bug-report framing this function's history forced — lives with
+# the actual matcher now, in the doc comment at the top of
+# src/extract-section.js; this is a wrapper, not a reimplementation, so
+# there is nothing left here to duplicate that comment for.
 extract_section() {
-  local file="$1" heading="## $2"
-  awk -v heading="$heading" '
-    { sub(/\r$/, "") }
-    {
-      match($0, /^ */)
-      indent = RLENGTH
-      rest = substr($0, indent + 1)
-
-      if (fence_char == "") {
-        if (indent <= 3 && match(rest, /^`+/) && RLENGTH >= 3) {
-          fence_char = "`"; fence_len = RLENGTH
-        } else if (indent <= 3 && match(rest, /^~+/) && RLENGTH >= 3) {
-          fence_char = "~"; fence_len = RLENGTH
-        }
-      } else if (indent <= 3) {
-        closer = rest
-        sub(/ +$/, "", closer)
-        if (fence_char == "`" && closer ~ /^`+$/ && length(closer) >= fence_len) {
-          fence_char = ""; fence_len = 0
-        } else if (fence_char == "~" && closer ~ /^~+$/ && length(closer) >= fence_len) {
-          fence_char = ""; fence_len = 0
-        }
-      }
-    }
-    fence_char == "" && $0 == heading { found=1; next }
-    found && fence_char == "" && /^## / { exit }
-    found { print }
-  ' "$file"
+  local file="$1" heading="$2"
+  if ! command -v node >/dev/null 2>&1; then
+    printf 'error: extract_section requires Node.js, which was not found on PATH\n' >&2
+    return 1
+  fi
+  node "$SDD_HOME/src/extract-section.js" "$file" "$heading"
 }
 
 # PR title: the "# Feature: <title>" H1 from spec.md (or quick-spec.md for
