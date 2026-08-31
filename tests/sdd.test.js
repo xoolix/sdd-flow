@@ -577,6 +577,43 @@ describe("sdd CLI smoke tests", () => {
     expect(step35Body).not.toMatch(/\belif\b/);
   });
 
+  test("archive-feature's Step 3.6 resolves the base branch and prints the two PR-gate follow-up commands by hand (024 AC4)", () => {
+    const archiveFeature = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"), "utf8");
+
+    // Step 3.6 exists, comes after 3.5, and resolves the base branch via the same
+    // CLI helper used elsewhere in the pipeline -- no ad hoc base-branch logic here.
+    expect(archiveFeature).toContain("### 3.6. Print the PR gate commands");
+    expect(archiveFeature).toContain("sdd base-branch $ARGUMENTS");
+
+    // The two literal commands the human is meant to copy-paste, verbatim.
+    expect(archiveFeature).toContain("`git push -u origin HEAD`");
+    expect(archiveFeature).toContain("`gh pr create --draft --base <base>`");
+
+    // Success substitutes the resolved base; failure still prints both commands with
+    // <base> left unresolved -- a copyable command with a hole beats printing nothing.
+    expect(archiveFeature).toContain("substitute the resolved value for `<base>`");
+    expect(archiveFeature).toContain("print the same two lines with `<base>` left **unresolved**");
+
+    // The agent only prints; it never runs either command itself.
+    expect(archiveFeature).toContain("Do not run either command yourself");
+
+    // Step 3.6 must not disturb Step 3.5's fenced commit-slice block: archiveStep35Line()
+    // (used elsewhere in this file) is anchored on the *first* fenced block after "###
+    // 3.5. Commit the slice", and it must still resolve to the single-line commit-slice
+    // call, not bleed into anything Step 3.6 adds.
+    expect(archiveStep35Line()).toBe(
+      'sdd commit-slice $ARGUMENTS --type chore --title "Archive $ARGUMENTS" --moved-from specs/$ARGUMENTS --files <spec files touched by the delta merge>',
+    );
+
+    // And the T007 fence count (exactly one fenced block between 3.5's header and
+    // "4. **Present summary**") must stay at 2 delimiters -- Step 3.6's two commands
+    // are inline code spans, not a second fenced block.
+    const step35Match = archiveFeature.match(/### 3\.5\. Commit the slice([\s\S]*?)\n4\. \*\*Present summary\*\*/);
+    expect(step35Match).not.toBeNull();
+    const fenceDelimiters = step35Match[1].match(/```/g) || [];
+    expect(fenceDelimiters.length).toBe(2);
+  });
+
   // sdd-sweep-exempt:start — this test must name the retired gate's literal strings
   // (`ready-to-pr`, `sdd open-pr`, `.pr-opened`) to prove sdd-next/sdd-auto no longer
   // mention them (AC4); a proof of removal, not a dangling reference. See
