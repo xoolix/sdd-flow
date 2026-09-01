@@ -40,10 +40,20 @@
 // PASS/FAIL boundary: reading cmd_commit_slice, cmd_state_write, and cmd_branch in
 // bin/sdd shows exit code 2 used consistently, and only, for "the arguments this
 // invocation supplied are malformed" -- missing/empty required flag, unknown option,
-// invalid enum value -- across every subcommand exercised here. Exit 1/3/4/5 mean
-// something else went wrong (feature not found, wrong branch, nothing staged) --
-// real outcomes this minimal fixture may or may not avoid, and never evidence that
-// the DOCUMENTED command line itself is wrong. Only exit 2 fails a candidate test.
+// invalid enum value -- across every subcommand exercised here. Exit 1 is a
+// different defect class with the same symptom: bin/sdd's top-level dispatch
+// returns 1 for "Unknown command: ..." when the SUBCOMMAND WORD ITSELF is wrong --
+// a typo in prose ("sdd branc", "sdd statu") that a bare exit-2 check does not
+// see, because the dispatch never reaches a subcommand's own argument parsing to
+// raise 2. Verified against every subcommand exercised here (`branch`,
+// `commit-slice`, `state-write` all exit 2 with no args; only an unrecognized
+// subcommand word exits 1) -- there is no runnable candidate in this file whose
+// correct, well-formed invocation returns 1, so failing on it cannot be a false
+// positive. Exit 3/4/5 mean something else went wrong (feature not found, wrong
+// branch, nothing staged) -- real fixture-precondition gaps this minimal fixture
+// may or may not avoid, and never evidence that the DOCUMENTED command line itself
+// (subcommand word + arguments) is wrong. Only exit 1 or exit 2 fails a candidate
+// test; 3/4/5 are left alone on purpose.
 
 const fs = require("fs");
 const os = require("os");
@@ -239,9 +249,13 @@ describe("documented sdd CLI invocations match the real CLI's usage (025/T013)",
           dirtyTheFile(dir);
         }
         const result = runSdd(candidate.tokens.slice(1), dir); // drop the leading "sdd" token
-        if (result.status === 2) {
+        if (result.status === 2 || result.status === 1) {
+          const reason =
+            result.status === 2
+              ? "exits 2 (usage error) -- the CLI rejects it as written"
+              : "exits 1 (unknown command) -- the subcommand word itself is wrong, likely a typo";
           throw new Error(
-            `documented invocation exits 2 (usage error) -- the CLI rejects it as written\n` +
+            `documented invocation ${reason}\n` +
               `  raw:      ${candidate.raw}\n` +
               `  resolved: ${candidate.tokens.join(" ")}\n` +
               `  stderr:   ${result.stderr.trim()}`,

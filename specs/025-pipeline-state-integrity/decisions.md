@@ -761,3 +761,85 @@ reviewer's word alone (same standard as the rest of this file):
   the changed phrases across `tests/*.test.js` before and after editing.
 - `implemented-by` marker: skipped for this task — the immediately preceding line in this file is
   already `implemented-by: claude` (same runtime), and the dedupe rule is consecutive-only.
+
+## T014: documented-cli-usage.test.js missed a whole failure class — exit 1 (unknown command)
+
+**The gap**: T013(d)'s guard only failed a candidate on `status === 2` (usage error — the
+subcommand exists but its arguments are malformed). `bin/sdd`'s top-level dispatch returns
+**exit 1** ("Unknown command: ...") when the SUBCOMMAND WORD ITSELF is wrong — a typo in prose
+never reaches a subcommand's own argument parsing, so it never raises 2. Reproduced independently,
+twice, before this task started: the reviewer's `sdd branch` → `sdd branc` mutation in
+`sdd-implement-task.md` left the suite green (13/13), and the orchestrator's `sdd status` →
+`sdd statu` mutation in `sdd-next/SKILL.md` did too (14/14 — that edit happened to create an extra
+candidate).
+
+**Fix**: added `result.status === 1` to the failure condition alongside the existing `=== 2` check,
+with a message that names which case fired (usage error vs. unknown command). Rewrote the
+PASS/FAIL-boundary header comment so it no longer lumps exit 1 in with 3/4/5 as "fixture
+precondition gap" — verified against every subcommand this file exercises (`branch`,
+`commit-slice`, `state-write` all exit 2 with no args; only an unrecognized subcommand word exits
+1), so there is no well-formed candidate in this file that returns 1, and failing on it cannot be
+a false positive.
+
+**Proved it has teeth, on a third file** (the two above were already spent): mutated
+`review-feature/SKILL.md` line 164, `sdd state-write` → `sdd state-writ`. Confirmed live first —
+`bin/sdd state-writ` exits 1 with `Unknown command: state-writ` on stderr. Ran the suite: RED,
+exactly 1 failure, exactly the mutated candidate
+(`[.claude/skills/review-feature/SKILL.md] \`sdd state-writ $FEATURE_ID --phase reviewed --verdict
+PASS\``), failure message correctly reads "exits 1 (unknown command)" not "exits 2". Restored the
+file byte-identical (`git diff --stat` on it: empty) and reran — GREEN, 176/176 across all 5
+suites.
+
+**Proved it does not cry wolf**: the exit-5 "nothing staged for commit" fixture-precondition case
+(the reviewer's own find, from `sdd-archive-feature.md`'s `commit-slice --moved-from` candidate —
+its fixture never deletes the moved-from path, so nothing ends up staged) reproduces at exit 5 when
+run standalone against the real binary, and that exact candidate is among the 13 that pass on every
+run above, before and after this fix. Exit 3/4/5 still pass; only 1 and 2 fail.
+
+`implemented-by` marker: skipped — same runtime as the immediately preceding marker
+(`implemented-by: claude`, line 122), consecutive-only dedupe rule.
+
+## Simplify: 2026-09-01 — /simplify-code (third pass, after T013)
+
+- **Why a third run**: T013 (commit `942d84f`) landed on top of the second run's sealed receipt
+  (`b5785e8`), moving HEAD and staling `.sdd-state` for the correct reason. `sdd status` confirmed
+  `sentinel_fresh: false`, `phase: ready-to-simplify` before this run; the sentinel file (still
+  present, `phase: reviewed`, `git-head: b5785e8`) was removed per the stale-sentinel pre-flight
+  path.
+- **Scope**: `git diff --name-only 7b61d89..HEAD` (base `feature/024-remove-auto-pr`) now spans 17
+  commits / 29 files. Same exclusion filters produced the **same six files** as both prior runs:
+  `.claude/rules/domains.md`, `.claude/rules/git.md`, `.specify/templates/rules/git.md`,
+  `.gitignore`, `bin/sdd`, `research/hallazgos-verificados.md`.
+- **New material from T013 confirmed out of scope, not by omission but by the filters working as
+  documented**: `git diff --name-only b5785e8..HEAD` shows T013 touched only
+  `.claude/agents/sdd-simplify-code.md` (excluded — `.claude/agents/**/*.md`, added to the filter
+  list by this same commit), `specs/025-pipeline-state-integrity/{decisions.md,tasks.md}` (excluded
+  — `specs/**/*.md`), and three test files including the new `tests/documented-cli-usage.test.js`
+  (excluded — test filters). None of T013's changes touch any of the six scoped files.
+- **No dirty-scope block**: `git status --short` was empty at scope-computation time; 4b's
+  intersection of `SCOPED_FILES` with `DIRTY_PATHS` was empty, no block raised.
+- **Six scoped files verified byte-identical to the second run's review, not re-derived**: `git diff
+  --name-only b5785e8..HEAD` confirms zero of the six appear in T013's diff, so their content is
+  exactly what the "Simplify: 2026-09-01 — /simplify-code (re-run after digest-scope fix)" entry
+  above already reviewed and declined to touch. That entry's per-file reasoning (single-line
+  additions with nothing to cut; the two `git.md` copies byte-identical by design, not a DRY
+  violation, and NEVER forbids merging concerns across files anyway; the research doc is a dense
+  verified-findings record where trimming risks losing preserved detail; `bin/sdd`'s one literal
+  duplicate in `cmd_commit_slice`/`cmd_state_write` is `validate_feature_id`'s documented contract,
+  not an oversight) stands unchanged and is not re-litigated here.
+- **Files simplified**: none (step 4.5 — non-empty scope, zero edits applied; the branch this
+  feature's own T013 added to `sdd-simplify-code.md` to close JUDGMENT-DAY #6, exercised live here
+  for the first time on a real "nothing changed" outcome since it was written).
+- **Baseline**: pass (176/176 tests, `bash -n bin/sdd` clean; no lint/typecheck tooling configured
+  in this repo — no eslint config, no tsconfig, no shellcheck installed) | **Post-edit**: SKIP (zero
+  edits made — nothing to re-validate, per step 4.5)
+- **Commit**: none (`SCOPED_FILES` non-empty but zero edits — step 4.5 skips 5.5, nothing to stage)
+- Sentinel re-sealed: `sdd state-write 025-pipeline-state-integrity --phase ready-to-review` under
+  `git-head: 942d84f` (T013's commit); `sdd status` confirms `sentinel_fresh: true`,
+  `next_command: /review-feature 025-pipeline-state-integrity`.
+
+[2026-09-01T20:45:00Z] review-mode=minimal (judgment-day skipped via --minimal). Razón: el
+judgment-day completo ya corrió sobre la sustancia de la feature y devolvió PASS WITH WARNINGS;
+T013 no agrega alcance, solo cierra los tres hallazgos que ese review levantó más el hueco que
+dejó pasar al primero. El orquestador verificó por su cuenta que el guard nuevo generaliza,
+rompiendo un comando documentado distinto (`sdd-archive-feature.md`) del que motivó el test.

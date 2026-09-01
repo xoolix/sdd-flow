@@ -48,6 +48,10 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
   - blocked_by: T012; verifies: review follow-up (no AC — found by review, outside the 12)
   - touches: sdd-simplify-code.md, tests, state-machine.test.js
 
+- [x] **T014 [AFK] El guard de comandos documentados no ve un subcomando con typo**: `documented-cli-usage.test.js` solo falla ante exit 2, pero `bin/sdd` devuelve exit **1** ("Unknown command") ante un subcomando inexistente — un typo en la prosa pasa desapercibido. Verificado en vivo por el reviewer (`sdd branch`→`sdd branc` en implement-task) y por el orquestador (`sdd status`→`sdd statu` en sdd-next): la suite quedó verde las dos veces. Sumar `status === 1` a la condición de falla; confirmado seguro — `branch`/`commit-slice`/`state-write` sin args dan 2, solo el dispatch da 1.
+  - blocked_by: T013; verifies: review follow-up (no AC)
+  - touches: tests/documented-cli-usage.test.js
+
 ## Notes
 - No `[HITL]`: all real decisions were resolved at the discovery checkpoint.
 - `type`: fix T001-T004,T008; feat T005-T007,T012; chore T009-T011.
