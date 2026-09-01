@@ -210,11 +210,17 @@ describe("state-machine harness: sdd status across all eight phases (025/T012/AC
 
     // ── 6a. freshness fork, branch 1: uncommitted edit (V6) ───────────
     // The branch with zero coverage before 025 (discovery.md finding B):
-    // tree-digest is computed over the WHOLE working tree, so editing any
-    // tracked file without committing changes the digest while git-head
-    // stays put. A git-head-only check (the old .simplified behaviour)
-    // would miss this entirely.
-    fs.appendFileSync(path.join(featureDir, "spec.md"), "\nUncommitted edit.\n");
+    // tree-digest is computed over the working tree EXCLUDING specs/**
+    // (post-T012 digest-scope fix -- specs/ is the pipeline's own
+    // bookkeeping, not code; digesting it made the phase that seals the
+    // receipt also invalidate its own seal by writing to decisions.md), so
+    // editing any tracked file OUTSIDE specs/ without committing still
+    // changes the digest while git-head stays put. A git-head-only check
+    // (the old .simplified behaviour) would miss this entirely.
+    // t001-change.txt is already tracked (committed via commit-slice in step
+    // 4 above), so dirtying it here is a genuine code-tree change -- a
+    // specs/ edit would no longer prove anything post-fix.
+    fs.appendFileSync(path.join(project, "t001-change.txt"), "\nUncommitted edit.\n");
 
     s = status(project, FEATURE_ID);
     expect(s.phase).not.toBe("ready-to-review");
@@ -224,7 +230,7 @@ describe("state-machine harness: sdd status across all eight phases (025/T012/AC
     // Revert the uncommitted edit (undoes the only thing that changed) --
     // tree-digest now matches the stored sentinel again with no re-write
     // needed, proving the check is a live comparison, not a one-shot flag.
-    execFileSync("git", ["checkout", "--", "specs/" + FEATURE_ID + "/spec.md"], {
+    execFileSync("git", ["checkout", "--", "t001-change.txt"], {
       cwd: project,
       encoding: "utf8",
     });

@@ -2120,6 +2120,11 @@ describe("sdd CLI smoke tests", () => {
         path.join(project, "specs", "001-demo", "tasks.md"),
         "# Tasks\n\n- [x] First behavior\n- [x] Second behavior\n",
       );
+      // A tracked file OUTSIDE specs/ -- tree_digest() excludes specs/**
+      // (post-T012 digest-scope fix: specs/ is pipeline bookkeeping, not
+      // code), so freshness tests that need a real code-tree change must
+      // dirty this instead of a spec file.
+      fs.writeFileSync(path.join(project, "code.txt"), "tracked code file\n");
       seedCommit(project);
       execFileSync(sddBin, ["branch", "001-demo"], { cwd: project });
       return project;
@@ -2136,17 +2141,72 @@ describe("sdd CLI smoke tests", () => {
       expect(fresh.phase).toBe("ready-to-review");
       expect(fresh.sentinel_fresh).toBe(true);
 
-      // Edit a tracked file WITHOUT committing. This is the branch with zero
-      // coverage before this task (grep 'sentinel_fresh|git-head' in the old
-      // suite returned nothing): a digest-based freshness check must catch a
-      // dirty tree that a git-head-only check would miss entirely.
-      fs.appendFileSync(path.join(project, "specs", "001-demo", "spec.md"), "\nUncommitted edit.\n");
+      // Edit a tracked file OUTSIDE specs/ WITHOUT committing. This is the
+      // branch with zero coverage before this task (grep
+      // 'sentinel_fresh|git-head' in the old suite returned nothing): a
+      // digest-based freshness check must catch a dirty tree that a
+      // git-head-only check would miss entirely. Must be outside specs/ --
+      // tree_digest() excludes specs/** (post-T012 digest-scope fix), so a
+      // spec.md edit here would no longer prove anything.
+      fs.appendFileSync(path.join(project, "code.txt"), "\nUncommitted edit.\n");
 
       const stale = JSON.parse(
         execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
       );
       expect(stale.phase).not.toBe("ready-to-review");
       expect(stale.sentinel_fresh).toBe(false);
+    });
+
+    test("appending to a file under specs/ does not change the tree-digest (post-T012 digest-scope fix)", () => {
+      const project = makeReadyProject();
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      const before = fs
+        .readFileSync(path.join(project, "specs", "001-demo", ".sdd-state"), "utf8")
+        .match(/^tree-digest: (.+)$/m)[1];
+
+      // Pipeline bookkeeping, not code -- simplify/review append run notes to
+      // decisions.md in the same run that seals .sdd-state. This is the exact
+      // shape that deadlocked the pipeline before this fix: a new file
+      // appearing under specs/ must not move the digest.
+      fs.writeFileSync(path.join(project, "specs", "001-demo", "decisions.md"), "simplify notes\n");
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      const after = fs
+        .readFileSync(path.join(project, "specs", "001-demo", ".sdd-state"), "utf8")
+        .match(/^tree-digest: (.+)$/m)[1];
+
+      expect(after).toBe(before);
+    });
+
+    test("appending to a tracked file outside specs/ still changes the tree-digest", () => {
+      const project = makeReadyProject();
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      const before = fs
+        .readFileSync(path.join(project, "specs", "001-demo", ".sdd-state"), "utf8")
+        .match(/^tree-digest: (.+)$/m)[1];
+
+      fs.appendFileSync(path.join(project, "code.txt"), "a real code change\n");
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      const after = fs
+        .readFileSync(path.join(project, "specs", "001-demo", ".sdd-state"), "utf8")
+        .match(/^tree-digest: (.+)$/m)[1];
+
+      expect(after).not.toBe(before);
+    });
+
+    test("a new untracked file outside specs/ still changes the tree-digest", () => {
+      const project = makeReadyProject();
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      const before = fs
+        .readFileSync(path.join(project, "specs", "001-demo", ".sdd-state"), "utf8")
+        .match(/^tree-digest: (.+)$/m)[1];
+
+      fs.writeFileSync(path.join(project, "new-code.txt"), "brand new tracked-candidate file\n");
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      const after = fs
+        .readFileSync(path.join(project, "specs", "001-demo", ".sdd-state"), "utf8")
+        .match(/^tree-digest: (.+)$/m)[1];
+
+      expect(after).not.toBe(before);
     });
 
     test("tree-digest is stable across two state-write calls on the same unchanged dirty tree", () => {
@@ -2227,6 +2287,9 @@ describe("sdd CLI smoke tests", () => {
         path.join(project, "specs", "001-demo", "tasks.md"),
         "# Tasks\n\n- [x] First behavior\n- [x] Second behavior\n",
       );
+      // A tracked file OUTSIDE specs/ -- tree_digest() excludes specs/**
+      // (post-T012 digest-scope fix); see the T005/AC6 describe block above.
+      fs.writeFileSync(path.join(project, "code.txt"), "tracked code file\n");
       seedCommit(project);
       execFileSync(sddBin, ["branch", "001-demo"], { cwd: project });
       return project;
@@ -2262,7 +2325,9 @@ describe("sdd CLI smoke tests", () => {
       );
       expect(fresh.phase).toBe("reviewed");
 
-      fs.appendFileSync(path.join(project, "specs", "001-demo", "spec.md"), "\nUncommitted edit.\n");
+      // Outside specs/ -- tree_digest() excludes specs/** (post-T012
+      // digest-scope fix), so a spec.md edit here would no longer invalidate.
+      fs.appendFileSync(path.join(project, "code.txt"), "\nUncommitted edit.\n");
 
       const stale = JSON.parse(
         execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),

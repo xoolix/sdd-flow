@@ -1192,11 +1192,23 @@ cmd_commit_slice() {
 
 # ─── state-write ─────────────────────────────────────────────────────
 
-# Digest of the FULL working tree (tracked + untracked, respecting
-# .gitignore) via a scratch index -- never the real one, never the real
-# worktree. Both cmd_state_write (the writer) and detect_feature_phase (the
-# reader) call this same helper, so freshness can never desync over the two
-# computing "the tree changed" two different ways.
+# Digest of the working tree (tracked + untracked, respecting .gitignore)
+# via a scratch index -- never the real one, never the real worktree. Both
+# cmd_state_write (the writer) and detect_feature_phase (the reader) call
+# this same helper, so freshness can never desync over the two computing
+# "the tree changed" two different ways.
+#
+# EXCLUDES specs/** (post-T012 fix -- deadlock found by dogfooding this very
+# feature). The digest exists to catch an uncommitted CODE edit after
+# simplify/review sealed their receipt (AC6). specs/** is the pipeline's own
+# bookkeeping, not code -- and /simplify-code and /review-feature both write
+# to decisions.md in the SAME run that seals .sdd-state. Digesting specs/**
+# meant the phase that seals the receipt also invalidates its own seal:
+# simplify writes .sdd-state, appends its run notes to decisions.md, and the
+# very next `sdd status` reports the sentinel stale with HEAD unchanged --
+# `/simplify-code` would then re-run forever. Accepted trade-off (user
+# decision): an uncommitted edit to spec.md no longer invalidates the
+# receipt -- review reads the spec directly anyway.
 #
 # REJECTED, do not reopen (measured empirically for 025):
 #   - `git stash create`: a different SHA on every call for the SAME dirty
@@ -1218,7 +1230,7 @@ tree_digest() {
   rm -f "$tmp"
 
   local digest=""
-  if GIT_INDEX_FILE="$tmp" git add -A >/dev/null 2>&1; then
+  if GIT_INDEX_FILE="$tmp" git add -A -- ':(exclude)specs' >/dev/null 2>&1; then
     digest="$(GIT_INDEX_FILE="$tmp" git write-tree 2>/dev/null || true)"
   fi
 

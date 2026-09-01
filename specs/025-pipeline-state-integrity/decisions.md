@@ -494,3 +494,142 @@ Es la misma clase de defecto que la feature persigue, encontrado dentro de la fe
   re-verified at 0 matches (unaffected by this task; the new needle-check also
   passed over `tests/state-machine.test.js` itself, which is not in
   `sweep-retired-symbols.test.js`'s exclusion list).
+
+[2026-09-01] NIT abierto para review: la cabecera de `tests/state-machine.test.js` cita **AC11**
+("AC11 originally asked this harness to run plan→implement→simplify→review→archive with mocked
+envelopes") cuando el criterio del harness es el **AC12**. La numeración se corrió durante el
+discovery checkpoint, al entrar la verificación del recibo de archive como AC11 nuevo. Su primera
+línea sí dice "025/T012 (AC12)", así que el archivo se contradice consigo mismo. Es un comentario
+afirmando algo falso dentro del archivo cuyo tema es declarar límites con honestidad — pequeño, pero
+exactamente la clase que esta feature persigue. Queda para que lo corrija simplify o el review.
+
+## Simplify: 2026-09-01 — /simplify-code
+
+- **Files simplified**: none (SCOPED_FILES reviewed, zero edits applied)
+- **Scope**: `git diff --name-only 7b61d89..HEAD` (base `feature/024-remove-auto-pr`, 14 commits,
+  22 files) filtered by the exclusion list left six files in scope: `.claude/rules/domains.md`,
+  `.claude/rules/git.md`, `.specify/templates/rules/git.md`, `.gitignore`, `bin/sdd`,
+  `research/hallazgos-verificados.md`. None of these matched `specs/**/*.md`,
+  `.claude/skills/**/*.md`, `.claude/agents/**/*.md`, or `docs/adr/**/*.md`, so — as intended by
+  the literal filter list, not by accident — two prose "rules" files, a template copy, and a
+  research file were genuinely in scope alongside the code.
+- **Reviewed, no change**:
+  - `.gitignore`, `.claude/rules/domains.md`: single-line additions/edits from this feature, no
+    redundancy to cut.
+  - `.claude/rules/git.md` / `.specify/templates/rules/git.md`: byte-identical to each other by
+    design (source rule vs. the template new projects are seeded from) — not a DRY violation to
+    merge; the NEVER list also forbids merging concerns across files.
+  - `research/hallazgos-verificados.md`: dense verified-findings record (V1-V10, N1); already
+    tight, no wording is redundant, and this is a historical record of what codex found — cutting
+    or rewording it risks losing the verified technical detail it exists to preserve.
+  - `bin/sdd`: reviewed the full 525-line feature diff (state-write, tree_digest, validate_feature_id,
+    the branch/commit-slice guards). One literal duplicate was found — `cmd_commit_slice` and
+    `cmd_state_write` both hardcode the identical
+    `error: invalid feature-id: "%s" (must not be empty, contain "..", contain "/", or start with
+    "-")` printf. **Declined to extract**: `validate_feature_id`'s own doc comment states the
+    design intent explicitly — "Prints nothing ... callers decide their own error text and exit
+    code" — so the two call sites carrying the same text today is the validator's contract working
+    as documented, not an oversight to DRY away. The rest of the diff (tree_digest's mktemp/rm-f
+    ordering, the awk NR==FNR idiom, the branch/commit-slice guards) each carry a comment recording
+    a specific empirically-confirmed gotcha (stash-create timestamps, real-index write-tree
+    staleness, BSD awk `-v` newline rejection, mktemp corrupt-index quirk) — none of it is
+    speculative or redundant, so none of it was touched.
+- **Out of scope, left for review**: the AC11/AC12 NIT immediately above, in
+  `tests/state-machine.test.js` — a test file, excluded by this phase's own NEVER list
+  ("Never touch test files"). Flagged here, not fixed here.
+- **T005/T006/T007 sentinel mechanism exercised live for the first time by this run**: pre-flight
+  read `sdd status`'s `sentinel_fresh: false` (file absent) correctly; `sdd base-branch` resolved
+  `feature/024-remove-auto-pr` via the `.parent-branch` sidecar exactly as expected; the dirty
+  `decisions.md` (this file, already modified before this run started) never tripped T010's 4b
+  block because it's excluded from `SCOPED_FILES` by the SDD-artifacts filter, and never appeared
+  in `IGNORED_DIRTY` either, since it was already part of the committed `<base>..HEAD` diff — no
+  false positive, no false negative. `sdd state-write 025-pipeline-state-integrity --phase
+  ready-to-review` wrote the 5-field `.sdd-state` correctly (verified via `sdd status`:
+  `sentinel_fresh: true`, `next_command: /review-feature ...`); the file stayed correctly
+  gitignored (absent from `git status --short`). No discrepancy found between the live agent
+  instructions in `.claude/agents/sdd-simplify-code.md` and this behavior.
+- **Baseline**: pass (160/160 tests, `bash -n bin/sdd` clean; no lint/typecheck tooling configured
+  in this repo — no eslint config, no tsconfig, no shellcheck installed) | **Post-edit**: SKIP (zero
+  edits made — nothing to re-validate)
+
+## Delta: 2026-09-01 — Post-T012 digest-scope fix
+
+Post-implementation defect fix, found by dogfooding this feature (not a numbered task; all 12
+tasks were already `[x]` and `/simplify-code` had already run). `tree_digest()` (`bin/sdd`) ran
+`GIT_INDEX_FILE=<tmp> git add -A` over the whole worktree, so the digest included `specs/**` — the
+pipeline's own bookkeeping. Consequence, measured live on this repo: `/simplify-code` sealed
+`.sdd-state` with `tree-digest: 76f75084…`, then appended its run notes to
+`specs/025-pipeline-state-integrity/decisions.md` (this file) — a write **under `specs/`**, not to
+any code. `sdd status` immediately reported `sentinel_fresh: false`, `phase: ready-to-simplify`,
+with HEAD unchanged, because the digest now included the just-appended decisions.md content. The
+phase that seals the receipt (`/simplify-code`) is also the phase that writes `decisions.md`, so it
+invalidated its own seal — running `/simplify-code` again would repeat this exactly, an infinite
+loop.
+
+- **MODIFIED**: `tree_digest()`'s scratch-index `git add -A` gains a pathspec exclusion —
+  `git add -A -- ':(exclude)specs'` — so the digest covers the working tree except `specs/**`.
+  Verified empirically on this machine (git 2.50.1): `:(exclude)specs` and the `:!specs` shorthand
+  produce identical results; `:(exclude)specs` chosen for readability. Confirmed both directions
+  before relying on it: an edit or new untracked file *under* `specs/` leaves the digest unchanged;
+  a tracked-file edit or a new untracked file *outside* `specs/` still changes it. `bin/sdd` already
+  assumes CWD == repo root elsewhere (`specs_dir="$(pwd)/specs"`), so the bare `specs` pathspec is
+  consistent with that existing assumption, not a new one.
+- **Accepted trade-off (user decision, restated from the assignment)**: an uncommitted edit to
+  `spec.md` (or any file under `specs/`) no longer invalidates `.sdd-state`. Fine —
+  `/review-feature` and archive's pre-flight both read the spec directly, not through the digest.
+- **Writer/reader still share one computation**: both `cmd_state_write` and `detect_feature_phase`
+  call the same `tree_digest()`, so the exclusion applies identically to writes and freshness reads
+  — no risk of the two drifting into different notions of "the tree changed" (same principle T005's
+  own doc comment states).
+- **Repointed three pre-existing freshness tests** that dirtied a file *under* `specs/` to prove
+  invalidation — with the fix, that no longer invalidates, so they'd have silently stopped testing
+  freshness instead of failing:
+  - `tests/sdd.test.js`: "writes .sdd-state ... an uncommitted edit invalidates it (AC6)" and "a
+    reviewed state invalidated by an uncommitted edit falls back ... (T005 rule extends to
+    reviewed)" — both now dirty a new tracked fixture file (`code.txt`, added to both local
+    `makeReadyProject()` copies) instead of `specs/001-demo/spec.md`.
+  - `tests/state-machine.test.js`'s eight-phase walk, step "6a. freshness fork, branch 1:
+    uncommitted edit" — now dirties `t001-change.txt` (already tracked via step 4's commit-slice
+    call) instead of `specs/{FEATURE_ID}/spec.md`.
+  - The HEAD-staleness tests (committing after state-write; a new commit after review sealed it)
+    needed no change: HEAD moving invalidates the sentinel before the digest branch is even
+    checked, regardless of which file was edited.
+- **Added three new tests** (`tests/sdd.test.js`, "sdd state-write (T005/AC6)" describe block)
+  proving the fix explicitly in both directions: a new file appearing under `specs/` (e.g.
+  `decisions.md`, the exact shape that deadlocked) does not change `tree-digest`; a tracked-file
+  edit outside `specs/` still does; a brand-new untracked file outside `specs/` still does.
+- **Proved RED first**: with the test changes in place but `tree_digest()` still unfixed, the new
+  "appending to a file under specs/ does not change the tree-digest" test failed for the expected
+  reason (`before`/`after` digests differed). Applied the one-line fix, reran: passed.
+- **Verified against the actual deadlock, not just the temp-project fixtures**: reverted the test
+  and `bin/sdd` files to HEAD, kept this feature's own dirty `decisions.md`, copied the fixed
+  `bin/sdd` back in, and ran `sdd status 025-pipeline-state-integrity` live — `sentinel_fresh: false`
+  (expected: the *stored* `.sdd-state` was sealed under the old, unfixed digest algorithm, so it can
+  never match a digest recomputed under the new one — changing the algorithm invalidates receipts
+  sealed before the change, which is correct, not a further bug). Re-sealed with
+  `sdd state-write --phase ready-to-review` under the fixed code, then appended more prose to
+  `decisions.md` again: `sentinel_fresh` stayed `true` — the deadlock is gone going forward.
+- Full suite: 160 (baseline) → 163 (3 new tests), all green. `bash -n bin/sdd` clean.
+  `grep -c 'node\|npx\|src/' bin/sdd` = 0. `grep -rn 'auto-commit' bin/ .claude/ .specify/ tests/` =
+  0 (unaffected by this fix).
+
+## Known open defect (not fixed) — `sdd-simplify-code.md` step 5 has no defined path for
+"non-empty scope, nothing to change"
+
+Found while diagnosing the digest-scope deadlock above; the same class of defect this feature
+exists to remove, found inside the feature itself. Step 3 item 5 of `sdd-simplify-code.md` only
+defines one branch: **"If `SCOPED_FILES` is empty → skip straight to step 6 ... Skip steps 4, 5, and
+5.5"**. It says nothing about the other zero-work shape: `SCOPED_FILES` **non-empty** (files really
+are in scope), but step 4 (Simplify) reviews every one of them and applies **zero edits** — no
+domain-rule violation, no dead code, nothing KISS/DRY/YAGNI would touch.
+
+This is exactly what happened on this feature's own `/simplify-code` run (see "## Simplify:
+2026-09-01" above): six files were in scope (`.claude/rules/domains.md`, `.claude/rules/git.md`,
+`.specify/templates/rules/git.md`, `.gitignore`, `bin/sdd`, `research/hallazgos-verificados.md`),
+all reviewed, zero edits applied — then the run proceeded as if it had hit the *empty*-scope branch
+(`Post-edit: SKIP`, `Commit: none`), which is only literally specified for the case where
+`SCOPED_FILES` was empty to begin with. It landed on the right outcome (nothing to validate, nothing
+to commit) by accident, not because the prose told it to — there is no instruction covering "scope
+was non-empty, step 4 changed nothing, now what." Codex's cross-review (see the origin note at the
+top of this file) had already flagged this exact gap as an unverified finding; it has now
+reproduced live. Recorded here for `/review-feature` to pick up — not implemented in this pass.
