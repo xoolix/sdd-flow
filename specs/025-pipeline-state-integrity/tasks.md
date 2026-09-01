@@ -20,7 +20,7 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
   - blocked_by: T001; verifies: AC2; touches: bin/sdd, tests
 - [x] **T003 [AFK] `sdd branch` records the parent and warns on stacking**: two separate behaviours — (a) resolve the base and always write `specs/<id>/.parent-branch` (`mkdir -p`; gitignored, so it raises no `??`), and (b) warn on stderr when branching off another `feature/*`. Writing the sidecar does not by itself prevent stacking.
   - blocked_by: T002; verifies: AC3; touches: bin/sdd, tests
-- [ ] **T004 [AFK] commit-slice verifies current branch**: current branch must equal the `feature/<id>` naming convention (NOT read from `.parent-branch`, which holds the *base* branch for diff scope); exit 4 otherwise.
+- [x] **T004 [AFK] commit-slice verifies current branch**: current branch must equal the `feature/<id>` naming convention (NOT read from `.parent-branch`, which holds the *base* branch for diff scope); exit 4 otherwise.
   - blocked_by: T003; verifies: AC4; touches: bin/sdd, tests
 
 ### 2. Core implementation — state file & pipeline gates

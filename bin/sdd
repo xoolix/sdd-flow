@@ -95,6 +95,8 @@ Usage:
                                  --files <p>... ; --files last)
                                  --moved-from stages the deletion of a path guarded by
                                  'git ls-files --error-unmatch'; never-tracked ⇒ exit 3, named
+                                 requires the current branch to be feature/<feature-id> ⇒ exit 4
+                                 otherwise, no commit
   sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
   sdd domain-vocab               Print .claude/rules/domains.md;
                                  exit 3 (no output) if empty, comment-only, or absent
@@ -960,6 +962,35 @@ cmd_commit_slice() {
   if ! feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
     printf 'error: feature not found: %s\n' "$feature_id" >&2
     return 3
+  fi
+
+  # AC4/V4: refuse to commit onto the wrong branch. Repro: standing on
+  # feature/AAA, `commit-slice BBB --files bbb.txt` committed BBB's work
+  # ONTO AAA, exit 0, no complaint. Checked here -- after the feature is
+  # confirmed to exist (so "999-missing" still exits 3, not 4) but before
+  # anything below touches the index (so, like validate_feature_id above,
+  # there is nothing to unwind on failure).
+  #
+  # The expected name comes from the feature/<feature-id> convention that
+  # cmd_branch itself uses -- NOT from .parent-branch, which records the
+  # *base* branch for diff scope, a different thing entirely. Only
+  # "feature/<feature-id>" is accepted, not "fix/<feature-id>": cmd_branch
+  # hard-codes the "feature/" prefix and has never produced anything
+  # else, and .claude/rules/git.md's "## Branch naming" section is an
+  # unfilled template placeholder (`<!-- e.g. feature/NNN-description,
+  # fix/NNN-description -->`), not an adopted convention -- confirmed
+  # against this repo's own history, where every branch ever created is
+  # "feature/*". Accepting a prefix the tooling can never produce would
+  # widen the gate on a guess, not a fact. Anything else that is not this
+  # exact name -- another feature/* branch (the repro above), main, a
+  # scratch branch, or detached HEAD, where 'git branch --show-current'
+  # prints empty -- fails closed the same way.
+  local expected_branch="feature/${feature_id}" current_branch
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+  if [ "$current_branch" != "$expected_branch" ]; then
+    printf 'error: refusing to commit "%s" on branch "%s" (expected "%s") -- run: sdd branch %s\n' \
+      "$feature_id" "${current_branch:-<detached HEAD>}" "$expected_branch" "$feature_id" >&2
+    return 4
   fi
 
   # Snapshot every already-staged path BEFORE this invocation's own 'git add'

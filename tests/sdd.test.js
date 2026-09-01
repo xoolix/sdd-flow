@@ -955,6 +955,7 @@ describe("sdd CLI smoke tests", () => {
     test("commits the named files with the <type>(<id>): <title> message format", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
 
       const output = execFileSync(
@@ -976,6 +977,7 @@ describe("sdd CLI smoke tests", () => {
     test("prefixes the message with Tnnn when --task is passed", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
 
       const output = execFileSync(
@@ -1006,6 +1008,7 @@ describe("sdd CLI smoke tests", () => {
     test("stages only --files plus the derived feature dir, leaving a pre-staged unrelated file untouched", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(path.join(project, "unrelated.js"), "console.log('bye');\n");
       // Pre-staged by someone else before commit-slice runs: T001's
@@ -1038,6 +1041,7 @@ describe("sdd CLI smoke tests", () => {
     test("refuses without --files and creates no commit, even when specs/<id> itself is dirty", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
       // specs/001-demo has a real change on disk — without the guardrail, staging
       // just the derived feature dir would be enough to produce a "successful" commit.
@@ -1058,6 +1062,7 @@ describe("sdd CLI smoke tests", () => {
     test("resolves the derived feature dir from specs/archive/*-<id> when specs/<id> is absent", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.rmSync(path.join(project, "specs", "001-demo"), { recursive: true, force: true });
       const archiveDir = path.join(project, "specs", "archive", "2026-08-01-001-demo");
       fs.mkdirSync(archiveDir, { recursive: true });
@@ -1083,6 +1088,7 @@ describe("sdd CLI smoke tests", () => {
     test("exits 3 and creates no commit when the feature dir cannot be resolved", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
 
@@ -1101,6 +1107,7 @@ describe("sdd CLI smoke tests", () => {
     test("exits 4 and passes git's stderr through when a --files path does not exist", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
 
       const error = sddFail(
@@ -1118,6 +1125,7 @@ describe("sdd CLI smoke tests", () => {
     test("exits 5 and creates no commit when nothing changed to stage", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       execFileSync("git", ["add", "-A"], { cwd: project });
       execFileSync("git", ["commit", "-q", "-m", "add app.js"], { cwd: project });
@@ -1153,6 +1161,7 @@ describe("sdd CLI smoke tests", () => {
     test("--moved-from stages the deletion of a tracked path that moved away", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const oldDir = path.join(project, "specs", "001-demo");
       const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
       fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
@@ -1202,6 +1211,7 @@ describe("sdd CLI smoke tests", () => {
     test("commits only the named paths, leaving a file staged by someone else untouched and still staged", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
       // Pre-staged by "someone else" — never named in --files below.
@@ -1242,6 +1252,7 @@ describe("sdd CLI smoke tests", () => {
     test("rejects an undeclared new file created alongside a declared one: exits non-zero, names it, creates no commit (V1/AC1)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(path.join(project, "helper.js"), "console.log('undeclared');\n");
@@ -1264,6 +1275,7 @@ describe("sdd CLI smoke tests", () => {
     test("still succeeds when an unrelated file was pre-staged before commit-slice ran (pre-existing staged work is not blamed)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
       // Pre-staged before commit-slice runs -- must not be mistaken for an
@@ -1303,6 +1315,7 @@ describe("sdd CLI smoke tests", () => {
       fs.writeFileSync(path.join(project, "specs", "999-other", "f.md"), "old\n");
       fs.writeFileSync(path.join(project, "omitted.js"), "console.log('do not forget me');\n");
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
 
       // Someone else's legitimate, unrelated in-flight rename — pre-staged
@@ -1349,6 +1362,7 @@ describe("sdd CLI smoke tests", () => {
     test("clean index before commit-slice: no warning at all (index-state axis, T003)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
 
       // Outside the project's git working tree on purpose (T001): the
@@ -1377,6 +1391,7 @@ describe("sdd CLI smoke tests", () => {
     test("staged outside the feature dir before commit-slice: no new warning, file stays staged and out of the commit (index-state axis, T003, AC9 regression guard)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
       execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
@@ -1417,6 +1432,7 @@ describe("sdd CLI smoke tests", () => {
     test("staged inside the feature dir before commit-slice: new warning fires naming the file, commit content unchanged (index-state axis, T003)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       // A HITL decision (or a stray edit) already staged inside the feature
       // dir before commit-slice runs -- exactly the shape AC5 warns about.
@@ -1471,6 +1487,7 @@ describe("sdd CLI smoke tests", () => {
     test("a pre-staged feature-dir file and a genuinely undeclared file at once: the AC5 warning still fires even though the run then hard-fails (proves the two checks did not merge)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(
@@ -1508,6 +1525,7 @@ describe("sdd CLI smoke tests", () => {
     test("--moved-from deletion still lands in a scoped commit, even with an unrelated file pre-staged", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const oldDir = path.join(project, "specs", "001-demo");
       const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
       fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
@@ -1566,6 +1584,7 @@ describe("sdd CLI smoke tests", () => {
     test("--moved-from succeeds on a path already moved away by 'git mv' (cross #2)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       // 'git mv' does not create missing parent directories on its own.
       fs.mkdirSync(path.join(project, "specs", "archive"), { recursive: true });
       execFileSync(
@@ -1612,6 +1631,7 @@ describe("sdd CLI smoke tests", () => {
     test("--moved-from exits non-zero and names the path when it was never tracked, even if it still exists on disk", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
       const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
       fs.writeFileSync(path.join(project, "never-tracked.js"), "console.log('surprise');\n");
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
@@ -1649,6 +1669,7 @@ describe("sdd CLI smoke tests", () => {
     test("exits 2 when --moved-from is passed without a value", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
 
       const error = sddFail(
         ["commit-slice", "001-demo", "--type", "feat", "--title", "No value", "--moved-from"],
@@ -1668,6 +1689,7 @@ describe("sdd CLI smoke tests", () => {
     test("runs the literal Step 3.5 template with a delta file and commits both halves of the move (cross #1)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
 
       // Step 3 (plain filesystem mv, no git awareness) already ran by the
       // time Step 3.5 fires.
@@ -1700,6 +1722,7 @@ describe("sdd CLI smoke tests", () => {
     test("runs the literal Step 3.5 template with no deltas -- empty --files -- and still commits the move (cross #1)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
 
       const archiveDir = path.join(project, "specs", "archive", "2026-08-26-001-demo");
       fs.mkdirSync(path.dirname(archiveDir), { recursive: true });
@@ -1732,6 +1755,7 @@ describe("sdd CLI smoke tests", () => {
     test("still refuses empty --files with no --moved-from and nothing staged -- does not open a hole", () => {
       const project = makeTempProject();
       seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
 
       const error = sddFail(
         ["commit-slice", "001-demo", "--type", "chore", "--title", "Archive 001-demo"],
@@ -1740,6 +1764,132 @@ describe("sdd CLI smoke tests", () => {
 
       expect(error.status).toBe(2);
       expect(error.stderr).toContain("--files");
+    });
+  });
+
+  // T004 (025-pipeline-state-integrity, AC4/V4): commit-slice used to have
+  // ZERO branch awareness -- a total absence, not broken logic. Repro:
+  // standing on feature/AAA, `commit-slice BBB --files bbb.txt` committed
+  // BBB's work ONTO AAA, exit 0, no complaint. Fixed by requiring the
+  // current branch to equal feature/<feature-id> exactly (the naming
+  // convention cmd_branch itself uses), checked right after the feature is
+  // confirmed to exist and before anything touches the index.
+  describe("commit-slice verifies the current branch (T004/AC4)", () => {
+    test("on feature/AAA, commit-slice BBB exits 4 and creates no commit on either branch, file stays dirty (V4 repro)", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, "specs", "BBB"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "BBB", "spec.md"), "# Spec\n");
+      // Real projects gitignore the .parent-branch sidecar (repo root
+      // .gitignore); this fixture branches into TWO different feature dirs
+      // (BBB then AAA) before committing BBB, so AAA's sidecar sits outside
+      // BBB's feature_dir and would otherwise trip T001's undeclared-file
+      // check for an unrelated reason before this test ever reaches AC4.
+      fs.writeFileSync(path.join(project, ".gitignore"), "specs/**/.parent-branch\n");
+      seedCommit(project);
+
+      execFileSync(sddBin, ["branch", "BBB"], { cwd: project, encoding: "utf8" });
+      const headBBB = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+
+      execFileSync(sddBin, ["branch", "AAA"], { cwd: project, encoding: "utf8" });
+      const headAAA = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+
+      fs.writeFileSync(path.join(project, "bbb.txt"), "BBB's work\n");
+
+      const error = sddFail(
+        ["commit-slice", "BBB", "--type", "feat", "--title", "BBB work", "--files", "bbb.txt"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(4);
+      expect(error.stderr).toContain("feature/BBB");
+
+      const currentBranch = execFileSync("git", ["branch", "--show-current"], {
+        cwd: project,
+        encoding: "utf8",
+      }).trim();
+      expect(currentBranch).toBe("feature/AAA");
+
+      // Neither branch moved -- AAA never got BBB's commit (the repro), and
+      // BBB itself was never touched either.
+      const afterAAA = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(afterAAA).toBe(headAAA);
+      const afterBBB = execFileSync("git", ["rev-parse", "feature/BBB"], {
+        cwd: project,
+        encoding: "utf8",
+      }).trim();
+      expect(afterBBB).toBe(headBBB);
+
+      const status = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" });
+      expect(status).toContain("?? bbb.txt");
+    });
+
+    test("on feature/BBB, commit-slice BBB still succeeds (AC4 happy path)", () => {
+      const project = makeTempProject();
+      fs.mkdirSync(path.join(project, "specs", "BBB"), { recursive: true });
+      fs.writeFileSync(path.join(project, "specs", "BBB", "spec.md"), "# Spec\n");
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "BBB"], { cwd: project, encoding: "utf8" });
+      fs.writeFileSync(path.join(project, "bbb.txt"), "BBB's work\n");
+
+      const output = execFileSync(
+        sddBin,
+        ["commit-slice", "BBB", "--type", "feat", "--title", "BBB work", "--files", "bbb.txt"],
+        { cwd: project, encoding: "utf8" },
+      );
+
+      const sha = output.trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+      const files = filesInCommit(project, sha);
+      expect(files).toContain("bbb.txt");
+    });
+
+    // Decision (see decisions.md): only "feature/<feature-id>" is accepted,
+    // not "fix/<feature-id>". cmd_branch hard-codes the "feature/" prefix and
+    // has never produced anything else; .claude/rules/git.md's "## Branch
+    // naming" section is an unfilled template placeholder
+    // (`<!-- e.g. feature/NNN-description, fix/NNN-description -->`), not an
+    // adopted convention -- confirmed against this repo's own branch
+    // history, where every branch ever created is "feature/*".
+    test("a fix/<feature-id> branch is not accepted -- only feature/ (AC4 fix-lane decision)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["checkout", "-q", "-b", "fix/001-demo"], { cwd: project });
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "fix", "--title", "Bug fix", "--files", "app.js"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(4);
+      expect(error.stderr).toContain('expected "feature/001-demo"');
+
+      const status = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" });
+      expect(status).toContain("?? app.js");
+    });
+
+    // Decision (see decisions.md): detached HEAD fails closed. 'git branch
+    // --show-current' prints empty there, which can never equal
+    // "feature/<feature-id>" -- so this falls out of the same equality
+    // check rather than needing a special case, and the error text names it
+    // explicitly instead of printing a blank branch name.
+    test("detached HEAD fails closed with exit 4, not a false pass (AC4 detached-HEAD decision)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      execFileSync("git", ["checkout", "-q", sha], { cwd: project });
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(4);
+      expect(error.stderr).toContain("<detached HEAD>");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(sha);
     });
   });
 

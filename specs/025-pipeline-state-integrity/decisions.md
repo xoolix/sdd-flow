@@ -120,3 +120,29 @@ not "every invocation overwrites". Verified: `.parent-branch` is already covered
 from the sidecar, so T001's hardened commit-slice is unaffected.
 
 [2026-09-01T12:48:53Z] implemented-by: claude
+
+[2026-09-01] T004: the branch check accepts only `feature/<feature-id>`, not
+`fix/<feature-id>`. `.claude/rules/git.md`'s "## Branch naming" section is an unfilled template
+placeholder (`<!-- e.g. feature/NNN-description, fix/NNN-description -->`) inherited verbatim from
+`.specify/templates/rules/git.md` — never instantiated for this project — and `cmd_branch` hard-codes
+`feature/${feature_id}` with no `fix/` path at all; `git branch -a` confirms every branch this repo
+has ever created is `feature/*`. Accepting `fix/` would have widened the gate on an unfilled example,
+not an adopted convention. Detached HEAD (`git branch --show-current` prints empty) falls out of the
+same equality check with no special case and fails closed — verified with a dedicated test rather
+than assumed. Archive-time is unaffected: `sdd-archive-feature.md`'s Step 3.5 calls `commit-slice`
+with `--moved-from` right after a plain filesystem `mv`, with no branch switch in between, so the
+branch is still the feature's own.
+
+[2026-09-01] T004: adding the branch check turned 20 of the 24 pre-existing `commit-slice` tests red,
+plus none of the new ones I wrote. None of those 20 ever called `sdd branch` before `commit-slice` —
+`makeTempProject()` leaves a fresh repo on whatever `init.defaultBranch` resolves to (`main` here),
+and every one of those tests just committed straight from there. That gap in the tests is exactly
+what let V4 (this task's own repro) go unnoticed: the suite never exercised the shape real usage
+always produces (`/implement-task` always calls `sdd branch <feature-id>` first). Fixed by inserting
+one `sdd branch 001-demo` call after each affected `seedCommit(project)`, matching real invocation
+order; applied to all 24 (not just the 20 that strictly needed it) since a harmless extra branch
+switch before a usage-error test costs nothing and keeps the treatment uniform. The one test with two
+different feature dirs (`AAA`/`BBB`, this task's own V4-repro test) also needed a `.gitignore` with
+`specs/**/.parent-branch` written into the fixture — without it, the second feature's own
+`.parent-branch` sidecar is a genuinely untracked file the *other* feature's `commit-slice` doesn't
+own, which trips T001's hard-fail before AC4 is ever reached.
