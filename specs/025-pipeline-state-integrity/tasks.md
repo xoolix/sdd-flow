@@ -14,7 +14,7 @@ drops in silence. Stage T001's new files explicitly and verify with `git show --
 moving on. Same for the missing `.parent-branch`: write it by hand before T003 lands.
 
 ### 1. Foundation — commit-slice & branch integrity
-- [ ] **T001 [AFK] commit-slice rejects undeclared new files**: run the undeclared-file check before commit, unfiltered against `pre_staged`; exit ≠0 naming the file, no commit.
+- [x] **T001 [AFK] commit-slice rejects undeclared new files**: run the undeclared-file check before commit, unfiltered against `pre_staged`; exit ≠0 naming the file, no commit.
   - blocked_by: none; verifies: AC1; touches: bin/sdd, tests
 - [ ] **T002 [AFK] Reject `..`/`/` in feature-id**: validate before the index is touched; fix the docstring's stale call-site count.
   - blocked_by: T001; verifies: AC2; touches: bin/sdd, tests

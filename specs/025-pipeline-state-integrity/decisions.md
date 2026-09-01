@@ -108,3 +108,5 @@ contradicen de forma sistemática, y el cross-check es lo que lo ataja.
 correcto vale más que uno corto, sobre todo cuando lo que se agregó es la advertencia que evita que la
 feature se bloquee a sí misma. `plan.md` llegó a 930 desde el diseñador y subió a 954 con dos
 correcciones de una línea.
+
+[2026-09-01T12:48:53Z] implemented-by: claude
