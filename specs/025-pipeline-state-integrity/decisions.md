@@ -329,3 +329,42 @@ Es la misma clase de defecto que la feature persigue, encontrado dentro de la fe
   expected reason (grep found the live occurrences across all 13 sites; the ADR line still read
   "stay exactly as they are"). Restored with `git stash pop`. Full suite: 139 (baseline) → 141
   (2 new AC5 tests), all green.
+
+## Delta: 2026-09-01 — Task T009
+
+- **ADDED — placeholder-line detection, not specified at this granularity**: `spec.md`/`plan.md`
+  say the gate blocks on an "empty" `## User decisions`, but the schema `discovery.md` is written
+  with (Step 4.5 in `plan-feature/SKILL.md`) leaves a non-empty placeholder line under that heading
+  (`- (leave blank — user fills in DISCOVERY-ACCEPTED or DISCOVERY-DISCARDED entries)`). A gate that
+  only checked "is the section non-empty" would never block, since the schema itself never emits a
+  truly empty section. The instruction text explicitly names that placeholder line as not counting,
+  so "empty" reads as "empty or unresolved," matching the actual artifact the pipeline produces.
+- **ADDED — the Result envelope's "Blocked path" note, previously written for one blocking case
+  only, now covers two**: it described only Step 4.5's fresh-`discovery.md`-with-high-impact-
+  findings block. T009 adds a second block source (the Discovery resume check finding an existing
+  `discovery.md` with no recorded decisions) and extends the same `Artifacts`/`Summary`/`Next`
+  contract to cover both, rather than leaving the resume-check's blocked case without documented
+  envelope shape.
+- **Honesty scope, restated in the instruction text itself** (per the orchestrator's ceiling
+  note): the gate proves *a* decision was recorded, never *per-finding* coverage — discovery
+  findings carry no IDs anywhere (`sdd-discovery-evaluator`'s JSON contract, `discovery.md`'s bullet
+  schema), so "one decision per high-impact finding" is not mechanically checkable. This matches
+  discovery finding G and spec.md's own edge case; T009 states it inline in
+  `plan-feature/SKILL.md` rather than only in `spec.md`, so the next reader hits the caveat at the
+  point of use.
+- Tests: 7 new tests in `tests/sdd.test.js`'s "plan-feature discovery gate blocks on empty
+  ## User decisions (025/T009/AC8)" describe block. All are prose-wiring guards over
+  `plan-feature/SKILL.md` — a `toContain` proves the instruction text exists and says the right
+  thing, never that an agent obeys it at runtime (same limit already declared for this class of
+  file by T006/T007 and by `spec.md`'s own edge cases). Proved RED with `git stash push --
+  .claude/skills/plan-feature/SKILL.md` (test file left in place): 5 of 7 failed against the
+  pre-T009 wording, for the expected reasons (existence-only resume language still present, new
+  ceiling/blocked-path phrasing absent). The other 2 passed on both sides — one pins the
+  already-correct resume-when-decided behavior, the other is a dogfooding check reading this
+  feature's own `specs/025-pipeline-state-integrity/discovery.md` directly (independent of the
+  skill file) to confirm its 4 `DISCOVERY-ACCEPTED` entries would satisfy the new gate. That
+  dogfooding check needed one fix mid-flight: a plain string split on `"## User decisions"` grabbed
+  the wrong section, because finding G's own prose mentions that exact heading text inline (as a
+  citation, not a heading); switched to a line-anchored regex (`/^## User decisions$/gm`) taking
+  the last match. Restored with `git stash pop`. Full suite: 141 (baseline) → 148 (7 new tests),
+  all green.

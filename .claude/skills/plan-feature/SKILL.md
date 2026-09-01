@@ -34,8 +34,12 @@ For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the 
 
 **Before proceeding with exploration**, check if `specs/$ARGUMENTS/discovery.md` already exists.
 
-- **If `discovery.md` exists**: The user has already reviewed the discovery findings. Skip Step 4 (Explore agents) and Step 4.5 (Discovery Checkpoint) entirely. Read `discovery.md` and inject its content as additional context into the Design + Task agents in Step 5. Record any `DISCOVERY-ACCEPTED` / `DISCOVERY-DISCARDED` user decisions from `discovery.md` into `specs/$ARGUMENTS/decisions.md`.
 - **If `discovery.md` does not exist**: Proceed normally through all steps.
+- **If `discovery.md` exists**: Existence alone does not mean reviewed — read its `## User decisions` section.
+  - **Contains at least one `DISCOVERY-ACCEPTED` or `DISCOVERY-DISCARDED` entry**: The user has reviewed the findings. Skip Step 4 (Explore agents) and Step 4.5 (Discovery Checkpoint) entirely. Read `discovery.md` and inject its content as additional context into the Design + Task agents in Step 5. Record the `DISCOVERY-ACCEPTED` / `DISCOVERY-DISCARDED` user decisions from `discovery.md` into `specs/$ARGUMENTS/decisions.md`.
+  - **Empty, or contains only the schema's placeholder line** (`- (leave blank — user fills in DISCOVERY-ACCEPTED or DISCOVERY-DISCARDED entries)`): The findings exist but nobody has decided anything yet. Do NOT treat the file as reviewed, do NOT proceed to Step 5, and do NOT fall back to re-running Step 4/4.5 as if `discovery.md` were absent — the findings already exist, only the decision is missing. Return `Status: blocked` (see the Blocked path below), telling the user to add at least one `DISCOVERY-ACCEPTED` or `DISCOVERY-DISCARDED` line under `## User decisions` in `specs/$ARGUMENTS/discovery.md`, then re-run `/plan-feature $ARGUMENTS`.
+
+  **Ceiling on this check — state it plainly, never imply more**: this only proves *a* decision was recorded, not that every high-impact finding got one. `sdd-discovery-evaluator`'s JSON contract (`{category, description, impact, rationale}`) and `discovery.md`'s bullet schema carry no finding IDs anywhere, and `## User decisions` is free-form prose — so "one decision per high-impact finding" is not mechanically checkable here. A single `DISCOVERY-ACCEPTED` line satisfies this gate even if other high-impact findings above it were never addressed. That is a known, accepted limitation (see `spec.md`'s edge cases), not a gap this check is meant to close.
 
 ## Steps
 
@@ -139,9 +143,9 @@ After completing, output:
 - **Risks**: [unknowns, complexity concerns, or "None"]
 ```
 
-**Blocked path**: When `Status: blocked` is returned due to high-impact discovery findings:
+**Blocked path**: `Status: blocked` is returned in two cases — Step 4.5 writing a fresh `discovery.md` with high-impact findings, and the Discovery resume check finding an existing `discovery.md` with no recorded decisions. In both cases:
 - `Artifacts` MUST list `specs/$ARGUMENTS/discovery.md`
-- `Summary` MUST summarize each high-impact finding
+- `Summary` MUST summarize each high-impact finding, or — for the resume-check case — state that `discovery.md` already exists but `## User decisions` has no entries yet
 - `Next` MUST instruct the user to review `discovery.md`, add `DISCOVERY-ACCEPTED` or `DISCOVERY-DISCARDED` decisions under `## User decisions`, then re-run `/plan-feature $ARGUMENTS`
 
 ## Rules

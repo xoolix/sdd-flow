@@ -2718,6 +2718,95 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("plan-feature discovery gate blocks on empty ## User decisions (025/T009/AC8)", () => {
+    // AC8 (spec.md): discovery.md with an empty `## User decisions` must keep the
+    // phase blocked. Before this task, the "Discovery resume check" section gated
+    // on file *existence* only -- a re-run after a high-impact block with zero
+    // decisions recorded would resume as if reviewed. plan-feature/SKILL.md is
+    // prose an LLM follows, not executable code -- every assertion below is a
+    // wiring guard proving the instruction text exists and says the right thing,
+    // never proof an agent actually obeys it at runtime (same limit T006/T007
+    // already declared for this class of file, and spec.md's own edge cases).
+    const planFeaturePath = path.join(repoRoot, ".claude/skills/plan-feature/SKILL.md");
+
+    test("the resume check inspects `## User decisions` content, not just file existence", () => {
+      const planFeature = fs.readFileSync(planFeaturePath, "utf8");
+
+      // Old wording treated existence as proof of review -- gone.
+      expect(planFeature).not.toContain("The user has already reviewed the discovery findings. Skip Step 4");
+      expect(planFeature).toContain("Existence alone does not mean reviewed");
+      expect(planFeature).toContain("at least one `DISCOVERY-ACCEPTED` or `DISCOVERY-DISCARDED` entry");
+    });
+
+    test("an empty or placeholder-only `## User decisions` blocks instead of resuming", () => {
+      const planFeature = fs.readFileSync(planFeaturePath, "utf8");
+
+      expect(planFeature).toContain("(leave blank — user fills in DISCOVERY-ACCEPTED or DISCOVERY-DISCARDED entries)");
+      expect(planFeature).toContain("Do NOT treat the file as reviewed, do NOT proceed to Step 5");
+      expect(planFeature).toContain("do NOT fall back to re-running Step 4/4.5 as if `discovery.md` were absent");
+      expect(planFeature).toContain("Return `Status: blocked`");
+    });
+
+    test("a discovery.md with at least one recorded decision still resumes through Step 5 (existing behavior preserved)", () => {
+      const planFeature = fs.readFileSync(planFeaturePath, "utf8");
+
+      expect(planFeature).toContain("Skip Step 4 (Explore agents) and Step 4.5 (Discovery Checkpoint) entirely");
+      expect(planFeature).toContain("inject its content as additional context into the Design + Task agents in Step 5");
+      expect(planFeature).toContain(
+        "Record the `DISCOVERY-ACCEPTED` / `DISCOVERY-DISCARDED` user decisions from `discovery.md` into `specs/$ARGUMENTS/decisions.md`",
+      );
+    });
+
+    test("the no-discovery.md-at-all path is untouched", () => {
+      const planFeature = fs.readFileSync(planFeaturePath, "utf8");
+
+      expect(planFeature).toContain("**If `discovery.md` does not exist**: Proceed normally through all steps.");
+    });
+
+    test("the gate's ceiling is documented explicitly: 'at least one decision', never 'one per finding'", () => {
+      const planFeature = fs.readFileSync(planFeaturePath, "utf8");
+
+      // Findings carry no IDs anywhere -- decisions.md's DISCOVERY-ACCEPTED entry
+      // for finding G and spec.md's edge cases already record this as a known,
+      // accepted limit, not something this gate is meant to close.
+      expect(planFeature).toContain("carry no finding IDs anywhere");
+      expect(planFeature).toContain("not mechanically checkable here");
+      expect(planFeature).not.toMatch(/exig(e|ir).{0,20}una por hallazgo/);
+    });
+
+    test("the Blocked path section in the Result envelope covers both blocking cases", () => {
+      const planFeature = fs.readFileSync(planFeaturePath, "utf8");
+
+      expect(planFeature).toContain("returned in two cases");
+      expect(planFeature).toContain(
+        "the Discovery resume check finding an existing `discovery.md` with no recorded decisions",
+      );
+    });
+
+    test("this feature's own discovery.md has recorded decisions and would satisfy the new gate (dogfooding)", () => {
+      // Not a test of the SKILL.md gate logic itself -- that's prose an LLM
+      // executes, and no test here can call it. A real-data sanity check that
+      // this feature's own discovery.md (decisions.md records 4
+      // DISCOVERY-ACCEPTED entries under `## User decisions`) still has content
+      // that would satisfy the "at least one" gate rather than tripping it.
+      const ownDiscovery = fs.readFileSync(
+        path.join(repoRoot, "specs/025-pipeline-state-integrity/discovery.md"),
+        "utf8",
+      );
+      // Match the heading only at line-start -- finding G's own prose mentions
+      // the literal string "## User decisions" inline (as text, not a heading),
+      // which trips a plain string split into grabbing the wrong section.
+      const headingMatches = [...ownDiscovery.matchAll(/^## User decisions$/gm)];
+      const lastHeadingIndex = headingMatches.length
+        ? headingMatches[headingMatches.length - 1].index
+        : ownDiscovery.length;
+      const userDecisionsSection = ownDiscovery.slice(lastHeadingIndex);
+      const decisionCount = (userDecisionsSection.match(/DISCOVERY-ACCEPTED|DISCOVERY-DISCARDED/g) || []).length;
+
+      expect(decisionCount).toBeGreaterThan(0);
+    });
+  });
+
   test("build-registry ignores every core skill", () => {
     const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
     const buildRegistry = fs.readFileSync(path.join(repoRoot, ".claude/skills/build-registry/SKILL.md"), "utf8");
