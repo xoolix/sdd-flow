@@ -98,6 +98,13 @@ Usage:
                                  requires the current branch to be feature/<feature-id> ⇒ exit 4
                                  otherwise, no commit
   sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
+  sdd state-write <feature-id>   Write specs/<feature-id>/.sdd-state: phase
+                                 (ready-to-review|reviewed), git-head, tree-digest
+                                 (scratch-index snapshot of the full working tree;
+                                 never touches the real index or worktree), verdict
+                                 (PASS|PASS-WITH-WARNINGS|FAIL|none, default none),
+                                 and an ISO-8601 timestamp
+                                 (--phase <p> [--verdict <v>])
   sdd domain-vocab               Print .claude/rules/domains.md;
                                  exit 3 (no output) if empty, comment-only, or absent
   sdd help                       Show this help
@@ -1183,6 +1190,137 @@ cmd_commit_slice() {
   return 0
 }
 
+# ─── state-write ─────────────────────────────────────────────────────
+
+# Digest of the FULL working tree (tracked + untracked, respecting
+# .gitignore) via a scratch index -- never the real one, never the real
+# worktree. Both cmd_state_write (the writer) and detect_feature_phase (the
+# reader) call this same helper, so freshness can never desync over the two
+# computing "the tree changed" two different ways.
+#
+# REJECTED, do not reopen (measured empirically for 025):
+#   - `git stash create`: a different SHA on every call for the SAME dirty
+#     tree -- the stash object is a commit and embeds a timestamp.
+#   - `git write-tree` on the real index (no GIT_INDEX_FILE): silently
+#     returns the tree from the last real `git add`, not what is on disk now.
+#
+# mktemp's file must be removed BEFORE first use: git treats an existing-
+# but-empty path as a corrupt index ("index file smaller than expected") and
+# refuses it outright, rather than treating it as "start fresh here" --
+# confirmed empirically. Removed again after, on every path, since it is
+# scratch state that must never survive the call.
+#
+# Prints the tree SHA on stdout; prints nothing on failure (caller decides
+# how to treat an empty digest).
+tree_digest() {
+  local tmp
+  tmp="$(mktemp)"
+  rm -f "$tmp"
+
+  local digest=""
+  if GIT_INDEX_FILE="$tmp" git add -A >/dev/null 2>&1; then
+    digest="$(GIT_INDEX_FILE="$tmp" git write-tree 2>/dev/null || true)"
+  fi
+
+  rm -f "$tmp"
+  printf '%s\n' "$digest"
+}
+
+# Writes specs/<feature-id>/.sdd-state -- the single durable receipt that
+# replaces .simplified. Exactly five fields, no `files:` list (025 decision:
+# nothing reads it, and the files a phase touched already live in its own
+# commit -- a source that can't lie). Called by /simplify-code (phase
+# ready-to-review) and, from T006 on, /review-feature (phase reviewed).
+cmd_state_write() {
+  local usage_msg='usage: sdd state-write <feature-id> --phase <ready-to-review|reviewed> [--verdict <PASS|PASS-WITH-WARNINGS|FAIL|none>]'
+
+  local feature_id="${1:-}"
+  [ $# -gt 0 ] && shift
+
+  if [ -z "$feature_id" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  # Same rejection as commit-slice (AC2's validator, reused here rather than
+  # re-implemented) -- checked before any git command runs.
+  if ! validate_feature_id "$feature_id"; then
+    printf 'error: invalid feature-id: "%s" (must not be empty, contain "..", contain "/", or start with "-")\n' "$feature_id" >&2
+    return 2
+  fi
+
+  local phase="" verdict="none"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --phase)
+        [ $# -ge 2 ] || { printf 'error: --phase requires a value\n' >&2; return 2; }
+        phase="$2"
+        shift 2
+        ;;
+      --verdict)
+        [ $# -ge 2 ] || { printf 'error: --verdict requires a value\n' >&2; return 2; }
+        verdict="$2"
+        shift 2
+        ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  case "$phase" in
+    ready-to-review|reviewed) ;;
+    *)
+      printf 'error: --phase must be "ready-to-review" or "reviewed", got: "%s"\n' "$phase" >&2
+      return 2
+      ;;
+  esac
+
+  case "$verdict" in
+    PASS|PASS-WITH-WARNINGS|FAIL|none) ;;
+    *)
+      printf 'error: --verdict must be one of PASS, PASS-WITH-WARNINGS, FAIL, none; got: "%s"\n' "$verdict" >&2
+      return 2
+      ;;
+  esac
+
+  local specs_dir feature_dir
+  specs_dir="$(pwd)/specs"
+  if ! feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    return 3
+  fi
+
+  local head
+  head="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$head" ]; then
+    printf 'error: no commits on the current branch -- cannot resolve HEAD\n' >&2
+    return 4
+  fi
+
+  local digest
+  digest="$(tree_digest)"
+  if [ -z "$digest" ]; then
+    printf 'error: could not compute tree digest\n' >&2
+    return 4
+  fi
+
+  local at
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  {
+    printf 'phase: %s\n' "$phase"
+    printf 'git-head: %s\n' "$head"
+    printf 'tree-digest: %s\n' "$digest"
+    printf 'verdict: %s\n' "$verdict"
+    printf 'at: %s\n' "$at"
+  } > "$feature_dir/.sdd-state"
+
+  return 0
+}
+
 # ─── status ────────────────────────────────────────────────────────
 
 # Computes phase, task counts, sentinel freshness, and the next command for
@@ -1251,13 +1389,27 @@ detect_feature_phase() {
     tasks_total=$((tasks_done + tasks_remaining))
 
     # ── Sentinel freshness ──────────────────────────────────────────
+    # V6: freshness must be tied to BOTH the commit (git-head) AND the
+    # working tree (tree-digest) -- an uncommitted edit to a tracked file
+    # changes tree-digest without touching git-head, and AC6 requires that
+    # to invalidate the sentinel. The old .simplified behaviour checked
+    # git-head alone and missed exactly that. tree_digest() is the same
+    # helper cmd_state_write uses to compute the value stored here, so
+    # writer and reader can never drift into two different notions of "the
+    # tree changed".
     local sentinel_fresh=false
-    local sentinel_file="$feature_dir/.simplified"
+    local sentinel_file="$feature_dir/.sdd-state"
     if [ -f "$sentinel_file" ]; then
-      local current_head
+      local current_head state_head state_digest
       current_head="$(git rev-parse HEAD 2>/dev/null || true)"
-      if [ -n "$current_head" ] && grep -q "^git-head: ${current_head}$" "$sentinel_file" 2>/dev/null; then
-        sentinel_fresh=true
+      state_head="$(grep -m1 '^git-head: ' "$sentinel_file" 2>/dev/null | sed 's/^git-head: //')"
+      if [ -n "$current_head" ] && [ "$current_head" = "$state_head" ]; then
+        state_digest="$(grep -m1 '^tree-digest: ' "$sentinel_file" 2>/dev/null | sed 's/^tree-digest: //')"
+        local current_digest
+        current_digest="$(tree_digest)"
+        if [ -n "$current_digest" ] && [ "$current_digest" = "$state_digest" ]; then
+          sentinel_fresh=true
+        fi
       fi
     fi
 
@@ -1471,6 +1623,7 @@ case "${1:-help}" in
   branch)       shift; cmd_branch "$@" ;;
   commit-slice) shift; cmd_commit_slice "$@" ;;
   status)       shift; cmd_status "$@" ;;
+  state-write)  shift; cmd_state_write "$@" ;;
   domain-vocab) cmd_domain_vocab ;;
   help|--help|-h) usage ;;
   version|--version|-v) echo "sdd v${VERSION}" ;;

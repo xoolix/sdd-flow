@@ -24,7 +24,7 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
   - blocked_by: T003; verifies: AC4; touches: bin/sdd, tests
 
 ### 2. Core implementation — state file & pipeline gates
-- [ ] **T005 [AFK] `.sdd-state` writer + freshness reader**: new `cmd_state_write`/`tree_digest` (plan.md), wired into `usage()` and the dispatch; simplify calls it on success, no `files:` list; `detect_feature_phase` compares HEAD + digest — edits invalidate ready-to-review. **`.gitignore:5` must change `specs/**/.simplified` → `specs/**/.sdd-state` in this slice**: unignored, the new file is untracked, and T001's hardened commit-slice then fails every commit.
+- [x] **T005 [AFK] `.sdd-state` writer + freshness reader**: new `cmd_state_write`/`tree_digest` (plan.md), wired into `usage()` and the dispatch; simplify calls it on success, no `files:` list; `detect_feature_phase` compares HEAD + digest — edits invalidate ready-to-review. **`.gitignore:5` must change `specs/**/.simplified` → `specs/**/.sdd-state` in this slice**: unignored, the new file is untracked, and T001's hardened commit-slice then fails every commit.
   - blocked_by: T004; verifies: AC6; touches: bin/sdd, .gitignore, sdd-simplify-code.md, tests
 - [ ] **T006 [AFK] review-feature seals verdict, adds `reviewed` phase**: writes verdict via `state-write` after Step 4 and the judge branch; `detect_feature_phase` gains `reviewed`, next command archive.
   - blocked_by: T005; verifies: AC7; touches: review-feature/SKILL.md, bin/sdd, tests

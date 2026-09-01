@@ -146,3 +146,36 @@ different feature dirs (`AAA`/`BBB`, this task's own V4-repro test) also needed 
 `specs/**/.parent-branch` written into the fixture — without it, the second feature's own
 `.parent-branch` sidecar is a genuinely untracked file the *other* feature's `commit-slice` doesn't
 own, which trips T001's hard-fail before AC4 is ever reached.
+
+## Delta: 2026-09-01 — Task T005
+
+- **MODIFIED**: `plan.md`'s touched-areas row reads "`.gitignore:5` `.simplified` → `.sdd-state`",
+  which a literal reading takes as a replacement. Implemented as an **addition** instead: `.gitignore`
+  now lists both `specs/**/.simplified` and `specs/**/.sdd-state`, and the `.simplified` line is left
+  untouched. Reason: four archived features (006, 007, 010, 018) under `specs/archive/` still carry a
+  real `.simplified` file. Removing the line would un-ignore them, turning each into an untracked `??`
+  entry that T001's hardened `commit-slice` would then refuse every commit over — including this
+  task's own. Measured before implementing: `git check-ignore -v` confirms `.sdd-state` is ignored by
+  the added line and `.simplified` remains ignored by the untouched one.
+- **ADDED**: `tree_digest()` also gets called from `.claude/agents/sdd-simplify-code.md`'s pre-flight
+  indirectly, via `sdd status $ARGUMENTS`'s `sentinel_fresh` field, rather than the agent hand-computing
+  or hand-comparing `git-head`/`tree-digest` in prose. `plan.md` didn't specify this at the prose level;
+  it follows the same "writer and reader share one computation" principle the digest helper itself is
+  built on — a hand-rolled comparison in a `.md` file, read by an LLM, is exactly the kind of
+  divergence-prone duplication `tree_digest()` exists to avoid at the CLI level. `sdd status` already
+  exposed `sentinel_fresh` as a boolean field for this before T005; T005 only changed what that field
+  reads and compares.
+- Verified empirically before writing `tree_digest()`: `git stash create` returns a different SHA per
+  call on an unchanged dirty tree (rejected); `mktemp`'s file must be `rm -f`'d *before* first use as
+  `GIT_INDEX_FILE` — an existing empty file makes git fail with "index file smaller than expected"
+  rather than starting a fresh index.
+- Test fixtures for the new `sdd state-write` describe block needed their own local `.gitignore`
+  (`specs/**/.sdd-state`) written before the seed commit — same self-invalidation trap as the
+  production `.gitignore` change above, reproduced and confirmed via a first failing run before adding
+  the fixture's `.gitignore`: without it, `.sdd-state` is an untracked file inside the temp project, so
+  writing it changes the very tree digest it just recorded, and the freshly-written sentinel reads back
+  as stale in the same test run.
+- Pre-existing test `simplify-code commits before writing the sentinel and gitignores .simplified
+  (T007)` (from an earlier feature) pinned the old `.simplified`-writing prose; updated in place to
+  match the new `sdd state-write` call and both `.gitignore` lines — not a new test, since the behavior
+  it pins legitimately changed under this task.

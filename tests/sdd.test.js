@@ -414,7 +414,7 @@ describe("sdd CLI smoke tests", () => {
     expect(codeOnly).not.toContain("🤖");
   });
 
-  test("simplify-code commits before writing the sentinel and gitignores .simplified (T007)", () => {
+  test("simplify-code commits before writing the sentinel and gitignores .sdd-state (T007, sentinel updated by 025/T005)", () => {
     const simplifyCode = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-simplify-code.md"), "utf8");
     const gitignore = fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
 
@@ -437,12 +437,17 @@ describe("sdd CLI smoke tests", () => {
     expect(simplifyCode).toContain("skip straight to step 6 and report `Commit: none`");
 
     // Commit failure blocks before the sentinel is written — same invariant as implement-task's revert.
-    expect(simplifyCode).toContain("do NOT write `.simplified`");
+    // 025/T005: the sentinel is now written by `sdd state-write`, not hand-written as `.simplified`.
+    expect(simplifyCode).toContain("do NOT run `sdd state-write`");
 
     // Envelope gains the Commit field.
     expect(simplifyCode).toContain("- **Commit**:");
 
-    // .simplified is gitignored — same sentinel-commit hazard the ordering rule above guards against.
+    // .sdd-state is gitignored — same sentinel-commit hazard the ordering rule above guards against.
+    // .simplified stays gitignored too (025/T005: clean break in the writer, not a rename of the
+    // gitignore entry — four archived features under specs/archive/ still carry a real .simplified
+    // file, and un-ignoring it would surface those as untracked `??` entries).
+    expect(gitignore).toContain("specs/**/.sdd-state");
     expect(gitignore).toContain("specs/**/.simplified");
   });
 
@@ -2103,6 +2108,119 @@ describe("sdd CLI smoke tests", () => {
         phase: "planned",
         next_command: "/implement-task 001-demo",
       });
+    });
+  });
+
+  describe("sdd state-write (T005/AC6)", () => {
+    // A project whose single task list is fully checked, on its own feature
+    // branch, with a real HEAD to diff against -- the shape detect_feature_phase
+    // needs before sentinel freshness (ready-to-review vs ready-to-simplify)
+    // even comes into play. Without all tasks done, phase would read
+    // "implementing" regardless of what the sentinel says.
+    function makeReadyProject() {
+      const project = makeTempProject();
+      // Gitignore .sdd-state BEFORE it ever gets written, same as the real
+      // repo's own .gitignore. Skip this and the state file self-invalidates
+      // the instant it is written: tree_digest() sees an untracked .sdd-state
+      // that was absent from the tree at write time, so every read after the
+      // write computes a different digest than the one just stored.
+      fs.writeFileSync(path.join(project, ".gitignore"), "specs/**/.sdd-state\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [x] First behavior\n- [x] Second behavior\n",
+      );
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project });
+      return project;
+    }
+
+    test("writes .sdd-state so sdd status reports ready-to-review, and an uncommitted edit invalidates it (AC6)", () => {
+      const project = makeReadyProject();
+
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+
+      const fresh = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(fresh.phase).toBe("ready-to-review");
+      expect(fresh.sentinel_fresh).toBe(true);
+
+      // Edit a tracked file WITHOUT committing. This is the branch with zero
+      // coverage before this task (grep 'sentinel_fresh|git-head' in the old
+      // suite returned nothing): a digest-based freshness check must catch a
+      // dirty tree that a git-head-only check would miss entirely.
+      fs.appendFileSync(path.join(project, "specs", "001-demo", "spec.md"), "\nUncommitted edit.\n");
+
+      const stale = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(stale.phase).not.toBe("ready-to-review");
+      expect(stale.sentinel_fresh).toBe(false);
+    });
+
+    test("tree-digest is stable across two state-write calls on the same unchanged dirty tree", () => {
+      const project = makeReadyProject();
+      fs.writeFileSync(path.join(project, "scratch.txt"), "uncommitted\n");
+
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      const firstDigest = fs
+        .readFileSync(path.join(project, "specs", "001-demo", ".sdd-state"), "utf8")
+        .match(/^tree-digest: (.+)$/m)[1];
+
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      const secondDigest = fs
+        .readFileSync(path.join(project, "specs", "001-demo", ".sdd-state"), "utf8")
+        .match(/^tree-digest: (.+)$/m)[1];
+
+      expect(firstDigest).toMatch(/^[0-9a-f]{40}$/);
+      expect(secondDigest).toBe(firstDigest);
+    });
+
+    test("does not dirty the real index or worktree, and leaves no temp index file behind", () => {
+      const project = makeReadyProject();
+      fs.writeFileSync(path.join(project, "scratch.txt"), "uncommitted\n");
+
+      const beforeStatus = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" });
+      const tmpBefore = fs.readdirSync(os.tmpdir());
+
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+
+      const tmpAfter = fs.readdirSync(os.tmpdir());
+      const afterStatus = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" });
+
+      // .sdd-state is gitignored (makeReadyProject's fixture .gitignore), so
+      // writing it must not surface as a new entry at all -- `git status
+      // --porcelain` is expected byte-for-byte identical before and after.
+      expect(afterStatus).toBe(beforeStatus);
+
+      // No leftover scratch index: tree_digest's temp file is removed on
+      // every path, so the tmpdir listing is unchanged.
+      expect(tmpAfter.length).toBe(tmpBefore.length);
+    });
+
+    test("committing after state-write (HEAD changes) also invalidates the sentinel", () => {
+      const project = makeReadyProject();
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+
+      fs.appendFileSync(path.join(project, "specs", "001-demo", "spec.md"), "\nCommitted edit.\n");
+      execFileSync("git", ["add", "-A"], { cwd: project });
+      execFileSync("git", ["commit", "-q", "-m", "advance head past the sentinel"], { cwd: project });
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).not.toBe("ready-to-review");
+      expect(status.sentinel_fresh).toBe(false);
+    });
+
+    test("rejects a malformed feature-id before writing anything (T002 validator)", () => {
+      const project = makeReadyProject();
+
+      const error = sddFail(["state-write", "../escape", "--phase", "ready-to-review"], { cwd: project });
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("invalid feature-id");
+      expect(fs.existsSync(path.join(project, "specs", "..escape"))).toBe(false);
     });
   });
 

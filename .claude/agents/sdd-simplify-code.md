@@ -17,10 +17,10 @@ Before starting, **resolve lane** per `.claude/skills/_shared/sdd-phase-common.m
 - [ ] **FAST_LANE = false**: `specs/$ARGUMENTS/spec.md`, `plan.md`, and `tasks.md` exist; all tasks in `tasks.md` checked (`- [x]`)
 - [ ] **FAST_LANE = true**: `specs/$ARGUMENTS/quick-spec.md` exists; all `- [ ]` in its `## Tasks` section are `- [x]`
 - [ ] `specs/$ARGUMENTS/decisions.md` has no unresolved `JUDGMENT-DAY-HIGH` entry
-- [ ] `specs/$ARGUMENTS/.simplified` is absent OR is stale (its `git-head` field ≠ `git rev-parse HEAD`) — a stale sentinel is deleted and treated as absent
+- [ ] `specs/$ARGUMENTS/.sdd-state` is absent OR is stale — run `sdd status $ARGUMENTS` and read its `sentinel_fresh` field; `false` (or the file absent) means proceed, `true` means fresh
 - [ ] `sdd base-branch $ARGUMENTS` exits 0 (base branch is resolvable) AND `git merge-base "$(sdd base-branch $ARGUMENTS)" HEAD` resolves to a valid commit SHA
 
-**Stale sentinel handling**: if `.simplified` exists, read its `git-head` line. If it equals the current `git rev-parse HEAD`, the sentinel is fresh — abort pre-flight with `Status: blocked` (`Summary: already simplified at this HEAD`). If it differs, the sentinel is stale (e.g., user amended HEAD, rebased, or spoofed the file) — `rm specs/$ARGUMENTS/.simplified` and proceed.
+**Stale sentinel handling**: `.sdd-state` freshness is tied to BOTH the commit (`git-head`) and the working tree (`tree-digest`) — never hand-compute or hand-compare either field; always go through `sdd status $ARGUMENTS`'s `sentinel_fresh` field, which reads them the same way `sdd state-write` writes them. If `sentinel_fresh` is `true`, the sentinel is fresh — abort pre-flight with `Status: blocked` (`Summary: already simplified at this HEAD`). If `.sdd-state` exists but `sentinel_fresh` is `false`, the sentinel is stale (e.g., user amended HEAD, rebased, edited a tracked file without committing, or spoofed the file) — `rm specs/$ARGUMENTS/.sdd-state` and proceed.
 
 If any other check fails, stop and tell the user what's needed (typically `/implement-task` or resolving a `JUDGMENT-DAY-HIGH`).
 
@@ -88,7 +88,7 @@ Re-run **Lint**, **Type check**, and **Tests** as parallel Bash calls.
   1. **Pre-revert integrity check**: run `git status --porcelain -- <SCOPED_FILES>`. Expect only `M` (modified) entries. If any entry shows `D` (deleted), `A` (added), `R` (renamed), or `??` (untracked), that is a skill-internal bug (NEVER list violation) — do NOT attempt `git checkout --`. Return `Status: blocked` with `Summary: simplify-code produced a non-modification diff; aborted before revert` and list the offending paths.
   2. Run `git checkout -- <file1> <file2> ...` with the explicit `SCOPED_FILES` list (no wildcards).
   3. Verify revert: `git diff HEAD -- <file1> <file2> ...` must come back empty for every file.
-  4. Do NOT create `.simplified`.
+  4. Do NOT run `sdd state-write`.
   5. Return `Status: blocked` with `Summary: simplify-code reverted — post-validation failed` and the validation error output in `Validations-Output`.
 
 ### 5.5. Commit the slice
@@ -106,25 +106,15 @@ sdd commit-slice $ARGUMENTS --type refactor --files <SCOPED_FILES...>
 No `--task` flag — a simplify pass has no task ID.
 
 - **On success**: record the printed SHA as `Commit: <sha>` for the result envelope, then proceed to step 6.
-- **On failure** (`sdd commit-slice` exits non-zero): do NOT write `.simplified`. Return `Status: blocked` with the CLI's stderr pasted verbatim and `Commit: none`.
+- **On failure** (`sdd commit-slice` exits non-zero): do NOT run `sdd state-write`. Return `Status: blocked` with the CLI's stderr pasted verbatim and `Commit: none`.
 
-**Ordering is load-bearing — commit FIRST, write the sentinel SECOND. Never reverse this.** Step 6 captures `git rev-parse HEAD` for the sentinel's `git-head:` field *after* this commit lands. If the sentinel were written before the commit, the commit would advance HEAD past the recorded value; `bin/sdd`'s `cmd_status` freshness check (sentinel `git-head:` vs current `git rev-parse HEAD`) would then read the sentinel as stale on every subsequent check, and `/sdd-next` would route back to `/simplify-code` and loop `/simplify-code` forever. Do not reorder these two steps.
+**Ordering is load-bearing — commit FIRST, write the sentinel SECOND. Never reverse this.** Step 6 calls `sdd state-write`, which captures `git rev-parse HEAD` for the sentinel's `git-head:` field *after* this commit lands. If the sentinel were written before the commit, the commit would advance HEAD past the recorded value; `bin/sdd`'s `cmd_status` freshness check (sentinel `git-head:`/`tree-digest:` vs current HEAD/tree) would then read the sentinel as stale on every subsequent check, and `/sdd-next` would route back to `/simplify-code` and loop `/simplify-code` forever. Do not reorder these two steps.
 
 ### 6. Write sentinel and decisions.md entry
 
-1. **TOCTOU guard**: re-check that `specs/$ARGUMENTS/.simplified` does NOT exist. If it now exists (a concurrent `/simplify-code` completed while this run was editing), abort without overwriting: return `Status: blocked` with `Summary: sentinel written concurrently — another /simplify-code run finished first`.
-2. Capture current HEAD: `git rev-parse HEAD`.
-3. Write `specs/$ARGUMENTS/.simplified` with contents:
-
-   ```
-   git-head: <git-rev-parse-HEAD>
-   simplified: <ISO-8601 timestamp>
-   files:
-   - <file1>
-   - <file2>
-   ```
-
-4. Append to `specs/$ARGUMENTS/decisions.md`:
+1. **TOCTOU guard**: re-check that `specs/$ARGUMENTS/.sdd-state` does NOT exist. If it now exists (a concurrent `/simplify-code` completed while this run was editing), abort without overwriting: return `Status: blocked` with `Summary: sentinel written concurrently — another /simplify-code run finished first`.
+2. Run `sdd state-write $ARGUMENTS --phase ready-to-review`. This writes `specs/$ARGUMENTS/.sdd-state` (`phase`, `git-head`, `tree-digest`, `verdict: none`, `at`) computing `git-head` and `tree-digest` from the current commit and working tree — never hand-write these fields, and never hand-compute the digest; `sdd state-write` and `sdd status`'s freshness check share the same computation so they can't drift apart. On failure (non-zero exit), do not retry by hand: return `Status: blocked` with the CLI's stderr pasted verbatim.
+3. Append to `specs/$ARGUMENTS/decisions.md`:
 
    ```
    ## Simplify: <date> — /simplify-code
@@ -143,7 +133,7 @@ Save **only if** a non-obvious simplification pattern surfaced (e.g., a recurrin
 ## Result
 - **Status**: success | blocked
 - **Summary**: [1-3 sentences — what was simplified, or why it blocked]
-- **Artifacts**: [modified files + specs/$ARGUMENTS/.simplified + specs/$ARGUMENTS/decisions.md]
+- **Artifacts**: [modified files + specs/$ARGUMENTS/.sdd-state + specs/$ARGUMENTS/decisions.md]
 - **Validations**: Baseline: PASS | Post-edit: PASS/FAIL/SKIP
 - **Validations-Output**: [short summary on success; last 100 lines of terminal output on failure]
 - **Files-Simplified**: [list or `none` for empty diff]
