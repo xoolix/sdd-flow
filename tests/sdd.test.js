@@ -888,11 +888,16 @@ describe("sdd CLI smoke tests", () => {
       expect(message).toBe("feat(001-demo): T001 Add hello log");
     });
 
-    test("stages only --files plus the derived feature dir, leaving unrelated dirty files out", () => {
+    test("stages only --files plus the derived feature dir, leaving a pre-staged unrelated file untouched", () => {
       const project = makeTempProject();
       seedCommit(project);
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(path.join(project, "unrelated.js"), "console.log('bye');\n");
+      // Pre-staged by someone else before commit-slice runs: T001's
+      // undeclared-file check (AC1) hard-fails on a stray file nobody
+      // staged, so "unrelated but untouched" now requires pre_staged's
+      // exclusion rather than merely being dirty.
+      execFileSync("git", ["add", "--", "unrelated.js"], { cwd: project });
       fs.writeFileSync(path.join(project, "specs", "001-demo", "spec.md"), "# Spec\n\nUpdated.\n");
 
       const output = execFileSync(
@@ -1106,26 +1111,56 @@ describe("sdd CLI smoke tests", () => {
       expect(status).toMatch(/^A\s+ajeno\.txt$/m);
     });
 
-    // The post-commit safety net (the "warning: tracked files still dirty
-    // after commit" check) was rescoped alongside the commit itself in the
-    // same T008 fix, sharing its root cause and its commit_paths variable —
-    // but had no test of its own. These two tests cover both directions:
-    // (a) alone would stay green even if the warning were deleted outright,
-    // and (b) alone would stay green even if the check were still scanning
-    // the whole index instead of just commit_paths. Only both together pin
-    // down "scoped, and still functional".
-    test("does not warn when an unrelated file was pre-staged before commit-slice ran (scoped safety net stays quiet about work that is not ours)", () => {
+    // V1/AC1: the old post-commit "warning: tracked files still dirty after
+    // commit" check ran AFTER `git commit`, filtering out untracked ('^??')
+    // lines — which is exactly what let a brand-new undeclared file survive
+    // silently (repro: create app.js + helper.js, declare only app.js ->
+    // commits app.js, leaves helper.js as `??`, exit 0, no mention of it in
+    // the warning). Fixed by moving the check BEFORE the commit (so there is
+    // nothing to roll back) and dropping the '^??' filter so untracked files
+    // count too. Two things must still be excluded from "undeclared", or the
+    // check would trip on every normal call: (1) pre_staged -- someone
+    // else's legitimately pre-existing staged work (unchanged mechanism);
+    // (2) this invocation's own declared paths (--files, the feature dir,
+    // --moved-from), which are staged -- not committed yet -- by the time
+    // this check runs.
+    test("rejects an undeclared new file created alongside a declared one: exits non-zero, names it, creates no commit (V1/AC1)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+      fs.writeFileSync(path.join(project, "helper.js"), "console.log('undeclared');\n");
+
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+        { cwd: project },
+      );
+
+      expect(error.status).not.toBe(0);
+      expect(error.stderr).toContain("helper.js");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+
+      const status = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" });
+      expect(status).toContain("?? helper.js");
+    });
+
+    test("still succeeds when an unrelated file was pre-staged before commit-slice ran (pre-existing staged work is not blamed)", () => {
       const project = makeTempProject();
       seedCommit(project);
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
-      // Pre-staged and left clean — before T008 scoped the dirty-check to
-      // commit_paths, this alone (tracked, staged, not "??") was enough to
-      // populate `dirty` and print the warning for work this command never
-      // touched.
+      // Pre-staged before commit-slice runs -- must not be mistaken for an
+      // undeclared file this invocation is responsible for.
       execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
 
-      const errPath = path.join(project, ".stderr-capture");
+      // Outside the project's git working tree on purpose (T001): the
+      // undeclared-file check now inspects the WHOLE tree with no '^??'
+      // filter, so a capture file left sitting inside `project` would be
+      // flagged as an undeclared stray file and make commit-slice itself
+      // fail before the scenario under test ever ran.
+      const errPath = path.join(os.tmpdir(), `${path.basename(project)}-stderr-capture`);
       const errFd = fs.openSync(errPath, "w");
       let stdout;
       try {
@@ -1140,66 +1175,20 @@ describe("sdd CLI smoke tests", () => {
       const stderrOutput = fs.readFileSync(errPath, "utf8");
 
       expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
-      expect(stderrOutput).not.toContain("tracked files still dirty after commit");
       expect(stderrOutput).toBe("");
     });
 
-    test("still warns when a file inside the commit scope is left genuinely dirty after the commit (safety net is not silently disabled)", () => {
-      const project = makeTempProject();
-      seedCommit(project);
-      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
-      // A post-commit hook runs synchronously as part of `git commit`
-      // returning — squarely inside cmd_commit_slice's own `git commit`
-      // call — so it deterministically reproduces "a tracked file left
-      // dirty after the commit that included it" (e.g. an omitted --files
-      // entry, or a generated file rewritten post-commit) without racing
-      // bin/sdd's own git calls.
-      fs.writeFileSync(
-        path.join(project, ".git", "hooks", "post-commit"),
-        "#!/bin/sh\necho '// dirtied after commit' >> app.js\n",
-      );
-      fs.chmodSync(path.join(project, ".git", "hooks", "post-commit"), 0o755);
-
-      const errPath = path.join(project, ".stderr-capture");
-      const errFd = fs.openSync(errPath, "w");
-      let stdout;
-      try {
-        stdout = execFileSync(
-          sddBin,
-          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
-          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
-        );
-      } finally {
-        fs.closeSync(errFd);
-      }
-      const stderrOutput = fs.readFileSync(errPath, "utf8");
-
-      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
-      expect(stderrOutput).toContain("warning: tracked files still dirty after commit");
-      expect(stderrOutput).toContain("app.js");
-
-      const status = execFileSync("git", ["status", "--porcelain"], {
-        cwd: project,
-        encoding: "utf8",
-      });
-      expect(status).toMatch(/M\s+app\.js/);
-    });
-
-    // Review fix cycle 2 (cross #1, Fix 5 option (a)): T008 scoped the
-    // post-commit warning to commit_paths, which made it structurally
-    // unable to catch its original purpose — an omitted --files entry is by
-    // definition outside commit_paths. Restored: the check scans the whole
-    // index again, like pre-020, but a snapshot of paths already staged
-    // BEFORE this invocation's own 'git add' calls run excludes someone
-    // else's legitimate pre-existing work (e.g. this repo's own 13
-    // pre-staged May-cleanup renames) from tripping it. Both properties in
-    // one test: the omission still warns, the unrelated rename does not.
-    test("still warns about a genuinely omitted tracked file even with an unrelated rename pre-staged (cross #1)", () => {
+    // Cross #1 (reproved after the pre-commit move): the omission still
+    // gets caught even when a genuinely unrelated rename is pre-staged
+    // alongside it -- except now it is a hard failure with no commit,
+    // not a post-commit warning.
+    test("rejects a genuinely omitted tracked file even with an unrelated rename pre-staged (cross #1)", () => {
       const project = makeTempProject();
       fs.mkdirSync(path.join(project, "specs", "999-other"), { recursive: true });
       fs.writeFileSync(path.join(project, "specs", "999-other", "f.md"), "old\n");
       fs.writeFileSync(path.join(project, "omitted.js"), "console.log('do not forget me');\n");
       seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
 
       // Someone else's legitimate, unrelated in-flight rename — pre-staged
       // before commit-slice runs, the same shape as this repo's own 13
@@ -1211,24 +1200,17 @@ describe("sdd CLI smoke tests", () => {
       fs.appendFileSync(path.join(project, "omitted.js"), "// forgot to stage this\n");
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
 
-      const errPath = path.join(project, ".stderr-capture");
-      const errFd = fs.openSync(errPath, "w");
-      let stdout;
-      try {
-        stdout = execFileSync(
-          sddBin,
-          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
-          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
-        );
-      } finally {
-        fs.closeSync(errFd);
-      }
-      const stderrOutput = fs.readFileSync(errPath, "utf8");
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+        { cwd: project },
+      );
 
-      expect(stdout.trim()).toMatch(/^[0-9a-f]{40}$/);
-      expect(stderrOutput).toContain("warning: tracked files still dirty after commit");
-      expect(stderrOutput).toContain("omitted.js");
-      expect(stderrOutput).not.toContain("999-other");
+      expect(error.status).not.toBe(0);
+      expect(error.stderr).toContain("omitted.js");
+      expect(error.stderr).not.toContain("999-other");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
 
       const status = execFileSync("git", ["status", "--porcelain"], {
         cwd: project,
@@ -1254,7 +1236,12 @@ describe("sdd CLI smoke tests", () => {
       seedCommit(project);
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
 
-      const errPath = path.join(project, ".stderr-capture");
+      // Outside the project's git working tree on purpose (T001): the
+      // undeclared-file check now inspects the WHOLE tree with no '^??'
+      // filter, so a capture file left sitting inside `project` would be
+      // flagged as an undeclared stray file and make commit-slice itself
+      // fail before the scenario under test ever ran.
+      const errPath = path.join(os.tmpdir(), `${path.basename(project)}-stderr-capture`);
       const errFd = fs.openSync(errPath, "w");
       let stdout;
       try {
@@ -1279,7 +1266,12 @@ describe("sdd CLI smoke tests", () => {
       fs.writeFileSync(path.join(project, "ajeno.txt"), "someone else's staged work\n");
       execFileSync("git", ["add", "--", "ajeno.txt"], { cwd: project });
 
-      const errPath = path.join(project, ".stderr-capture");
+      // Outside the project's git working tree on purpose (T001): the
+      // undeclared-file check now inspects the WHOLE tree with no '^??'
+      // filter, so a capture file left sitting inside `project` would be
+      // flagged as an undeclared stray file and make commit-slice itself
+      // fail before the scenario under test ever ran.
+      const errPath = path.join(os.tmpdir(), `${path.basename(project)}-stderr-capture`);
       const errFd = fs.openSync(errPath, "w");
       let stdout;
       try {
@@ -1319,7 +1311,12 @@ describe("sdd CLI smoke tests", () => {
       );
       execFileSync("git", ["add", "--", "specs/001-demo/tasks.md"], { cwd: project });
 
-      const errPath = path.join(project, ".stderr-capture");
+      // Outside the project's git working tree on purpose (T001): the
+      // undeclared-file check now inspects the WHOLE tree with no '^??'
+      // filter, so a capture file left sitting inside `project` would be
+      // flagged as an undeclared stray file and make commit-slice itself
+      // fail before the scenario under test ever ran.
+      const errPath = path.join(os.tmpdir(), `${path.basename(project)}-stderr-capture`);
       const errFd = fs.openSync(errPath, "w");
       let stdout;
       try {
@@ -1348,8 +1345,7 @@ describe("sdd CLI smoke tests", () => {
       expect(files).toContain("specs/001-demo/tasks.md");
 
       // tasks.md landed in the commit clean -- no leftover staged/dirty
-      // residue for it. (Not asserting the whole status is empty: the
-      // stderr-capture file above is itself untracked in this working tree.)
+      // residue for it.
       const status = execFileSync("git", ["status", "--porcelain"], {
         cwd: project,
         encoding: "utf8",
@@ -1357,56 +1353,41 @@ describe("sdd CLI smoke tests", () => {
       expect(status).not.toMatch(/tasks\.md/);
     });
 
-    test("both a pre-staged feature-dir file and a genuinely dirty tracked file at once: both warnings fire independently, proving the inclusion-set and exclusion-set checks did not merge (index-state axis, T003)", () => {
+    test("a pre-staged feature-dir file and a genuinely undeclared file at once: the AC5 warning still fires even though the run then hard-fails (proves the two checks did not merge)", () => {
       const project = makeTempProject();
       seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
       fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
       fs.writeFileSync(
         path.join(project, "specs", "001-demo", "tasks.md"),
         "# Tasks\n\n- [x] First behavior\n- [ ] Second behavior\n",
       );
       execFileSync("git", ["add", "--", "specs/001-demo/tasks.md"], { cwd: project });
+      // Genuinely undeclared -- unlike tasks.md above (pre-staged, AC5's
+      // concern), this one was never staged by anyone, which is V1/AC1's
+      // concern. The AC5 warning runs before any 'git add' in this
+      // invocation, so it must still print even though this second file
+      // makes the whole call fail before a commit ever happens.
+      fs.writeFileSync(path.join(project, "helper.js"), "console.log('undeclared');\n");
 
-      // Reuses the post-commit hook trick from the existing dirty-safety-net
-      // test to deterministically dirty app.js -- which IS in this
-      // invocation's own commit scope, unlike tasks.md above -- right after
-      // 'git commit' returns, without racing bin/sdd's own git calls.
-      fs.writeFileSync(
-        path.join(project, ".git", "hooks", "post-commit"),
-        "#!/bin/sh\necho '// dirtied after commit' >> app.js\n",
+      const error = sddFail(
+        ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
+        { cwd: project },
       );
-      fs.chmodSync(path.join(project, ".git", "hooks", "post-commit"), 0o755);
 
-      const errPath = path.join(project, ".stderr-capture");
-      const errFd = fs.openSync(errPath, "w");
-      let stdout;
-      try {
-        stdout = execFileSync(
-          sddBin,
-          ["commit-slice", "001-demo", "--type", "feat", "--title", "Add hello log", "--files", "app.js"],
-          { cwd: project, encoding: "utf8", stdio: ["ignore", "pipe", errFd] },
-        );
-      } finally {
-        fs.closeSync(errFd);
-      }
-      const stderrOutput = fs.readFileSync(errPath, "utf8");
+      expect(error.status).not.toBe(0);
 
-      const sha = stdout.trim();
-      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+      // AC5 warning (inclusion set, feature dir only): tasks.md was staged
+      // before this invocation ran.
+      expect(error.stderr).toContain("warning: feature dir file(s) already staged before commit-slice ran");
+      expect(error.stderr).toContain("specs/001-demo/tasks.md");
 
-      // New AC5 warning (inclusion set, computed pre-commit): the
-      // feature-dir file staged before this invocation ran.
-      expect(stderrOutput).toContain("warning: feature dir file(s) already staged before commit-slice ran");
-      expect(stderrOutput).toContain("specs/001-demo/tasks.md");
+      // V1/AC1 hard failure (exclusion set, whole index): helper.js was
+      // never declared and never staged by anyone.
+      expect(error.stderr).toContain("helper.js");
 
-      // Existing safety net (exclusion set, computed post-commit): app.js
-      // was inside this commit's own scope and got dirtied again afterward.
-      expect(stderrOutput).toContain("warning: tracked files still dirty after commit");
-      expect(stderrOutput).toMatch(/tracked files still dirty after commit:\n[^\n]*app\.js/);
-
-      const files = filesInCommit(project, sha);
-      expect(files).toContain("app.js");
-      expect(files).toContain("specs/001-demo/tasks.md");
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
     });
 
     test("--moved-from deletion still lands in a scoped commit, even with an unrelated file pre-staged", () => {

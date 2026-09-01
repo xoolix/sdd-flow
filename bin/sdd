@@ -893,14 +893,21 @@ cmd_commit_slice() {
   fi
 
   # Snapshot every already-staged path BEFORE this invocation's own 'git add'
-  # calls touch the index. The post-commit safety net below diffs against
+  # calls touch the index. The undeclared-file check below diffs against
   # this to tell "someone else's legitimately pre-staged work" (e.g. the 13
   # in-flight renames from an unrelated cleanup) apart from a --files
   # omission this invocation is responsible for catching — a file the agent
   # edited but never staged shows up as unstaged both before and after, so
-  # it survives this snapshot and still trips the warning.
+  # it survives this snapshot and still trips the check.
   local pre_staged
   pre_staged="$(git status --porcelain --no-renames 2>/dev/null | awk '{ st = substr($0, 1, 1); if (st != " " && st != "?") print substr($0, 4) }')"
+
+  # feature_dir is absolute (built from "$(pwd)/specs") but git-status paths
+  # are repo-root-relative (F8) -- normalize once, up front, so both the AC5
+  # warn below and the undeclared-file check further down can prefix-match
+  # against it. bin/sdd never 'cd's outside subshells, so stripping
+  # "$(pwd)/" is safe.
+  local feature_dir_rel="${feature_dir#"$(pwd)/"}"
 
   # AC5: warn (never change what gets staged) when a file inside this
   # feature's own dir was already staged BEFORE this invocation touched the
@@ -908,16 +915,12 @@ cmd_commit_slice() {
   # by accident. There is no reliable way to tell those two apart, and
   # getting it wrong would *discard* work rather than merely mix it, so this
   # only warns; the feature dir keeps getting swept into the commit exactly
-  # as before. Opposite polarity from the post-commit safety net below (that
-  # one is an EXCLUSION set over the whole index, checked after the commit;
-  # this is an INCLUSION set scoped to the feature dir, checked before it) --
-  # kept as two separate checks sharing only the one snapshot, not merged.
-  # feature_dir is absolute (built from "$(pwd)/specs") but pre_staged
-  # entries are repo-root-relative (F8) -- normalize first, or a prefix
-  # match here never fires. bin/sdd never 'cd's outside subshells, so
-  # stripping "$(pwd)/" is safe.
+  # as before. Opposite polarity from the undeclared-file check below (that
+  # one is an EXCLUSION set over the whole index, checked before the commit;
+  # this is an INCLUSION set scoped to the feature dir, checked before it
+  # too) -- kept as two separate checks sharing only the one snapshot, not
+  # merged.
   if [ -n "$pre_staged" ]; then
-    local feature_dir_rel="${feature_dir#"$(pwd)/"}"
     local staged_path staged_in_feature_dir=""
     while IFS= read -r staged_path; do
       case "$staged_path" in
@@ -972,6 +975,72 @@ cmd_commit_slice() {
     fi
   fi
 
+  # V1: reject undeclared new files BEFORE the commit exists (AC1) -- fixed
+  # from the old post-commit warning, which diffed the whole index AFTER
+  # 'git commit' had already run, so the only fix available was a
+  # 'git reset --soft' unwind. Checking here means there is nothing to
+  # unwind: on failure, no commit is ever created.
+  # 'dirty' starts as the full 'git status --porcelain' (no '^??' filter --
+  # dropping that filter is the actual fix; it used to be exactly what let a
+  # brand-new untracked file, the most common shape of a --files omission,
+  # survive silently). Two exclusion passes bring it down to what's really
+  # unaccounted for:
+  #   1. pre_staged (:902, snapshotted before this invocation's own 'git
+  #      add'): someone else's legitimately pre-existing staged work, not
+  #      this invocation's problem. Same awk NR==FNR set-difference as
+  #      before -- fed via process substitution, not 'awk -v', because
+  #      default macOS/BSD awk rejects a -v value with embedded newlines,
+  #      and pre_staged is exactly that.
+  #   2. This invocation's own declared paths: every git-status line is
+  #      staged content the moment 'git add' above ran, so without this
+  #      pass every clean commit-slice call would trip on its own files.
+  #      feature_dir and --moved-from both match by prefix (either can be a
+  #      directory: a directory 'git add' stages each file under it as its
+  #      own status line, and a directory 'git add' on a --moved-from path
+  #      stages each of its deletions the same way); --files entries match
+  #      exactly, since they are always concrete file paths.
+  local dirty
+  dirty="$(git status --porcelain --no-renames 2>/dev/null)"
+  if [ -n "$pre_staged" ] && [ -n "$dirty" ]; then
+    dirty="$(awk 'NR==FNR { seen[$0]=1; next } { path = substr($0, 4); if (!(path in seen)) print }' \
+      <(printf '%s\n' "$pre_staged") <(printf '%s\n' "$dirty"))"
+  fi
+  if [ -n "$dirty" ]; then
+    local dirty_line dirty_path declared_hit declared_file filtered=""
+    while IFS= read -r dirty_line; do
+      [ -z "$dirty_line" ] && continue
+      dirty_path="${dirty_line:3}"
+      case "$dirty_path" in
+        "$feature_dir_rel"/*)
+          continue
+          ;;
+      esac
+      if [ -n "$moved_from" ]; then
+        case "$dirty_path" in
+          "$moved_from"|"$moved_from"/*)
+            continue
+            ;;
+        esac
+      fi
+      declared_hit=false
+      if [ "${#files[@]}" -gt 0 ]; then
+        for declared_file in "${files[@]}"; do
+          if [ "$dirty_path" = "$declared_file" ]; then
+            declared_hit=true
+            break
+          fi
+        done
+      fi
+      $declared_hit && continue
+      filtered="${filtered:+${filtered}$'\n'}${dirty_line}"
+    done <<< "$dirty"
+    dirty="$filtered"
+  fi
+  if [ -n "$dirty" ]; then
+    printf 'error: undeclared file(s) present -- pass them to --files or remove them:\n%s\n' "$dirty" >&2
+    return 2
+  fi
+
   # Commit pathspec: exactly what this invocation staged above — --files,
   # the derived feature dir, and --moved-from when present. A bare 'git
   # commit' would sweep in anything already staged by someone else before
@@ -1009,29 +1078,6 @@ cmd_commit_slice() {
   local sha
   sha="$(git rev-parse HEAD)"
   printf '%s\n' "$sha"
-
-  # Post-commit safety net: warn (stderr only — stdout must stay $()-safe) if
-  # a tracked file was left dirty, e.g. an omitted --files entry. Scoped to
-  # commit_paths alone made this structurally unable to catch that (an
-  # omitted file is by definition outside commit_paths) — so this looks at
-  # the WHOLE index again, like pre-020, then drops any path that was
-  # already staged in the pre_staged snapshot above: that is someone else's
-  # legitimate pre-existing work (e.g. an in-flight rename), not something
-  # this invocation should have picked up.
-  local dirty
-  dirty="$(git status --porcelain --no-renames 2>/dev/null | grep -v '^??' || true)"
-  if [ -n "$pre_staged" ] && [ -n "$dirty" ]; then
-    # Two-file NR==FNR idiom, not 'awk -v pre="$pre_staged"': the default
-    # macOS/BSD awk rejects a -v value containing embedded newlines ("newline
-    # in string"), and pre_staged is exactly that — a newline-joined path
-    # list. Feeding it as its own input file via process substitution sidesteps
-    # the -v parser entirely and works the same on gawk and mawk.
-    dirty="$(awk 'NR==FNR { seen[$0]=1; next } { path = substr($0, 4); if (!(path in seen)) print }' \
-      <(printf '%s\n' "$pre_staged") <(printf '%s\n' "$dirty"))"
-  fi
-  if [ -n "$dirty" ]; then
-    printf 'warning: tracked files still dirty after commit:\n%s\n' "$dirty" >&2
-  fi
 
   return 0
 }
