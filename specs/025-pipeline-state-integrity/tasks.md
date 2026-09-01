@@ -43,6 +43,11 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
 - [x] **T012 [AFK] State-machine harness across all eight phases**: fixtures drive all eight phases; asserts `sdd status` reports the right one each step, including the untested sentinel-freshness branch. Header comment declares it tests CLI reads only; set an explicit Jest timeout.
   - blocked_by: T007; verifies: AC12; touches: tests, bin/sdd
 
+### 4. Review follow-up
+- [x] **T013 [AFK] Close the review's three findings and the hole that let one through**: (a) `sdd-simplify-code.md`'s documented `commit-slice` call omits `--title`, which the CLI requires — simplify can never commit; (b) step 5 has no branch for "non-empty scope, zero edits", demonstrated to yield two different outcomes; (c) `tests/state-machine.test.js`'s header cites AC11 where the criterion is AC12; (d) **a test that validates every `sdd` command documented in agent/skill prose against the CLI's real usage** — nothing checks that today, which is why (a) survived.
+  - blocked_by: T012; verifies: review follow-up (no AC — found by review, outside the 12)
+  - touches: sdd-simplify-code.md, tests, state-machine.test.js
+
 ## Notes
 - No `[HITL]`: all real decisions were resolved at the discovery checkpoint.
 - `type`: fix T001-T004,T008; feat T005-T007,T012; chore T009-T011.

@@ -8,7 +8,7 @@
 // header and the "prose an LLM follows, not executable code" notes throughout
 // tests/sdd.test.js's T006/T007/T009/T010/T011 describe blocks):
 //
-// AC11 originally asked this harness to "run plan->implement->simplify->review->
+// AC12 originally asked this harness to "run plan->implement->simplify->review->
 // archive with mocked envelopes". That is not buildable. Every phase transition in
 // this pipeline is executed by an LLM agent reading prose out of a `.md` file --
 // bin/sdd itself never advances a phase. detect_feature_phase() (bin/sdd) only READS

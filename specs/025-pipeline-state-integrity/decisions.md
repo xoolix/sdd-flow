@@ -633,3 +633,131 @@ to commit) by accident, not because the prose told it to — there is no instruc
 was non-empty, step 4 changed nothing, now what." Codex's cross-review (see the origin note at the
 top of this file) had already flagged this exact gap as an unverified finding; it has now
 reproduced live. Recorded here for `/review-feature` to pick up — not implemented in this pass.
+
+## Simplify: 2026-09-01 — /simplify-code (re-run after digest-scope fix)
+
+- **Why a second run**: the first `/simplify-code` pass (above) sealed cleanly, but the fix commit
+  (`b5785e8`, "post-T012 digest-scope fix") landed afterward and moved HEAD, making the sealed
+  `.sdd-state` stale for the correct reason (HEAD mismatch, not a bug). `sdd status` confirmed
+  `sentinel_fresh: false` before this run and `phase: ready-to-simplify` — pre-flight's stale-sentinel
+  path applied, no `rm` needed since the file was never re-created after the first run's own
+  `/review-feature`-facing state was superseded by the fix commit continuing to build on the same
+  branch.
+- **Scope**: `git diff --name-only 7b61d89..HEAD` (base `feature/024-remove-auto-pr`, still resolved
+  by `sdd base-branch`) now spans 16 commits / 27 files (one commit and ~5 files more than the first
+  run, from the digest-scope fix). Same exclusion filters produced the **same six files** as the
+  first run: `.claude/rules/domains.md`, `.claude/rules/git.md`, `.specify/templates/rules/git.md`,
+  `.gitignore`, `bin/sdd`, `research/hallazgos-verificados.md`. The fix commit's other three changed
+  files (`decisions.md`, `tests/sdd.test.js`, `tests/state-machine.test.js`) are excluded by the
+  SDD-artifacts and test filters, same as before.
+- **New material reviewed**: only `bin/sdd` had a real diff since the first run's review (confirmed via
+  `git diff --name-only 30e3167..HEAD` on all six scoped files) — the `tree_digest()` fix itself: one
+  line changing `git add -A` to `git add -A -- ':(exclude)specs'`, plus an expanded doc comment
+  explaining the deadlock it fixes and the accepted trade-off (uncommitted `specs/**` edits no longer
+  invalidate the receipt). **Declined to touch either.** The code line is already minimal — a single
+  pathspec argument, nothing to collapse. The comment documents a specific empirically-reproduced
+  gotcha (the self-invalidating-seal deadlock, verified live against the actual stuck receipt, per the
+  "Delta: 2026-09-01 — Post-T012 digest-scope fix" entry above) exactly in the spirit of the other
+  gotcha-comments in this file that the first run already declined to cut — trimming it would remove
+  the only record of *why* the exclusion exists, which is exactly the kind of documentation this
+  project's `CLAUDE.md` says ages well. The other five scoped files are byte-identical to the first
+  run's review (verified via diff against `30e3167`) — that run's reasoning for leaving each alone
+  stands unchanged.
+- **Files simplified**: none (zero edits applied, same "non-empty scope, nothing to change" shape as
+  the first run — see the "Known open defect" entry directly above, which already covers this; not
+  re-recorded as a new finding).
+- **Baseline**: pass (163/163 tests, `bash -n bin/sdd` clean; no lint/typecheck tooling configured in
+  this repo) | **Post-edit**: SKIP (zero edits made — nothing to re-validate)
+- **Commit**: none (nothing changed to commit)
+- Sentinel re-sealed: `sdd state-write 025-pipeline-state-integrity --phase ready-to-review` under
+  `git-head: b5785e8` (the fix commit); `sdd status` confirms `sentinel_fresh: true`,
+  `next_command: /review-feature 025-pipeline-state-integrity`.
+
+## JUDGMENT-DAY — 025-pipeline-state-integrity
+
+| # | Severity | Category | Evidence | Description | Suggested Action |
+|---|----------|----------|----------|-------------|------------------|
+| 1 | medium | undocumented-assumption | `tree_digest` excluye `specs/**`; pre-flight de `sdd-archive-feature.md` | Editar `spec.md`/`plan.md` tras un review PASS y antes de archive es invisible al recibo; solo los checkboxes de `tasks.md` se re-verifican aparte. Archive puede archivar un spec que nunca se revisó. | Digest de contenido separado (spec/plan/tasks) capturado al sellar y comparado en el pre-flight de archive, o documentar el riesgo residual en `spec.md`. |
+| 2 | medium | edge-case | `review-feature/SKILL.md` Paso 5 vs. 6.5 | El Paso 6.5 condiciona en "si el judge da FAIL" con el Final-verdict solo entre paréntesis. Con reviewer=FAIL **y** judge=FAIL, una lectura literal reescribiría `reviewed+FAIL` justo después de que el Paso 5 lo borró, rompiendo el invariante de que esa combinación solo significa bloqueo del judge. Sin test para esa combinación. | Reescribir la condición del 6.5 para depender explícitamente de `Final verdict == BLOCKED-JUDGMENT-DAY-HIGH`; agregar test reviewer=FAIL+judge=FAIL. |
+| 3 | medium | incomplete-AC | `.claude/CLAUDE.md`; gate de veredicto en `sdd-archive-feature.md`; `sdd-hitl/SKILL.md` | La salida "aceptar el riesgo explícitamente" que promete el contrato del orquestador **no tiene mecanismo implementado**: `sdd-hitl` solo resuelve tareas `[HITL]`. Quedan solo arreglar-y-re-revisar o bloqueo permanente. | Definir el comando concreto con línea de auditoría, o angostar el texto de `CLAUDE.md` a las dos salidas que sí tienen herramienta. |
+| 4 | medium | edge-case | AC1, chequeo de archivo no declarado; Edge Cases de `spec.md` | El fail duro no contempla subproductos legítimos de herramientas (snapshots, caches, artefactos de editor) aún sin gitignorear en un proyecto que recién adopta el framework. | Documentar que los proyectos adoptantes deben gitignorear artefactos generados antes de depender del gate; considerar un allowlist. |
+| 5 | medium | undocumented-assumption | `research/hallazgos-verificados.md` vs. `decisions.md` | Un hallazgo de codex "sin verificar" reprodujo en vivo durante esta feature y se documentó solo en `decisions.md`, sin reconciliar el research doc. Otro de esa lista (completitud de archive ante fallo post-move) parece resuelto de rebote por T007, pero nadie lo verificó ni lo anotó. | Reconciliar el research doc: mover el reproducido a "reproducido/arreglado" con referencia cruzada; verificar o dejar anotado el de archive. |
+| 6 | medium | edge-case | `decisions.md`, "Known open defect" | La rama "scope no vacío, cero ediciones" de `/simplify-code` no tiene instrucción definida y reprodujo dos veces, cayendo en el resultado correcto por improvisación del agente y no por instrucción. | Agregar la rama faltante: si `SCOPED_FILES` no está vacío pero se aplican cero ediciones, tratar igual que el camino de scope vacío. |
+| 7 | low | incomplete-AC | Cabecera de `tests/state-machine.test.js` | Cita AC11 como criterio de origen cuando verifica el AC12; su propia primera línea dice "(AC12)", así que se contradice. | Corregir la referencia. |
+
+Ningún hallazgo alcanza `high`: todos requieren una acción manual deliberada o una mala lectura de prosa que el contexto de ejecución ya permite evitar, y todos tienen mitigación sin pérdida de datos, seguridad ni migración irreversible.
+
+Verificado en vivo por el judge: `npx jest` → 163/163.
+
+Source: sdd-judge, review-feature phase
+Date: 2026-09-01
+
+[2026-09-01T16:26:00Z] Cross-Review: skipped — cross-agent failure: timeout (companion colgó dos
+veces, 600000ms cada una, exit 143, sin stdout ni stderr). Los cuatro chequeos de pre-flight pasaron:
+plugin registrado v1.0.6 con `installPath` válido, companion y schema en disco, `enabledPlugins` en
+true, `codex` en PATH. Falla abierto por diseño — advisory, nunca bloquea la fase, y no consume el
+presupuesto de reintentos de `review-feature`.
+
+Diagnóstico que vale conservar: **`codex exec` invocado directamente SÍ funciona** — en esta misma
+sesión produjo el cross-review adversarial que originó los diez defectos de esta feature. Lo que
+cuelga es el wrapper `codex-companion.mjs`, no la CLI. Sospecha del agente: un prompt interactivo
+(auth/login) esperando un TTY que no existe. Vale chequear `codex login` antes de confiar en el
+cross-review automático de nuevo.
+
+## T013: Review follow-up — closes JUDGMENT-DAY #6 and #7, plus the underlying gap
+
+Four findings, all reproduced or verified live before being fixed — nothing accepted on the
+reviewer's word alone (same standard as the rest of this file):
+
+- **(a) `sdd-simplify-code.md`'s own `commit-slice` call omitted `--title`** — `cmd_commit_slice`
+  has required `--type` and `--title` since T001 (`bin/sdd`'s `usage_msg`). A simplify run with a
+  real, non-empty `SCOPED_FILES` following that prose verbatim would hit exit 2 before touching
+  git, then follow the doc's own failure branch ("do NOT run `sdd state-write`... `Status: blocked`")
+  forever — simplify could never commit a real change. Fixed: the documented call now reads
+  `sdd commit-slice $ARGUMENTS --type refactor --title "<slice title>" --files <SCOPED_FILES...>`,
+  matching the shape `/implement-task` and `/archive-feature` already use. Both other agents'
+  documented `commit-slice` calls were checked against `cmd_commit_slice`'s real requirements too —
+  `sdd-implement-task.md` and `sdd-archive-feature.md` already carry `--title`; no other mismatch
+  found.
+- **(b) Step 5's undefined branch** (JUDGMENT-DAY #6) — "non-empty `SCOPED_FILES`, step 4 applies
+  zero edits" had no instruction; both real `/simplify-code` runs on this feature (see "Known open
+  defect" entry above) reached the empty-scope outcome by agent improvisation, not by being told to.
+  A literal reading of step 5.5 ("otherwise, call `sdd commit-slice`...") for that same shape would
+  instead hit `cmd_commit_slice`'s "nothing staged" exit 5 and the doc's own "on failure ⇒ blocked"
+  branch — two different outcomes from the same prose, reproduced live by the reviewer. Fixed: added
+  `### 4.5. Zero edits applied`, explicitly routing this shape to the same outcome as the
+  empty-scope path (`Commit: none`, `Status: success`, sentinel still written). The "Known open
+  defect" entry above is superseded by this fix — left in place as the diagnostic record of how the
+  gap was found, per this repo's own documentation stance on preserving *why*.
+- **(c) `tests/state-machine.test.js`'s header cited AC11** (JUDGMENT-DAY #7) where the harness
+  verifies AC12 (the file's own first line and `describe` title already said AC12 correctly — only
+  the prose paragraph at line 11 was wrong). One-line fix, no test pinned the old string.
+- **(d) No test verified any documented `sdd` invocation against the CLI's real usage** — the gap
+  that let (a) survive review. Added `tests/documented-cli-usage.test.js`: it scans
+  `.claude/agents/*.md` and `.claude/skills/**/SKILL.md` for backtick-delimited `sdd <subcommand>
+  ...` spans with at least one argument/flag beyond the subcommand (a bare mention like `` `sdd
+  commit-slice` exits non-zero `` is prose, not invocation syntax, and is excluded), substitutes
+  placeholders (`$ARGUMENTS`, `$FEATURE_ID`, `<feature-id>`, `<type>`, `<slice title>`,
+  `[--task Tnnn]`, `<SCOPED_FILES...>`, `<paths…>`) with real values, and executes each one against
+  `bin/sdd` in a disposable temp git fixture. It found 11 unique documented invocations across 6
+  files. One (`sdd-archive-feature.md`'s `--files <spec files touched by the delta merge>`) is
+  resolved by omitting `--files` and relying on `--moved-from` — the prose itself documents that as
+  the empty-deltas alternative, so the test exercises it rather than inventing fake paths; no
+  candidate needed the explicit skip-list (none printed on this run, but the mechanism is real, not
+  a hardcoded empty list — see the file's own comments). Assertion: exit code 2 fails a candidate
+  (bin/sdd uses 2, only, for malformed arguments across every subcommand checked here — verified by
+  reading `cmd_commit_slice`/`cmd_state_write`/`cmd_branch`); exit 1/3/4/5 are legitimate
+  precondition gaps in the minimal fixture, not doc bugs, and are left alone.
+  **Proved it has teeth twice**: written first against the *actual*, still-unfixed (a) — ran red (1
+  failed: the `sdd-simplify-code.md` candidate, exit 2, `usage:` on stderr; 12 passed) before (a) was
+  fixed, green (13/13) after. Then, per instructions, re-mutated the fixed line back to the buggy
+  form and reran in isolation — red again, identical failure — then restored and reran full suite
+  green. Full suite: 163 (baseline) → 176 (13 new tests: 2 scan-integrity tests + 11 per-candidate
+  tests), all green.
+- **Pinned-prose casualty, found by running the full suite, not anticipated**: `tests/sdd.test.js`
+  pinned the exact pre-fix `commit-slice` line as a literal substring
+  (`"sdd commit-slice $ARGUMENTS --type refactor --files <SCOPED_FILES...>"`). Updated to the
+  corrected line. No other test pinned any string touched by (b) or (c) — checked by grepping for
+  the changed phrases across `tests/*.test.js` before and after editing.
+- `implemented-by` marker: skipped for this task — the immediately preceding line in this file is
+  already `implemented-by: claude` (same runtime), and the dedupe rule is consecutive-only.

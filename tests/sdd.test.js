@@ -417,7 +417,9 @@ describe("sdd CLI smoke tests", () => {
 
     // New step: commit-slice call between post-validation and sentinel write, refactor type, no task id.
     expect(simplifyCode).toContain("5.5. Commit the slice");
-    expect(simplifyCode).toContain("sdd commit-slice $ARGUMENTS --type refactor --files <SCOPED_FILES...>");
+    expect(simplifyCode).toContain(
+      'sdd commit-slice $ARGUMENTS --type refactor --title "<slice title>" --files <SCOPED_FILES...>',
+    );
     expect(simplifyCode).toContain("No `--task` flag — a simplify pass has no task ID.");
 
     expect(simplifyCode).toContain("Commit: none");

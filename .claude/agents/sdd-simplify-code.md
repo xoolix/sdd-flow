@@ -81,6 +81,10 @@ For each file in `SCOPED_FILES`:
 - Never rewrite algorithms — only rearrange or remove.
 - **Never delete files** and never create new files. Only **modify in place**. A simplification that would remove an entire file is out of scope — surface it in the decisions.md entry as "candidate for manual removal" instead.
 
+### 4.5. Zero edits applied
+
+If step 4 read every file in `SCOPED_FILES` and applied no edit to any of them — a non-empty scope where nothing violated KISS/DRY/YAGNI — treat it the same as the empty-scope path in step 3's item 5: skip straight to step 6, report `Commit: none`, write the sentinel with `Summary: no changes needed`, and return `Status: success`. Skip steps 5 and 5.5 — there is nothing to re-validate and nothing to commit. This is a distinct shape from an empty `SCOPED_FILES` (files really were in scope; review just found nothing worth changing), but the outcome is identical, and step 6 still runs so the decisions.md entry records which files were reviewed.
+
 ### 5. Post-validation
 
 Re-run **Lint**, **Type check**, and **Tests** as parallel Bash calls.
@@ -100,7 +104,7 @@ If `SCOPED_FILES` was empty (step 3.5 above), there is nothing to commit — tha
 Otherwise, call:
 
 ```
-sdd commit-slice $ARGUMENTS --type refactor --files <SCOPED_FILES...>
+sdd commit-slice $ARGUMENTS --type refactor --title "<slice title>" --files <SCOPED_FILES...>
 ```
 
 No `--task` flag — a simplify pass has no task ID.
@@ -138,7 +142,7 @@ Save **only if** a non-obvious simplification pattern surfaced (e.g., a recurrin
 - **Validations-Output**: [short summary on success; last 100 lines of terminal output on failure]
 - **Files-Simplified**: [list or `none` for empty diff]
 - **Revert-Applied**: [true/false]
-- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `SCOPED_FILES` was empty or the run blocked before step 5.5]
+- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `SCOPED_FILES` was empty, step 4 applied zero edits, or the run blocked before step 5.5]
 - **Next**: /review-feature $ARGUMENTS
 - **Risks**: [anything the reviewer should double-check, or "None"]
 ```
