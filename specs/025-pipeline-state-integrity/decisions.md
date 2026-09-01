@@ -407,3 +407,49 @@ Es la misma clase de defecto que la feature persigue, encontrado dentro de la fe
   (5 new tests), all green. The pre-existing pinned test for the SDD-artifacts exclusion-filter
   bullet (`Apply the same exclusion filters as \`SCOPED_FILES\``) was preserved verbatim inside the
   2b rewrite rather than reworded, since another test pins that exact substring.
+
+## Delta: 2026-09-01 — Task T011
+
+- **ADDED — a new `## Argument parsing` section, not specified at this granularity in
+  `plan.md`**: `plan.md`'s touched-areas row said "V10: flags primero, id limpio hacia §I (**§I no
+  se toca**...)" but didn't specify *where* the flag stripping should live in the file. Placed as
+  its own section between `## Hard-stop: Orchestrator boundaries` and `## Pre-flight checks` — the
+  earliest point in the file, so it runs before Pre-flight's `specs/$ARGUMENTS/tasks.md` reads and
+  before every other step. Computes two values, mirroring `sdd-next`/`sdd-auto`'s own pre-loop
+  extraction verbatim (same exact-token semantics, same "not substring match" phrasing): `FEATURE_ID`
+  (the clean id) and `has_minimal_flag` (boolean). Every one of the six `$ARGUMENTS`-into-path/CLI/
+  topic-key sites the task named (Pre-flight's two task-completion checks, Step 1.5's two state-file
+  reads, Step 2.5's `decisions.md` append, Step 5's `.sdd-state` deletion) now reads `$FEATURE_ID`
+  instead — plus every remaining site discovered by grep past Step 2 (Step 4's `sdd state-write`
+  table, Step 5, Step 6.5's heading and `state-write` call, Step 6.6's heading, Step 7's Engram
+  topic keys, the Result envelope's `Next` line, and Step 3's cross-reviewer prompt), since the bug
+  class is "anything derived from raw `$ARGUMENTS` after flags exist in it," not only the specific
+  six the repro hit first.
+- **MODIFIED**: Step 2 ("Resolve review mode") no longer re-parses `$ARGUMENTS` — it consumes
+  `has_minimal_flag` computed in Argument parsing. Removed the duplicate "Split `$ARGUMENTS` on
+  whitespace" / "Check if the exact token `--minimal` is present" text that used to live there,
+  since keeping two independent parses of the same string is exactly the kind of duplication that
+  drifts. `plan.md`'s "V10: flags primero" phrasing is satisfied literally now — flags are parsed
+  once, first, and every later step (including Step 2 itself) reads the already-computed result.
+- **NOT modified**: `.claude/skills/_shared/sdd-phase-common.md` §I, per the task's explicit
+  constraint (D-001/D-003: shared by four skills, three of which never receive flags). §I still
+  documents lane resolution assuming an already-clean `<feature-id>`; `review-feature` now satisfies
+  that assumption by feeding it `FEATURE_ID` instead of raw `$ARGUMENTS`, rather than teaching §I
+  about flags.
+- **Verified, not modified**: `sdd-next/SKILL.md` and `sdd-auto/SKILL.md` already extract
+  `--minimal` correctly in their own pre-loop (exact-token match, feature-id resolved from the
+  remaining tokens) and already pass the combined `<feature-id> --minimal` string to
+  `review-feature` on both the initial dispatch and the re-review call inside their fix loops. No
+  caller-side change was needed or made; `review-feature`'s fix handles the combined string
+  identically regardless of which of the two call sites produced it.
+- Tests: 6 new tests in `tests/sdd.test.js`'s "review-feature parses --minimal before resolving the
+  feature path (025/T011/AC10)" describe block. `review-feature/SKILL.md` is prose an LLM follows,
+  not executable code — every assertion is a wiring guard proving the instruction text exists and is
+  ordered correctly, never proof an agent obeys it at runtime (same limit already declared for this
+  class of file by T006/T007/T009/T010). Proved RED before writing the fix: 5 of 6 failed against
+  the pre-T011 wording (`## Argument parsing` absent, path templates still read `specs/$ARGUMENTS/`,
+  `state-write $ARGUMENTS` / `sdd/$ARGUMENTS` / `— $ARGUMENTS` still present, Step 2 still contained
+  the literal "Split `$ARGUMENTS` on whitespace" duplicate); the sixth (the §I-untouched guard)
+  passed on both sides since it only asserts the shared file was never touched. Full suite: 153
+  (baseline) → 159 (6 new tests), all green. `grep -rn 'auto-commit' bin/ .claude/ .specify/ tests/`
+  re-verified at 0 matches (unaffected by this task).

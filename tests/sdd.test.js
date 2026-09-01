@@ -2875,6 +2875,84 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("review-feature parses --minimal before resolving the feature path (025/T011/AC10)", () => {
+    // review-feature/SKILL.md is prose an LLM follows, not executable code --
+    // every assertion below is a wiring guard proving the instruction text
+    // exists and says the right thing, never proof an agent actually obeys it
+    // at runtime (same limit already declared for this class of file by
+    // T006/T007/T009/T010). sdd-next/SKILL.md and sdd-auto/SKILL.md already
+    // extract `--minimal` correctly, before resolving a feature-id, in their
+    // own pre-loop -- this block covers only review-feature, the callee that
+    // used to interpolate the raw combined string into paths.
+    const reviewFeaturePath = path.join(repoRoot, ".claude/skills/review-feature/SKILL.md");
+
+    test("flags are stripped in a dedicated section before the Pre-flight heading", () => {
+      const reviewFeature = fs.readFileSync(reviewFeaturePath, "utf8");
+
+      const argParsingIndex = reviewFeature.indexOf("## Argument parsing");
+      const preflightIndex = reviewFeature.indexOf("## Pre-flight checks");
+      expect(argParsingIndex).toBeGreaterThan(-1);
+      expect(preflightIndex).toBeGreaterThan(-1);
+      expect(argParsingIndex).toBeLessThan(preflightIndex);
+      expect(reviewFeature).toContain(
+        "before Pre-flight, before any path or sub-agent prompt is built from `$ARGUMENTS`",
+      );
+    });
+
+    test("exact-token semantics match the callers: --minimal matches, --minimal-foo does not", () => {
+      const reviewFeature = fs.readFileSync(reviewFeaturePath, "utf8");
+
+      expect(reviewFeature).toContain("the exact token `--minimal`");
+      expect(reviewFeature).toContain("NOT substring match — `--minimal-foo` must NOT match");
+    });
+
+    test("no path under specs/ is ever built from raw $ARGUMENTS again", () => {
+      const reviewFeature = fs.readFileSync(reviewFeaturePath, "utf8");
+
+      expect(reviewFeature).not.toMatch(/specs\/\$ARGUMENTS\//);
+      // The call sites named in the task brief, now resolved on the clean id.
+      expect(reviewFeature).toContain("specs/$FEATURE_ID/tasks.md");
+      expect(reviewFeature).toContain("specs/$FEATURE_ID/quick-spec.md");
+      expect(reviewFeature).toContain("specs/$FEATURE_ID/spec.md");
+      expect(reviewFeature).toContain("specs/$FEATURE_ID/decisions.md");
+      expect(reviewFeature).toContain("specs/$FEATURE_ID/.sdd-state");
+    });
+
+    test("sdd CLI invocations and Engram topic keys built after Step 2 also use the clean id", () => {
+      const reviewFeature = fs.readFileSync(reviewFeaturePath, "utf8");
+
+      expect(reviewFeature).not.toContain("state-write $ARGUMENTS");
+      expect(reviewFeature).toContain("state-write $FEATURE_ID");
+      expect(reviewFeature).not.toContain("sdd/$ARGUMENTS");
+      expect(reviewFeature).toContain("sdd/$FEATURE_ID");
+      expect(reviewFeature).not.toContain("— $ARGUMENTS");
+      expect(reviewFeature).toContain("— $FEATURE_ID");
+    });
+
+    test("Step 2 (Resolve review mode) consumes the pre-parsed flag instead of re-splitting $ARGUMENTS", () => {
+      const reviewFeature = fs.readFileSync(reviewFeaturePath, "utf8");
+
+      const step2Match = reviewFeature.match(/### 2\. Resolve review mode([\s\S]*?)### 2\.5\./);
+      expect(step2Match).not.toBeNull();
+      const step2Body = step2Match[1];
+
+      expect(step2Body).not.toContain("Split `$ARGUMENTS` on whitespace");
+      expect(step2Body).toContain("has_minimal_flag");
+      expect(step2Body).toContain("does not re-parse `$ARGUMENTS`");
+    });
+
+    test("the shared fast-lane resolver (§I) stays untouched -- it keeps assuming an already-clean id", () => {
+      const sharedCommon = fs.readFileSync(
+        path.join(repoRoot, ".claude/skills/_shared/sdd-phase-common.md"),
+        "utf8",
+      );
+      // D-001/D-003 constraint: this task must not modify the shared file --
+      // §I is used by three other skills that never receive flags.
+      expect(sharedCommon).not.toContain("FEATURE_ID");
+      expect(sharedCommon).not.toContain("has_minimal_flag");
+    });
+  });
+
   test("build-registry ignores every core skill", () => {
     const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
     const buildRegistry = fs.readFileSync(path.join(repoRoot, ".claude/skills/build-registry/SKILL.md"), "utf8");
