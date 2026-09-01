@@ -151,13 +151,22 @@ Apply conservative consolidation:
 
 **Invariant**: `sdd-cross-reviewer`'s output NEVER enters this table and NEVER sets the Final verdict. It returns a `### Cross-Verdict:` field — a distinct, differently-named field precisely so it cannot be confused with `Verdict` by any consumer, including the fix loops in `sdd-next`/`sdd-auto`, which branch only on `Verdict`. A cross-review `FAIL` degrades to a warning line — `cross-review reported FAIL (advisory)` — appended to the result envelope's `Risks` field; it never changes the Final verdict computed above.
 
+**Seal the verdict (025/T006)**: right after computing the Final verdict above — before doing anything in Step 5 onward — write the durable receipt so a fresh `/sdd-next` can recover this outcome without re-running review:
+
+| Final verdict | Action |
+|---|---|
+| `PASS` | run `sdd state-write $ARGUMENTS --phase reviewed --verdict PASS` |
+| `PASS WITH WARNINGS` | run `sdd state-write $ARGUMENTS --phase reviewed --verdict PASS-WITH-WARNINGS` |
+| `FAIL` | do **not** write here — Step 5 clears `specs/$ARGUMENTS/.sdd-state` instead, so the phase falls back to `ready-to-simplify` and the fix loop's mandatory `/simplify-code` pass still runs |
+| `BLOCKED-JUDGMENT-DAY-HIGH` | do **not** write here — sealed in Step 6.5, at the point the block is confirmed, so the call still fires even though that branch returns `Status: blocked` |
+
 ### 5. Invalidate simplify sentinel on conformance FAIL
 
 If the reviewer verdict is **FAIL**:
 
-- Delete `specs/$ARGUMENTS/.simplified` if it exists. The next `/sdd-next` after the fix cycle will re-launch `/simplify-code` before re-review.
+- Delete `specs/$ARGUMENTS/.sdd-state` if it exists. The next `/sdd-next` after the fix cycle will re-launch `/simplify-code` before re-review — same fallback the old `.simplified` deletion produced, now applied to the file that also carries `phase`/`git-head`/`tree-digest`. Its absence (not a stored value) is what signals "not reviewed."
 
-Do NOT delete `.simplified` for judge-only failures. Judge failures are spec/risk decisions for a human, not automatic code-fix work.
+Do NOT delete `.sdd-state` for judge-only failures. Judge failures are spec/risk decisions for a human, not automatic code-fix work — Step 6.5 instead WRITES `phase: reviewed, verdict: FAIL` durably, precisely so this case is never confused with the one this step handles.
 
 ### 6. Build Review-Feedback
 
@@ -185,7 +194,9 @@ Date: [current date]
 
 Use `JUDGMENT-DAY-HIGH` if judge verdict is `FAIL`; otherwise use `JUDGMENT-DAY`.
 
-If judge verdict is `FAIL`, return `Status: blocked`, `Verdict: BLOCKED-JUDGMENT-DAY-HIGH`, and include the findings plus `### Blocking Rationale` in `Spec-Gaps`. The human must decide whether to update the spec, accept the risk, or cancel/re-scope.
+If judge verdict is `FAIL` (Final verdict `BLOCKED-JUDGMENT-DAY-HIGH`): before returning, run `sdd state-write $ARGUMENTS --phase reviewed --verdict FAIL`. This is the state-write deferred from Step 4 — it fires even though this branch returns `Status: blocked`, so a fresh `/sdd-next` reading `.sdd-state` afterward sees `phase: reviewed, verdict: FAIL` and knows review ran and is blocked on a human decision. This combination is unambiguous: a reviewer conformance FAIL never reaches this value (Step 5 clears the sentinel for that case instead), so `reviewed` + `FAIL` here means exactly one thing — judgment-day block, never "apply an automatic code fix."
+
+Then return `Status: blocked`, `Verdict: BLOCKED-JUDGMENT-DAY-HIGH`, and include the findings plus `### Blocking Rationale` in `Spec-Gaps`. The human must decide whether to update the spec, accept the risk, or cancel/re-scope.
 
 ### 6.6. Record cross-review findings
 
@@ -232,7 +243,7 @@ After completing, output:
 - **Status**: success | blocked
 - **Verdict**: PASS | PASS WITH WARNINGS | FAIL | BLOCKED-JUDGMENT-DAY-HIGH
 - **Summary**: [1-3 sentences: reviewer verdict, judge verdict, key findings]
-- **Artifacts**: [decisions.md if updated, review report if written, .simplified if deleted]
+- **Artifacts**: [decisions.md if updated, review report if written, .sdd-state if written or deleted]
 - **mode**: minimal | judgment-day
 - **Cross-Review** _(optional, judgment-day only)_: <verdict> (advisory, model: codex) | skipped — <razón>
 - **Next**: /archive-feature $ARGUMENTS (if PASS/PASS WITH WARNINGS) or /implement-task $ARGUMENTS with Review-Feedback (if FAIL) or human decision (if BLOCKED-JUDGMENT-DAY-HIGH)

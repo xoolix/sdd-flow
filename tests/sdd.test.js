@@ -2224,6 +2224,163 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("review-feature seals the verdict; bin/sdd gains the reviewed phase (T006/AC7)", () => {
+    // Same shape as makeReadyProject() in the T005 describe block above (all
+    // tasks checked, on the feature branch, real HEAD) -- duplicated locally
+    // rather than hoisted, matching this file's existing per-describe-block
+    // convention.
+    function makeReadyProject() {
+      const project = makeTempProject();
+      fs.writeFileSync(path.join(project, ".gitignore"), "specs/**/.sdd-state\n");
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [x] First behavior\n- [x] Second behavior\n",
+      );
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project });
+      return project;
+    }
+
+    test("state-write --phase reviewed --verdict PASS makes sdd status report reviewed, with next command archive (AC7)", () => {
+      const project = makeReadyProject();
+
+      execFileSync(
+        sddBin,
+        ["state-write", "001-demo", "--phase", "reviewed", "--verdict", "PASS"],
+        { cwd: project },
+      );
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).toBe("reviewed");
+      expect(status.sentinel_fresh).toBe(true);
+      expect(status.next_command).toBe("/archive-feature 001-demo");
+    });
+
+    test("a reviewed state invalidated by an uncommitted edit falls back, same freshness rule as ready-to-review (T005 rule extends to reviewed)", () => {
+      const project = makeReadyProject();
+      execFileSync(
+        sddBin,
+        ["state-write", "001-demo", "--phase", "reviewed", "--verdict", "PASS"],
+        { cwd: project },
+      );
+
+      const fresh = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(fresh.phase).toBe("reviewed");
+
+      fs.appendFileSync(path.join(project, "specs", "001-demo", "spec.md"), "\nUncommitted edit.\n");
+
+      const stale = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(stale.phase).not.toBe("reviewed");
+      expect(stale.phase).toBe("ready-to-simplify");
+      expect(stale.sentinel_fresh).toBe(false);
+    });
+
+    test("a judgment-day block (state-write --phase reviewed --verdict FAIL) stays durably visible to a fresh sdd status", () => {
+      const project = makeReadyProject();
+
+      execFileSync(
+        sddBin,
+        ["state-write", "001-demo", "--phase", "reviewed", "--verdict", "FAIL"],
+        { cwd: project },
+      );
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      // This is the "a fresh /sdd-next after a judge block must still see
+      // what happened" requirement: bin/sdd tracks the coarse phase/verdict
+      // only -- the archive-time gate on a passing verdict is
+      // sdd-archive-feature.md's own pre-flight (T007), not this CLI.
+      expect(status.phase).toBe("reviewed");
+    });
+
+    test("a reviewer conformance FAIL clears .sdd-state instead of writing it, falling back to ready-to-simplify (025/T006 FAIL decision)", () => {
+      const project = makeReadyProject();
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+
+      // This is what review-feature/SKILL.md Step 5 does on a reviewer FAIL:
+      // clear the sentinel rather than write a "reviewed" record, so
+      // `phase: reviewed, verdict: FAIL` stays reserved for the judge-block
+      // case (previous test) and is never produced by a plain code
+      // conformance failure.
+      fs.unlinkSync(path.join(project, "specs", "001-demo", ".sdd-state"));
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).toBe("ready-to-simplify");
+      expect(status.phase).not.toBe("reviewed");
+      expect(status.sentinel_fresh).toBe(false);
+    });
+
+    test("the fix loop still routes through simplify even after Review-Feedback reopens and re-completes a task (evaluator-optimizer invariant)", () => {
+      const project = makeReadyProject();
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+      fs.unlinkSync(path.join(project, "specs", "001-demo", ".sdd-state")); // review FAILed
+
+      // implement-task reopens the flagged task bullet per Review-Feedback...
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [ ] First behavior\n- [x] Second behavior\n",
+      );
+      let status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).toBe("implementing");
+
+      // ...fixes it and re-checks it. No new .sdd-state has been written --
+      // the sentinel is still the one cleared by the FAIL above.
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [x] First behavior\n- [x] Second behavior\n",
+      );
+      status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).toBe("ready-to-simplify");
+      expect(status.next_command).toBe("/simplify-code 001-demo");
+    });
+
+    test("sdd-auto/SKILL.md has zero remaining .simplified references and documents .sdd-state + the reviewed phase (T006 prose wiring)", () => {
+      const sddAuto = fs.readFileSync(
+        path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"),
+        "utf8",
+      );
+
+      // 025/T005 was a clean break; T006 retires the 2 stale mentions this
+      // file had left pointing at a file that no longer exists. This is a
+      // wiring guard on prose, not behavioural coverage -- it never executes
+      // the skill.
+      expect(sddAuto).not.toContain(".simplified");
+      expect(sddAuto).toContain(".sdd-state");
+      expect(sddAuto).toContain("`phase: reviewed`");
+    });
+
+    test("sdd-next/SKILL.md's one remaining .simplified mention is a deliberate historical footnote, not current behavior (T006 prose wiring)", () => {
+      const sddNext = fs.readFileSync(
+        path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"),
+        "utf8",
+      );
+
+      // T006 retires 4 stale mentions. One footnote survives on purpose --
+      // "replaces `.simplified`" inside the description of its successor --
+      // to explain the migration, not to claim the old file is still read
+      // or written anywhere. Assert the count precisely so a re-introduced
+      // stale reference (a fifth mention) still fails this guard.
+      const simplifiedMentions = (sddNext.match(/\.simplified/g) || []).length;
+      expect(simplifiedMentions).toBe(1);
+      expect(sddNext).toContain("replaces `.simplified`");
+      expect(sddNext).toContain(".sdd-state");
+      expect(sddNext).toContain("`phase: reviewed`");
+    });
+  });
+
   test("build-registry ignores every core skill", () => {
     const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
     const buildRegistry = fs.readFileSync(path.join(repoRoot, ".claude/skills/build-registry/SKILL.md"), "utf8");

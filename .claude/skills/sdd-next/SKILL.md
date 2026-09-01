@@ -46,11 +46,11 @@ Check which artifacts exist in `specs/<feature-id>/`:
 | Has `plan.md`? | File exists |
 | Has `tasks.md`? | File exists |
 | All tasks checked? | Full-flow: read `tasks.md`; fast-lane: read `quick-spec.md` `## Tasks` section; count `- [ ]` vs `- [x]` |
-| Has **fresh** `.simplified` sentinel? | File exists AND `git-head:` line in the sentinel equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch) is treated as absent — it will be cleaned up by `/simplify-code`'s pre-flight. |
+| Has **fresh** `.sdd-state` sentinel with `phase: ready-to-review`? | `sdd state-write`'s receipt (025/T005-T006, replaces `.simplified`): fresh means BOTH `git-head:` equals `git rev-parse HEAD` AND `tree-digest:` equals the current working tree's digest — an uncommitted edit to a tracked file changes the digest without touching HEAD, and must still count as stale. A stale or missing sentinel is treated as absent — it will be cleaned up by `/simplify-code`'s pre-flight. This check is only about the `ready-to-review` value; `phase: reviewed` is a distinct value handled by its own row below (keyed off `sdd status`, same pattern as the `archived` row). |
 
 Apply the decision table:
 
-| Lane | Artifacts | All tasks [x]? | Fresh `.simplified`? | → Action |
+| Lane | Artifacts | All tasks [x]? | Fresh `.sdd-state` (`ready-to-review`)? | → Action |
 |---|---|:---:|:---:|---|
 | none | no `spec.md`, no `quick-spec.md` | — | — | STOP: "Run `/sdd-new` first." |
 | full | `spec.md`, missing `plan.md` or `tasks.md` | — | — | Launch `/plan-feature` |
@@ -60,9 +60,10 @@ Apply the decision table:
 | fast | `quick-spec.md` and no `plan.md` | No | — | Launch `/implement-task` |
 | fast | `quick-spec.md` and no `plan.md` | Yes | No | Launch `/simplify-code` |
 | fast | `quick-spec.md` and no `plan.md` | Yes | Yes | Launch `/review-feature` |
+| any | `sdd status <feature-id>` reports `phase: reviewed` | — | — | Launch `/archive-feature` |
 | any | `sdd status <feature-id>` reports `phase: archived` | — | — | STOP — pipeline complete |
 
-> **This row keys off `sdd status`, not file existence.** Once `/archive-feature` moves the folder, `specs/<feature-id>/` no longer exists — the file-existence checks above can't see it (F4 in `decisions.md`). Run `sdd status <feature-id>` and read its `phase` field; the CLI's own archive-folder fallback resolves the moved path under `specs/archive/`.
+> **The `reviewed` and `archived` rows key off `sdd status`, not file existence.** Whether `.sdd-state` reads as `ready-to-review` or `reviewed` depends on its own `phase:` field plus the HEAD+tree-digest freshness check above — a file-existence check alone can't tell them apart, so `sdd status <feature-id>`'s `phase` field (backed by `bin/sdd`'s `detect_feature_phase`) is the source of truth for that distinction. Once `/archive-feature` moves the folder, `specs/<feature-id>/` no longer exists — the file-existence checks above can't see it either (F4 in `decisions.md`); the CLI's own archive-folder fallback resolves the moved path under `specs/archive/`.
 
 If both `quick-spec.md` and `plan.md`/`tasks.md` exist, treat this as an invalid mixed lane and STOP with `Status: blocked`; ask the user to archive one lane or normalize the feature folder.
 
@@ -98,7 +99,7 @@ If the resolved phase ∈ KNOWN_ORCHESTRATORS AND `.claude/agents/sdd-<phase>.md
   `.claude/agents/sdd-<phase>.md` or fix your local fork. See feature 015 ADR for context.
   ```
 - Stop the pipeline (do not spawn, do not fall back to inline). Return Status: ESCALATED with this diagnostic.
-- Sentinel preservation: if `specs/<feature-id>/.simplified` exists, leave it intact.
+- Sentinel preservation: if `specs/<feature-id>/.sdd-state` exists, leave it intact.
 
 ---
 
@@ -205,7 +206,7 @@ Initialize `review_cycle = 1`.
    ```
    The sub-agent should address only the failed criteria, not re-implement everything.
 3. **Validate implement-task result**: Apply Step 4 validation to the implement-task result (artifacts exist, envelope complete, lint/tests pass). If validation fails, follow Step 4 retry logic.
-4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.simplified`, so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 3 pattern).
+4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.sdd-state` (per `review-feature`'s Step 5), so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 3 pattern).
 5. **Validate simplify-code result**: Apply Step 4 validation. If simplify-code returns `Status: blocked` (regression revert or baseline red), **STOP** the fix loop and report the blocked status — the human must resolve the regression before the loop can continue.
 6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 3 pattern) to re-review the updated implementation.
 7. **Validate review result**: Apply Step 4 validation to the review result.

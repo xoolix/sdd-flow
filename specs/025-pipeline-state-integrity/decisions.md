@@ -179,3 +179,58 @@ own, which trips T001's hard-fail before AC4 is ever reached.
   (T007)` (from an earlier feature) pinned the old `.simplified`-writing prose; updated in place to
   match the new `sdd state-write` call and both `.gitignore` lines — not a new test, since the behavior
   it pins legitimately changed under this task.
+
+[2026-09-01] CROSS-CHECK, séptimo defecto (encontrado antes de lanzar T006): **ninguna tarea tocaba
+`sdd-next/SKILL.md` ni `sdd-auto/SKILL.md`**, pese a que `plan.md` sí lista la fila `reviewed` de la
+tabla de fases. Peor: esos dos archivos tienen **seis referencias vivas a `.simplified`** (cuatro y
+dos) que, tras el corte limpio de T005, apuntan a un archivo que ya no existe — prosa que afirma un
+comportamiento falso, en los dos archivos que gobiernan el pipeline. Se agregan al alcance de T006.
+Es la misma clase de defecto que la feature persigue, encontrado dentro de la feature misma.
+
+## Delta: 2026-09-01 — Task T006
+
+- **ADDED**: AC7 only specifies the PASS case. T006 had to decide what `review-feature` does to
+  `.sdd-state` on a reviewer conformance **FAIL** and on a judge block
+  (`BLOCKED-JUDGMENT-DAY-HIGH`) — neither is in `spec.md` or `plan.md` at this level of detail.
+  **Decision, asymmetric on purpose**:
+  - **Reviewer FAIL** → Step 5 **clears** `.sdd-state` (same mechanism the old `.simplified`
+    deletion used, just renamed) instead of writing `phase: reviewed, verdict: FAIL`. Chosen over
+    "write FAIL and make `bin/sdd`'s next-command mapping verdict-aware" because `bin/sdd` only has
+    four `--verdict` values (`PASS|PASS-WITH-WARNINGS|FAIL|none`, fixed by T005) and no way to tell
+    a code-conformance FAIL apart from a judge-block FAIL if both wrote the same
+    `phase: reviewed, verdict: FAIL` record. Clearing keeps `detect_feature_phase`'s `reviewed` case
+    a plain, unconditional "next: archive" (as literally asked), and reproduces exactly what
+    `.simplified`-deletion already did for the fix loop — no new bin/sdd complexity, no risk to
+    T005's validated enum.
+  - **Judge block** (reviewer PASS/PASS-WITH-WARNINGS + judge FAIL) → Step 6.5 **writes**
+    `phase: reviewed, verdict: FAIL`, right before the `Status: blocked` return, so a fresh
+    `/sdd-next` can see the block happened instead of re-running `/review-feature` blind. This was
+    the actual ask ("a fresh `/sdd-next` after a judge block must still see what happened") and it
+    is *only* satisfiable by writing something, never by clearing.
+  - **Net effect — the distinction the old rule already drew ("do NOT delete `.simplified` for
+    judge-only failures") is preserved, inverted**: because reviewer-FAIL now clears instead of
+    writing, the combination `phase: reviewed, verdict: FAIL` can **only** ever be produced by a
+    judge block. A fresh `/sdd-next` reading it never has to guess which case produced it — a
+    downstream consumer (e.g. T007's archive pre-flight) can treat `reviewed`+non-passing-verdict as
+    "blocked", and nothing here routes it into the automatic code-fix loop, which is exactly the
+    "judge failures are a human decision, not automatic code-fix work" invariant the old rule was
+    protecting.
+  - Rejected: extending `cmd_state_write`'s `--verdict` enum with a fifth value (e.g.
+    `BLOCKED-JUDGMENT-DAY-HIGH`) to make the two FAIL cases distinguishable inside `.sdd-state`
+    itself. Deferred as unnecessary complexity — the clear-vs-write split above already makes them
+    distinguishable using only the four values `plan.md` specifies, and `bin/sdd`'s own job stays
+    "dumb": record phase/verdict, do not encode which orchestration branch to take next.
+- **MODIFIED**: `detect_feature_phase`'s next-command mapping for `phase: reviewed` is
+  **unconditional** — `/archive-feature <id>`, regardless of `verdict`. It does not special-case a
+  `FAIL` verdict into a different suggestion. This is deliberate, not an oversight: `plan.md` and
+  the task bullet both say "next command archive" with no verdict qualifier, and the real gate on a
+  passing verdict is T007's own pre-flight in `sdd-archive-feature.md` (out of T006's scope,
+  `blocked_by: T006`) — `bin/sdd status` is a hint, the phase skill's pre-flight is the enforcement,
+  same layering already used for task-completion gates elsewhere in this pipeline.
+- Tests: five of the seven new tests in `tests/sdd.test.js`'s "review-feature seals the verdict;
+  bin/sdd gains the reviewed phase (T006/AC7)" block fail against pre-T006 `bin/sdd` and the
+  pre-T006 skill `.md` files (proved by reverting those four files, re-running, then restoring —
+  patch round-tripped clean); the other two (the FAIL-clears-state test and the fix-loop-still-
+  routes-through-simplify test) pin behavior that was already true under T005's sentinel-absence
+  fallback and pass on both sides — they document the design decision above rather than a new
+  code path, since `review-feature/SKILL.md` is prose no CLI test can execute directly.

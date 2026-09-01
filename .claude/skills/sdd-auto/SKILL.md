@@ -45,7 +45,8 @@ Initialize a **per-task retry tracker**: a map of `task-id → retry_count`, sta
 
 Repeat until pipeline is complete, blocked, or escalated:
 
-1. **Detect phase** — same logic as `/sdd-next` Step 2, including both full-flow (`spec.md` + `plan.md` + `tasks.md`) and fast-lane (`quick-spec.md`) features, plus the post-archive row keyed off `sdd status <feature-id>`'s `phase` field rather than file existence — post-archive, the feature-id no longer resolves under `specs/<feature-id>/` (F4 in `decisions.md`).
+1. **Detect phase** — same logic as `/sdd-next` Step 2, including both full-flow (`spec.md` + `plan.md` + `tasks.md`) and fast-lane (`quick-spec.md`) features, plus the `reviewed` row and the post-archive row, both keyed off `sdd status <feature-id>`'s `phase` field rather than file existence — `reviewed` because the file-existence checks alone can't tell `.sdd-state`'s `ready-to-review` and `reviewed` values apart, `archived` because post-archive the feature-id no longer resolves under `specs/<feature-id>/` (F4 in `decisions.md`).
+   - **`phase: reviewed`** → launch `/archive-feature`.
    - **`phase: archived`** → pipeline complete. Exit the loop and go to Step 3.
 2. **Launch phase** — known-orchestrator guard, then filesystem-side branch detection.
 
@@ -67,7 +68,7 @@ Repeat until pipeline is complete, blocked, or escalated:
      `.claude/agents/sdd-<phase>.md` or fix your local fork. See feature 015 ADR for context.
      ```
    - Stop the pipeline (do not spawn, do not fall back to inline). Return Status: ESCALATED with this diagnostic.
-   - Sentinel preservation: if `specs/<feature-id>/.simplified` exists, leave it intact.
+   - Sentinel preservation: if `specs/<feature-id>/.sdd-state` exists, leave it intact.
 
    ---
 
@@ -158,7 +159,7 @@ Initialize `review_cycle = 1`.
    ```
    The sub-agent should address only the failed criteria, not re-implement everything.
 3. **Validate implement-task result**: Apply Step 2 item 3 validation (artifacts exist, envelope complete, lint/tests pass). If validation fails, follow item 5 retry logic.
-4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.simplified`, so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 2 item 2 pattern).
+4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.sdd-state` (per `review-feature`'s Step 5), so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 2 item 2 pattern).
 5. **Validate simplify-code result**: Apply Step 2 item 3 validation. If simplify-code returns `Status: blocked` (regression revert or baseline red), **STOP** the fix loop and report the blocked status — the human must resolve the regression before the loop can continue.
 6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 2 item 2 pattern) to re-review the updated implementation. If `has_minimal_flag = true`, pass `Feature-id: <feature-id> --minimal` (same review mode as the original review).
 7. **Validate review result**: Apply Step 2 item 3 validation to the review result.

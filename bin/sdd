@@ -1399,6 +1399,7 @@ detect_feature_phase() {
     # tree changed".
     local sentinel_fresh=false
     local sentinel_file="$feature_dir/.sdd-state"
+    local state_phase=""
     if [ -f "$sentinel_file" ]; then
       local current_head state_head state_digest
       current_head="$(git rev-parse HEAD 2>/dev/null || true)"
@@ -1409,6 +1410,14 @@ detect_feature_phase() {
         current_digest="$(tree_digest)"
         if [ -n "$current_digest" ] && [ "$current_digest" = "$state_digest" ]; then
           sentinel_fresh=true
+          # T006: .sdd-state's own `phase:` field disambiguates WHICH fresh
+          # phase this is -- /simplify-code writes ready-to-review,
+          # /review-feature writes reviewed (on PASS/PASS-WITH-WARNINGS, or
+          # on a judge block -- see review-feature/SKILL.md Step 4/6.5). A
+          # reviewer conformance FAIL clears the sentinel entirely instead of
+          # writing "reviewed" here (review-feature Step 5), so this branch
+          # never has to tell that case apart from a plain stale sentinel.
+          state_phase="$(grep -m1 '^phase: ' "$sentinel_file" 2>/dev/null | sed 's/^phase: //')"
         fi
       fi
     fi
@@ -1422,7 +1431,12 @@ detect_feature_phase() {
     elif [ "$tasks_remaining" -gt 0 ]; then
       phase="implementing"
     elif $sentinel_fresh; then
-      phase="ready-to-review"
+      # Any value other than the literal "reviewed" (missing, corrupt,
+      # unrecognised) falls back to ready-to-review rather than trusting it.
+      case "$state_phase" in
+        reviewed) phase="reviewed" ;;
+        *)        phase="ready-to-review" ;;
+      esac
     else
       phase="ready-to-simplify"
     fi
@@ -1442,6 +1456,7 @@ detect_feature_phase() {
     implementing)      next_command="/implement-task ${feature_id}" ;;
     ready-to-simplify) next_command="/simplify-code ${feature_id}" ;;
     ready-to-review)   next_command="/review-feature ${feature_id}" ;;
+    reviewed)          next_command="/archive-feature ${feature_id}" ;;
     archived)          next_command="(none — feature archived)" ;;
     *)                 next_command="(unknown)" ;;
   esac
