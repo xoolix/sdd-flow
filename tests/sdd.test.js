@@ -1628,6 +1628,106 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  // T002 (025-pipeline-state-integrity): resolve_feature_dir used to do a
+  // bare `[ -d "$specs_dir/$feature_id" ]` with no validation. With
+  // feature_id="..", "$specs_dir/.." resolves to the repo root, so every one
+  // of its three callers (cmd_base_branch, cmd_commit_slice, cmd_status)
+  // would treat the whole repo as if it were a feature directory.
+  // validate_feature_id(), called once inside resolve_feature_dir, closes
+  // that hole for all three at once; commit-slice additionally validates up
+  // front so it can report its own precise exit code (2) instead of falling
+  // into the generic "3: feature not found" path.
+  describe("resolve_feature_dir rejects '..' / '/' in feature-id (T002)", () => {
+    test("commit-slice: rejects '..' before touching the index -- exit 2, no commit, unrelated dirty files stay dirty", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      // Same shape as the live repro that found this bug: with the old
+      // unvalidated resolve_feature_dir, "specs/.." resolves to the repo
+      // root and the unconditional `git add -- "$feature_dir"` sweeps both
+      // of these unrelated files into the commit alongside the declared one.
+      fs.writeFileSync(path.join(project, "objetivo.txt"), "declared\n");
+      fs.writeFileSync(path.join(project, "basura1.txt"), "must stay untouched\n");
+
+      const error = sddFail(
+        ["commit-slice", "..", "--type", "chore", "--title", "probe", "--files", "objetivo.txt"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("invalid feature-id");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+
+      const status = execFileSync("git", ["status", "--porcelain"], { cwd: project, encoding: "utf8" });
+      expect(status).toContain("objetivo.txt");
+      expect(status).toContain("basura1.txt");
+    });
+
+    test("commit-slice: rejects a feature-id containing '/'", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      fs.writeFileSync(path.join(project, "app.js"), "console.log('hi');\n");
+
+      const error = sddFail(
+        ["commit-slice", "sub/dir", "--type", "chore", "--title", "probe", "--files", "app.js"],
+        { cwd: project },
+      );
+
+      expect(error.status).toBe(2);
+      expect(error.stderr).toContain("invalid feature-id");
+
+      const after = execFileSync("git", ["rev-parse", "HEAD"], { cwd: project, encoding: "utf8" }).trim();
+      expect(after).toBe(before);
+    });
+
+    test("base-branch: rejects '..' instead of resolving it to the repo root and reading a spoofed .parent-branch there", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+      // With the old unvalidated resolve_feature_dir, "specs/.." resolves to
+      // the repo root, and cmd_base_branch's Layer 1 reads THIS file as if
+      // it were the feature's own sidecar (verified against the pre-fix
+      // binary: it returned "wrong-branch-must-be-ignored" here).
+      execFileSync("git", ["branch", "wrong-branch-must-be-ignored"], { cwd: project });
+      fs.writeFileSync(path.join(project, ".parent-branch"), "wrong-branch-must-be-ignored\n");
+      fs.mkdirSync(path.join(project, ".claude", "rules"), { recursive: true });
+      fs.writeFileSync(path.join(project, ".claude", "rules", "git.md"), "base-branch: main\n");
+
+      const output = execFileSync(sddBin, ["base-branch", ".."], { cwd: project, encoding: "utf8" });
+
+      expect(output.trim()).toBe("main");
+    });
+
+    test("status: rejects '..' instead of reporting a bogus exit-0 'missing' status for the repo root", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const error = sddFail(["status", ".."], { cwd: project });
+
+      expect(error.status).not.toBe(0);
+      expect(error.stderr).toContain("feature not found");
+    });
+
+    test("a normal, valid feature-id still resolves, including an archived one with the YYYY-MM-DD- prefix", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      fs.rmSync(path.join(project, "specs", "001-demo"), { recursive: true, force: true });
+      const archiveDir = path.join(project, "specs", "archive", "2026-08-01-001-demo");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n");
+      fs.writeFileSync(path.join(archiveDir, "decisions.md"), "# Decisions\n");
+      execFileSync("git", ["add", "-A"], { cwd: project });
+      execFileSync("git", ["commit", "-q", "-m", "move to archive"], { cwd: project });
+
+      const output = execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" });
+
+      expect(JSON.parse(output).feature_id).toBe("001-demo");
+    });
+  });
+
   // The AC6 regression test proving a stray leftover PR-creation sentinel file
   // doesn't change an archived feature's status moved to
   // tests/retired-symbol-proofs.test.js — it must name that sentinel's literal

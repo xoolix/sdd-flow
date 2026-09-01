@@ -792,16 +792,41 @@ cmd_branch() {
 
 # ─── commit-slice ──────────────────────────────────────────────────
 
+# Reject a feature-id that could make "$specs_dir/$feature_id" resolve
+# outside specs/ (".." -- "specs/.." is the repo root -- or a "/" anywhere,
+# which nests or escapes the same way), or that would be misread as a flag
+# by anything it gets forwarded to (a leading "-"), or that is simply empty.
+# Prints nothing and returns 0 when the id is safe to interpolate, 1
+# otherwise -- callers decide their own error text and exit code.
+validate_feature_id() {
+  local feature_id="$1"
+
+  [ -n "$feature_id" ] || return 1
+
+  case "$feature_id" in
+    *..*|*/*|-*)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
 # Resolve a feature's directory: specs/<feature-id> if present, else the
 # archived specs/archive/*-<feature-id> match. Prints the resolved absolute
-# path on stdout and returns 0 on success; returns 1 with no output otherwise.
-# Shared by cmd_status and cmd_commit_slice (F2) so both stay in sync.
+# path on stdout and returns 0 on success; returns 1 with no output otherwise
+# (including a malformed id -- see validate_feature_id, checked first).
+# Shared by cmd_base_branch, cmd_commit_slice, and cmd_status (F2) so all
+# three stay in sync -- validating here, once, is what covers cmd_base_branch
+# and cmd_status, neither of which has a validation step of its own.
 # Must be called as an `if`/`while` condition (the guarded idiom used by all
-# four call sites), never a bare assignment -- under `set -euo pipefail` a
+# three call sites), never a bare assignment -- under `set -euo pipefail` a
 # bare `feature_dir="$(resolve_feature_dir ...)"` on a miss aborts the script
 # silently, with no error text naming what failed.
 resolve_feature_dir() {
   local feature_id="$1" specs_dir="$2"
+
+  validate_feature_id "$feature_id" || return 1
 
   if [ -d "$specs_dir/$feature_id" ]; then
     printf '%s\n' "$specs_dir/$feature_id"
@@ -826,6 +851,18 @@ cmd_commit_slice() {
 
   if [ -z "$feature_id" ]; then
     printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  # AC2: reject a malformed feature-id (path traversal via ".." or "/", or a
+  # leading "-") before a single 'git' command runs, let alone touches the
+  # index. resolve_feature_dir below also calls validate_feature_id -- that
+  # copy is what protects cmd_base_branch and cmd_status, which have no
+  # check of their own -- but commit-slice, the write path, needs its own
+  # precise exit code (2) rather than the generic "3: feature not found"
+  # this same rejection would otherwise fall into further down.
+  if ! validate_feature_id "$feature_id"; then
+    printf 'error: invalid feature-id: "%s" (must not be empty, contain "..", contain "/", or start with "-")\n' "$feature_id" >&2
     return 2
   fi
 

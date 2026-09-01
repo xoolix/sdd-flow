@@ -16,7 +16,7 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
 ### 1. Foundation — commit-slice & branch integrity
 - [x] **T001 [AFK] commit-slice rejects undeclared new files**: run the undeclared-file check before commit, unfiltered against `pre_staged`; exit ≠0 naming the file, no commit.
   - blocked_by: none; verifies: AC1; touches: bin/sdd, tests
-- [ ] **T002 [AFK] Reject `..`/`/` in feature-id**: validate before the index is touched; fix the docstring's stale call-site count.
+- [x] **T002 [AFK] Reject `..`/`/` in feature-id**: validate before the index is touched; fix the docstring's stale call-site count.
   - blocked_by: T001; verifies: AC2; touches: bin/sdd, tests
 - [ ] **T003 [AFK] `sdd branch` records the parent and warns on stacking**: two separate behaviours — (a) resolve the base and always write `specs/<id>/.parent-branch` (`mkdir -p`; gitignored, so it raises no `??`), and (b) warn on stderr when branching off another `feature/*`. Writing the sidecar does not by itself prevent stacking.
   - blocked_by: T002; verifies: AC3; touches: bin/sdd, tests
