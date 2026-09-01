@@ -83,8 +83,10 @@ whether or not any agent obeys it.
   at both ends and a grey middle.
 
 **Operational**:
-- The knobs that exist today (`auto-commit`, `tdd`) stay exactly as they are. This changes no
-  existing behaviour; it sets the rule for the vocabulary read and for whatever comes next.
+- The knob that existed at the time (`tdd`) stays exactly as it is. This changes no existing
+  behaviour; it sets the rule for the vocabulary read and for whatever comes next. (`auto-commit`,
+  the other knob named here originally, was deleted entirely in 025 — see that feature's
+  `decisions.md` — not "kept as is".)
 
 ## References
 - Spec: `specs/022-pipeline-integrity-fixes/spec.md`

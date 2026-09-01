@@ -93,8 +93,6 @@ Re-run **Lint**, **Type check**, and **Tests** as parallel Bash calls.
 
 ### 5.5. Commit the slice
 
-Determine `AUTO_COMMIT` once here: grep `.claude/rules/git.md` for a line matching `^auto-commit:\s*off`. Found ⇒ `AUTO_COMMIT` is **off**: skip this step entirely and report `Commit: none`, then proceed to step 6. Absent ⇒ `AUTO_COMMIT` is **on** (the default) — proceed below. This mirrors the knob resolution `/implement-task` uses for its own Step 7.5.
-
 If `SCOPED_FILES` was empty (step 3.5 above), there is nothing to commit — that path already skips this step and reports `Commit: none`.
 
 Otherwise, call:
@@ -138,7 +136,7 @@ Save **only if** a non-obvious simplification pattern surfaced (e.g., a recurrin
 - **Validations-Output**: [short summary on success; last 100 lines of terminal output on failure]
 - **Files-Simplified**: [list or `none` for empty diff]
 - **Revert-Applied**: [true/false]
-- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `AUTO_COMMIT` is off, `SCOPED_FILES` was empty, or the run blocked before step 5.5]
+- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `SCOPED_FILES` was empty or the run blocked before step 5.5]
 - **Next**: /review-feature $ARGUMENTS
 - **Risks**: [anything the reviewer should double-check, or "None"]
 ```

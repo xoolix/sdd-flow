@@ -260,7 +260,7 @@ describe("sweep: the two-file exclusion hatch is pinned (re-review cycle 3, medi
     // exactly these five named proofs of removal, nothing else.
     const expectedTitles = [
       "open-pr no longer exists: unknown command in dispatch, and usage() does not list it (024 AC1)",
-      "git.md rewrites the never-commit policy to commit-per-slice + auto-commit knob (T013)",
+      "git.md rewrites the never-commit policy to commit-per-slice (T013)",
       "sdd-next and sdd-auto drop the ready-to-pr gate and its never-ask exception (024 AC4)",
       "CLAUDE.md master docs retire the PR gate — human-input list, pipeline diagram, detection table, workflow diagram, archive format, commands (024 AC4)",
       "reports archived for an archived feature whether or not a stray .pr-opened sentinel exists",

@@ -71,7 +71,7 @@ test("open-pr no longer exists: unknown command in dispatch, and usage() does no
   expect(help).not.toContain("open-pr");
 });
 
-test("git.md rewrites the never-commit policy to commit-per-slice + auto-commit knob (T013)", () => {
+test("git.md rewrites the never-commit policy to commit-per-slice (T013)", () => {
   const gitMd = fs.readFileSync(path.join(repoRoot, ".claude/rules/git.md"), "utf8");
 
   // Old opt-out-only policy must be gone — this proves a rewrite, not an append.
@@ -88,10 +88,6 @@ test("git.md rewrites the never-commit policy to commit-per-slice + auto-commit 
   expect(gitMd).toContain("sdd commit-slice");
   expect(gitMd).toContain("Nothing is pushed during development");
   expect(gitMd).not.toContain("sdd open-pr");
-
-  // Auto-commit knob, mirroring testing.md's tdd: knob shape.
-  expect(gitMd).toContain("auto-commit: on|off");
-  expect(gitMd).toContain("auto-commit: off");
 
   // Commit style now documents the conventional-commit format sdd commit-slice produces.
   expect(gitMd).toContain("<type>(<feature-id>): [Tnnn ]<title>");

@@ -30,7 +30,7 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
   - blocked_by: T005; verifies: AC7; touches: review-feature/SKILL.md, sdd-next/SKILL.md, sdd-auto/SKILL.md, bin/sdd, tests
 - [x] **T007 [AFK] archive verifies the receipt**: pre-flight requires `phase: reviewed` + a passing verdict, blocks otherwise; deletes `.sdd-state` on success.
   - blocked_by: T006; verifies: AC11; touches: sdd-archive-feature.md, tests
-- [ ] **T008 [AFK] Delete the `auto-commit` knob entirely**: strip all 13 references (behavior, `tdd:` illustrations, envelope prose, both `git.md` sections) in one commit; retitle the cross-pinned test (`retired-symbol-proofs`/`sweep-retired-symbols`); invert `sdd.test.js`'s knob assertions; fix the false `docs/adr/0003` line.
+- [x] **T008 [AFK] Delete the `auto-commit` knob entirely**: strip all 13 references (behavior, `tdd:` illustrations, envelope prose, both `git.md` sections) in one commit; retitle the cross-pinned test (`retired-symbol-proofs`/`sweep-retired-symbols`); invert `sdd.test.js`'s knob assertions; fix the false `docs/adr/0003` line.
   - blocked_by: T004; verifies: AC5; touches: .claude, .specify, docs/adr/0003, tests
 - [ ] **T009 [AFK] Discovery gate blocks on empty user decisions**: `plan-feature/SKILL.md` blocks when `## User decisions` is empty (weak form — findings carry no IDs).
   - blocked_by: T004; verifies: AC8; touches: plan-feature/SKILL.md, tests

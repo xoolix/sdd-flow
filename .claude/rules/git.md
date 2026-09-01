@@ -8,17 +8,6 @@
 - **Nothing is pushed during development.** The branch stays local; pushing and opening a PR are manual, human-run steps.
 - All git writes go through `bin/sdd` — agents never call `git commit` or `git push` directly. See `docs/adr/0002-sdd-git-write-boundary.md`.
 
-## Auto-commit
-
-`auto-commit: on|off` — default is **on**. Phases commit their own work automatically per the rules above; no declaration needed.
-
-Use the knob below only to **force** the stance explicitly:
-
-- `auto-commit: off` — disable automatic commits. Phases still validate and mark tasks complete, but leave the resulting changes unstaged for manual review — the pre-020 behavior.
-
-<!-- auto-commit: off -->
-<!-- Uncomment the line above to disable automatic commits. Absent line = auto-commit on (default). -->
-
 ## Branch naming
 <!-- e.g. feature/NNN-description, fix/NNN-description -->
 

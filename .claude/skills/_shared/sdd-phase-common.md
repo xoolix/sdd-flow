@@ -62,14 +62,14 @@ Every phase MUST return this envelope at the end:
 - **Risks**: [risks discovered, or "None"]
 - **Validations-Output** _(optional)_: [concrete test/lint/typecheck output from the phase]
 - **Review-Feedback** _(optional)_: [structured list of failed criteria and fix instructions from review]
-- **Commit** _(optional)_: [commit SHA when this phase committed, or `none` when `auto-commit: off` or the phase does not commit]
+- **Commit** _(optional)_: [commit SHA when this phase committed, or `none` when the phase does not commit]
 ```
 
 Rules:
 - Always include the five core fields (Status, Summary, Artifacts, Next, Risks).
 - `Validations-Output` is optional. Include it when the phase runs tests, lint, or typecheck. Paste the concrete command output so downstream phases and the orchestrator can act on it. Primarily used by `/implement-task`.
 - `Review-Feedback` is optional. Include it when a review phase produces a FAIL or PASS WITH WARNINGS verdict. It must be a structured list of failed criteria with actionable fix instructions. Primarily used by `/review-feature` to feed the evaluator-optimizer loop.
-- `Commit` is optional. It holds the commit SHA when the phase calls `sdd commit-slice` (the committing phases are `/implement-task`, `/simplify-code`, and `/archive-feature`); it is `none` when `auto-commit: off` or the phase does not commit. A commit failure is reported via `Status: blocked`, never through this field.
+- `Commit` is optional. It holds the commit SHA when the phase calls `sdd commit-slice` (the committing phases are `/implement-task`, `/simplify-code`, and `/archive-feature`); it is `none` when the phase does not commit. A commit failure is reported via `Status: blocked`, never through this field.
 - Envelopes without the optional fields remain valid — existing phases are not required to emit them.
 - `Next` should name the specific skill (e.g., `/implement-task 001-feature-name`).
 - If blocked, explain what's needed before the phase can continue.

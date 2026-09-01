@@ -97,7 +97,7 @@ For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the 
    ```
 
 5. **Delegate design and tasks in parallel** — Launch **both sub-agents simultaneously in a single message** with two `Agent` tool calls:
-   - **Domain vocabulary.** Already resolved in Step 2.5 — pass that vocabulary (or its spec-derived fallback) to `sdd-designer` unchanged; do not re-resolve it here. Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `auto-commit` knob in `git.md`) directly.
+   - **Domain vocabulary.** Already resolved in Step 2.5 — pass that vocabulary (or its spec-derived fallback) to `sdd-designer` unchanged; do not re-resolve it here. Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `tdd` knob in `testing.md`) directly.
    - **`sdd-designer`**: Receives the spec + exploration findings (+ `discovery.md` content if resuming). Creates `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base. Fills in:
      - Domain analysis summary (from step 3)
      - Current state of relevant code

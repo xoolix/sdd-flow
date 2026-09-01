@@ -70,10 +70,6 @@ When `TDD_MODE` is ON, execute each task with testable behavior using the RED �
 
 `TDD_MODE` OFF (greenfield repo with no tests and no framework yet): still write a test-first for any testable behavior when a framework can be added trivially; otherwise follow the standard flow and record why in `decisions.md`.
 
-## Auto-commit knob
-
-Determine `AUTO_COMMIT` once, before Step 7.5. Grep `.claude/rules/git.md` for a line matching `^auto-commit:\s*off`. Found ⇒ `AUTO_COMMIT` is **off**: skip Step 7.5 entirely and report `Commit: none`. Absent ⇒ `AUTO_COMMIT` is **on** (the default): Step 7.5 runs. This mirrors the `tdd:` knob in `testing.md` — the agent reads the rules file directly; the CLI never reads it.
-
 ## TDD quality bar
 
 When a task has testable behavior, apply these rules whether or not the repo is strict-TDD:
@@ -174,7 +170,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
    ```
    Only include sections (ADDED/MODIFIED/REMOVED) that apply. Skip this step if all tasks matched the spec exactly.
 
-7.5. **Commit the slice** — runs after Step 6 (checkbox flip), Step 6b (`implemented-by` marker), and Step 7 (deltas), so the commit captures all three. Skip entirely if `AUTO_COMMIT` is off: set `Commit: none` and go straight to Step 8.
+7.5. **Commit the slice** — runs after Step 6 (checkbox flip), Step 6b (`implemented-by` marker), and Step 7 (deltas), so the commit captures all three.
    - Resolve `type` for the selected task (captured in Step 3): the task's `type:` value, else `fix` for a Step 2b auto-generated review-fix task, else `chore`.
    - Call:
      ```
@@ -201,7 +197,7 @@ After completing the selected slice, output this summary:
 - **Validations-Output**: [paste the concrete terminal output from the final validation run]
 - **Task attempted**: [Task ID + exact task bullet selected for this invocation]
 - **Task completed**: [Task ID + exact task bullet, or "None (blocked before completion)"]
-- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `AUTO_COMMIT` is off or the task was blocked before Step 7.5]
+- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when the task was blocked before Step 7.5]
 - **Tasks remaining**: [N unchecked / total, plus locked/HITL count if relevant]
 - **Next**: [next phase or "/review-feature $ARGUMENTS" if all complete]
 - **Risks**: [blockers, questions, or spec divergences — or "None"]

@@ -328,7 +328,6 @@ describe("sdd CLI smoke tests", () => {
     // Rules bullet explaining when it's a SHA vs "none", and that failures
     // are reported via Status: blocked rather than through this field.
     expect(phaseCommon).toContain("`Commit` is optional");
-    expect(phaseCommon).toContain("auto-commit: off");
     expect(phaseCommon).toContain("never through this field");
 
     // Task template: `type:` key on the AFK task blocks, after `touches:`.
@@ -342,18 +341,16 @@ describe("sdd CLI smoke tests", () => {
     expect(taskPlanner).toContain("`type` must be one of `feat`, `fix`, `refactor`, `chore`, `docs`");
   });
 
-  test("implement-task wires sdd branch, the auto-commit knob, and a Step 7.5 commit-with-revert (T006)", () => {
+  test("implement-task wires sdd branch and a Step 7.5 commit-with-revert (T006)", () => {
     const implementTask = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-implement-task.md"), "utf8");
 
     // Pre-flight: branch creation goes through the CLI, never a raw git checkout.
     expect(implementTask).toContain("sdd branch $ARGUMENTS");
     expect(implementTask).toContain("ADR 0002");
 
-    // Auto-commit knob: same grep-the-rules-file shape as the tdd: knob, absent ⇒ on.
-    expect(implementTask).toContain("auto-commit:\\s*off");
     expect(implementTask).toContain("Commit: none");
 
-    // Step 7.5: the commit-slice call, gated on the knob, after checkbox+marker+delta.
+    // Step 7.5: the commit-slice call, after checkbox+marker+delta.
     expect(implementTask).toContain("7.5. **Commit the slice**");
     expect(implementTask).toContain("sdd commit-slice $ARGUMENTS");
 
@@ -423,8 +420,6 @@ describe("sdd CLI smoke tests", () => {
     expect(simplifyCode).toContain("sdd commit-slice $ARGUMENTS --type refactor --files <SCOPED_FILES...>");
     expect(simplifyCode).toContain("No `--task` flag — a simplify pass has no task ID.");
 
-    // Auto-commit knob, same grep-the-rules-file shape as implement-task's Step 7.5.
-    expect(simplifyCode).toContain("auto-commit:\\s*off");
     expect(simplifyCode).toContain("Commit: none");
 
     // Ordering is explicitly documented as load-bearing: commit first, sentinel second,
@@ -481,10 +476,6 @@ describe("sdd CLI smoke tests", () => {
     expect(archiveFeature).toContain("### 3.5. Commit the slice");
     expect(archiveFeature).toContain("sdd commit-slice $ARGUMENTS --type chore");
     expect(archiveFeature).toContain("no `--task` flag (an archive pass has no task ID)");
-
-    // Auto-commit knob, same grep-the-rules-file shape as implement-task/simplify-code.
-    expect(archiveFeature).toContain("auto-commit:\\s*off");
-    expect(archiveFeature).toContain("Commit: none");
 
     // Derived-directory reasoning (F2): the folder already moved before this runs.
     expect(archiveFeature).toContain("sdd commit-slice derives the feature directory");
@@ -2678,6 +2669,55 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("the commit-policy knob is deleted entirely (025/T008/AC5)", () => {
+    // AC5 is a literal, repo-wide grep (see spec.md): 0 hits across bin/,
+    // .claude/, .specify/, tests/. Five of the thirteen sites this task
+    // touched (the ADR-0003 illustration mentions in sdd-designer.md,
+    // sdd-research-spike.md, plan-feature/SKILL.md, new-feature/SKILL.md,
+    // and .claude/rules/domains.md) had no other test coverage at all --
+    // forgetting one of them would leave every other test in this file green
+    // while AC5 still failed. This single repo-wide grep is what actually
+    // protects all thirteen sites, not per-site assertions.
+    //
+    // The needle is assembled at runtime, never written as a literal
+    // "auto" + "-" + "commit" string, so this test cannot trip its own grep.
+    const KNOB_NEEDLE = ["auto", "commit"].join("-");
+
+    test("grep -rn '<knob>' across bin/, .claude/, .specify/, tests/ returns nothing", () => {
+      let stdout = "";
+      let status = 0;
+      try {
+        stdout = execFileSync(
+          "grep",
+          ["-rn", KNOB_NEEDLE, "bin/", ".claude/", ".specify/", "tests/"],
+          { cwd: repoRoot, encoding: "utf8" },
+        );
+      } catch (error) {
+        // grep exits 1 for "no matches" -- the passing case here. Capture
+        // stdout/status either way so a real match (exit 0, non-empty
+        // stdout) fails loudly instead of being swallowed by the catch.
+        stdout = error.stdout || "";
+        status = error.status;
+      }
+
+      expect(stdout).toBe("");
+      expect(status).toBe(1);
+    });
+
+    test("the tdd knob replaces the deleted knob as ADR-0003's illustration (docs/adr/0003)", () => {
+      const adr0003 = fs.readFileSync(
+        path.join(repoRoot, "docs/adr/0003-cli-resolves-content-agents-read-knobs.md"),
+        "utf8",
+      );
+
+      // The Operational bullet used to claim both knobs "stay exactly as
+      // they are" -- now false for the deleted one. One-line correction,
+      // no new ADR (per decisions.md).
+      expect(adr0003).toContain("was deleted entirely in 025");
+      expect(adr0003).not.toContain("stay exactly as they are");
+    });
+  });
+
   test("build-registry ignores every core skill", () => {
     const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
     const buildRegistry = fs.readFileSync(path.join(repoRoot, ".claude/skills/build-registry/SKILL.md"), "utf8");
@@ -3090,7 +3130,7 @@ describe("sdd CLI smoke tests", () => {
     // override row (filled by T008 / feature 020). cmd_init used to copy those files
     // verbatim into every new project. This is the real shipped code path — no
     // reimplementation of the copy loop — so a genuine RED here means the bug is real.
-    test("a fresh `sdd init` does not leak this repo's domain vocabulary or model overrides, but still ships the auto-commit policy knob", () => {
+    test("a fresh `sdd init` does not leak this repo's domain vocabulary or model overrides, and drops the retired commit-policy knob", () => {
       const project = makeTempProject();
 
       execFileSync(sddBin, ["init"], { cwd: project, encoding: "utf8" });
@@ -3124,10 +3164,14 @@ describe("sdd CLI smoke tests", () => {
       expect(modelOverrides).not.toContain("haiku");
       expect(modelOverrides).not.toContain("| Review agent |");
 
-      // Framework policy (the auto-commit knob, feature 020) still ships — this
-      // file was never repo-specific, so it propagates unchanged.
-      expect(gitMd).toContain("auto-commit: on|off");
-      expect(gitMd).toContain("## Auto-commit");
+      // 025/T008: the commit-policy knob (feature 020) was deleted from the seed
+      // template too, so a fresh project's git.md no longer ships it either.
+      // Needle assembled at runtime so this proof-of-removal doesn't trip its
+      // own AC5 grep (bin/, .claude/, .specify/, tests/ must all read 0 hits
+      // for the literal knob name).
+      const knobNeedle = ["auto", "commit"].join("-");
+      expect(gitMd).not.toContain(`${knobNeedle}: on|off`);
+      expect(gitMd).not.toContain("## Auto-commit");
     });
   });
 

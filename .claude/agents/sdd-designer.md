@@ -23,7 +23,7 @@ Feature-id: `$ARGUMENTS`
 
 Create `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base.
 
-**Domain vocabulary.** The orchestrator already resolved this in `plan-feature/SKILL.md` Step 2.5, before launching you, and passes the result in above — use it as given for any domain/module section (Domain analysis summary, Touched areas); do not re-run `sdd domain-vocab` yourself. If none was passed (this agent invoked outside that flow), derive names from `spec.md` instead — never from exploration findings: the discovery-resume path skips Step 4 (Explore agents) entirely, so on that path those findings don't exist (021 took exactly this path). Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `auto-commit` knob in `git.md`) directly.
+**Domain vocabulary.** The orchestrator already resolved this in `plan-feature/SKILL.md` Step 2.5, before launching you, and passes the result in above — use it as given for any domain/module section (Domain analysis summary, Touched areas); do not re-run `sdd domain-vocab` yourself. If none was passed (this agent invoked outside that flow), derive names from `spec.md` instead — never from exploration findings: the discovery-resume path skips Step 4 (Explore agents) entirely, so on that path those findings don't exist (021 took exactly this path). Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `tdd` knob in `testing.md`) directly.
 
 Fill in:
 

@@ -295,3 +295,37 @@ Es la misma clase de defecto que la feature persigue, encontrado dentro de la fe
   spec/plan/tasks/decisions.md, `.sdd-state` excluded from both sides by `.gitignore`), and reads
   back `phase: archived`; a `reviewed`+`FAIL` feature's `.sdd-state` is untouched by any of this
   and its `sdd status` now honestly refuses to suggest `/archive-feature`.
+
+## Delta: 2026-09-01 — Task T008
+
+- **ADDED — a repo-wide automated AC5 test, not just per-site assertions**: `plan.md`'s Test
+  strategy already specified the shape ("AC5 = `grep -rn` en cero, con la aguja armada en
+  runtime") but no such test existed before this task. Added
+  `tests/sdd.test.js`'s "the commit-policy knob is deleted entirely (025/T008/AC5)" describe
+  block with two tests: (1) runs `grep -rn <needle> bin/ .claude/ .specify/ tests/` via
+  `execFileSync` and asserts empty stdout + exit 1, needle assembled at runtime via
+  `["auto", "commit"].join("-")` so the test cannot trip its own grep; (2) asserts
+  `docs/adr/0003-cli-resolves-content-agents-read-knobs.md` no longer claims both knobs "stay
+  exactly as they are". This is deliberately the single test that protects all thirteen sites,
+  including the five discovery flagged as having no other coverage at all
+  (`sdd-designer.md`, `sdd-research-spike.md`, `plan-feature/SKILL.md`, `new-feature/SKILL.md`,
+  `.claude/rules/domains.md`) — per-site assertions would have left the same gap discovery found
+  (forgetting a site goes unnoticed until AC5 is checked by hand).
+- **ADDED — one dangling reference beyond the 13 enumerated sites**: `sdd-archive-feature.md`'s
+  haiku-tier constraint paragraph said "no conditional branching beyond the on/off knob above" —
+  a phrase that only made sense while the knob-check sentence immediately above it still existed.
+  Deleting that sentence (site (a), live resolution) left "the on/off knob above" pointing at
+  nothing. Reworded to "no conditional branching beyond success/failure above", which is what the
+  paragraph actually means now (the only remaining branch in that step is the commit-slice
+  success/failure split). Not counted as one of the 13 sites in the task description — found while
+  reading the surrounding paragraph before editing it, same as decisions.md's other cross-check
+  entries for this feature.
+- **Verified, not modified**: `.claude/rules/git.md` and `.specify/templates/rules/git.md` were
+  byte-identical before this task (`diff` empty) and remain byte-identical after deleting the
+  `## Auto-commit` section from both in this commit.
+- Tests: proved RED against pre-T008 state with `git stash push -- <the 12 non-test source
+  files>` (pathspec-scoped, so only those files' working-tree edits were stashed away; the 3 test
+  files with the new/edited tests stayed in place), reran the two new tests: both failed for the
+  expected reason (grep found the live occurrences across all 13 sites; the ADR line still read
+  "stay exactly as they are"). Restored with `git stash pop`. Full suite: 139 (baseline) → 141
+  (2 new AC5 tests), all green.
