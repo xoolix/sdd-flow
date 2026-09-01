@@ -109,4 +109,14 @@ correcto vale más que uno corto, sobre todo cuando lo que se agregó es la adve
 feature se bloquee a sí misma. `plan.md` llegó a 930 desde el diseñador y subió a 954 con dos
 correcciones de una línea.
 
+[2026-09-01] T003: `sdd branch` writes `specs/<id>/.parent-branch` only when the sidecar does not
+already exist — never overwrites. `plan.md` says "resolve the base and always write" the sidecar;
+read narrowly that would mean re-running `sdd branch <id>` to switch back to an existing feature
+branch rewrites the parent to "whatever branch we happened to be on just now", which is a strictly
+worse failure than V3 (a plausible-looking wrong parent instead of an absent one). "Always" is
+satisfied as "every invocation that switches branches attempts to ensure a parent is recorded",
+not "every invocation overwrites". Verified: `.parent-branch` is already covered by
+`.gitignore:3` (`specs/**/.parent-branch`), confirmed with `git check-ignore -v` — no `??` entry
+from the sidecar, so T001's hardened commit-slice is unaffected.
+
 [2026-09-01T12:48:53Z] implemented-by: claude

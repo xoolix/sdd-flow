@@ -719,6 +719,121 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  // V3 (research/hallazgos-verificados.md): standing on feature/AAA, `sdd
+  // branch BBB` created feature/BBB FROM AAA and wrote no sidecar, so
+  // `sdd base-branch BBB` fell through to Layer 3 autodetect and picked the
+  // wrong base -- this is what handed 024's simplify a ~85-file scope from
+  // an unrelated feature. These are AC3's two independent behaviours: (a)
+  // always record the resolved parent, (b) warn -- never refuse -- when
+  // that parent is itself a feature/* branch.
+  describe("sdd branch records the parent and warns on stacking (T003)", () => {
+    function parentBranchPath(project, featureId) {
+      return path.join(project, "specs", featureId, ".parent-branch");
+    }
+
+    test("standing on feature/AAA, branching BBB records AAA as parent and warns on stderr", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "AAA"], { cwd: project, encoding: "utf8" });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "AAA work"], { cwd: project });
+
+      const errPath = path.join(os.tmpdir(), `${path.basename(project)}-branch-stderr-capture`);
+      const errFd = fs.openSync(errPath, "w");
+      let stdout;
+      try {
+        stdout = execFileSync(sddBin, ["branch", "BBB"], {
+          cwd: project,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", errFd],
+        });
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stdout.trim()).toBe("feature/BBB");
+      expect(stderrOutput).toContain("feature/BBB");
+      expect(stderrOutput).toContain("feature/AAA");
+
+      const sidecarPath = parentBranchPath(project, "BBB");
+      const parentRef = fs.readFileSync(sidecarPath, "utf8").trim();
+      expect(parentRef).toBe("feature/AAA");
+      // Must resolve, per cmd_base_branch Layer 1's contract.
+      execFileSync("git", ["rev-parse", "--verify", parentRef], { cwd: project, encoding: "utf8" });
+    });
+
+    test("sdd base-branch then reads that sidecar instead of falling back to autodetect", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+      execFileSync(sddBin, ["branch", "AAA"], { cwd: project, encoding: "utf8" });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "AAA work"], { cwd: project });
+      execFileSync(sddBin, ["branch", "BBB"], { cwd: project, encoding: "utf8" });
+
+      const output = execFileSync(sddBin, ["base-branch", "BBB"], { cwd: project, encoding: "utf8" });
+
+      // Layer 3 autodetect would return "main" here -- this proves Layer 1
+      // (the sidecar T003 just wrote) wins instead.
+      expect(output.trim()).toBe("feature/AAA");
+    });
+
+    test("branching from a non-feature branch records it and emits no stacking warning", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+
+      const errPath = path.join(os.tmpdir(), `${path.basename(project)}-branch-stderr-capture-2`);
+      const errFd = fs.openSync(errPath, "w");
+      try {
+        execFileSync(sddBin, ["branch", "001-demo"], {
+          cwd: project,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", errFd],
+        });
+      } finally {
+        fs.closeSync(errFd);
+      }
+      const stderrOutput = fs.readFileSync(errPath, "utf8");
+
+      expect(stderrOutput).not.toMatch(/warning:/);
+      expect(fs.readFileSync(parentBranchPath(project, "001-demo"), "utf8").trim()).toBe("main");
+    });
+
+    test("re-running sdd branch on an existing feature branch does not clobber an existing sidecar", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "demo work"], { cwd: project });
+
+      const sidecarPath = parentBranchPath(project, "001-demo");
+      // Hand-write a sidecar naming a different parent than the branch we're
+      // about to switch back from, so a clobber would be observable.
+      execFileSync("git", ["branch", "hand-written-parent"], { cwd: project });
+      fs.writeFileSync(sidecarPath, "hand-written-parent\n");
+
+      execFileSync("git", ["checkout", "main"], { cwd: project });
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
+
+      expect(fs.readFileSync(sidecarPath, "utf8").trim()).toBe("hand-written-parent");
+    });
+
+    test("already being on the target branch is still a no-op and leaves the sidecar untouched", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["branch", "-M", "main"], { cwd: project });
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
+
+      const sidecarPath = parentBranchPath(project, "001-demo");
+      expect(fs.readFileSync(sidecarPath, "utf8").trim()).toBe("main");
+
+      const output = execFileSync(sddBin, ["branch", "001-demo"], { cwd: project, encoding: "utf8" });
+
+      expect(output.trim()).toBe("feature/001-demo");
+      expect(fs.readFileSync(sidecarPath, "utf8").trim()).toBe("main");
+    });
+  });
+
   // cmd_base_branch had zero tests before this suite despite implementing three
   // resolution layers (F7). These are also AC8's "resolution" axis: every value,
   // including the ones that never failed, not just a regression test per bug.

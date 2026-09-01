@@ -786,6 +786,39 @@ cmd_branch() {
     fi
   fi
 
+  # AC3 -- two independent behaviours (plan.md): (a) always record the
+  # resolved parent so cmd_base_branch Layer 1 has something correct to
+  # read later, (b) warn -- never refuse -- when that parent is itself
+  # another feature/* branch (silent stacking is V3). $current_branch is
+  # the branch we were on BEFORE the checkout above, i.e. the true parent;
+  # reading it now would just read back $branch_name.
+  case "$current_branch" in
+    feature/*)
+      printf 'warning: %s branches off %s, another feature branch -- this is not blocked, only reported; specs/%s/.parent-branch will record %s as the base\n' \
+        "$branch_name" "$current_branch" "$feature_id" "$current_branch" >&2
+      ;;
+  esac
+
+  local specs_dir sidecar
+  specs_dir="$(pwd)/specs"
+  sidecar="$specs_dir/${feature_id}/.parent-branch"
+
+  # Never clobber an existing sidecar: switching back to an already-branched
+  # feature must not rewrite its parent as "whatever branch we happened to
+  # be on just now".
+  if [ ! -f "$sidecar" ]; then
+    if [ -n "$current_branch" ]; then
+      mkdir -p "$specs_dir/${feature_id}"
+      printf '%s\n' "$current_branch" > "$sidecar"
+    else
+      # No branch to record (e.g. detached HEAD) -- an empty/whitespace
+      # sidecar would make Layer 1 fall through silently, so write nothing
+      # rather than something useless.
+      printf 'warning: could not resolve a base branch for %s (no current branch, e.g. detached HEAD) -- specs/%s/.parent-branch was not written\n' \
+        "$branch_name" "$feature_id" >&2
+    fi
+  fi
+
   printf '%s\n' "$branch_name"
   return 0
 }
