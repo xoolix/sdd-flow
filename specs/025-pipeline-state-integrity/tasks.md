@@ -40,7 +40,7 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
   - blocked_by: T004; verifies: AC10; touches: review-feature/SKILL.md, tests
 
 ### 3. Validation
-- [ ] **T012 [AFK] State-machine harness across all eight phases**: fixtures drive all eight phases; asserts `sdd status` reports the right one each step, including the untested sentinel-freshness branch. Header comment declares it tests CLI reads only; set an explicit Jest timeout.
+- [x] **T012 [AFK] State-machine harness across all eight phases**: fixtures drive all eight phases; asserts `sdd status` reports the right one each step, including the untested sentinel-freshness branch. Header comment declares it tests CLI reads only; set an explicit Jest timeout.
   - blocked_by: T007; verifies: AC12; touches: tests, bin/sdd
 
 ## Notes

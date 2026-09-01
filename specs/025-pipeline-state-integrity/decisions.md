@@ -453,3 +453,44 @@ Es la misma clase de defecto que la feature persigue, encontrado dentro de la fe
   passed on both sides since it only asserts the shared file was never touched. Full suite: 153
   (baseline) → 159 (6 new tests), all green. `grep -rn 'auto-commit' bin/ .claude/ .specify/ tests/`
   re-verified at 0 matches (unaffected by this task).
+
+## Delta: 2026-09-01 — Task T012
+
+- **ADDED — isolates the git-head-only freshness branch, not specified at this
+  granularity**: `plan.md`'s Test strategy names the sentinel-freshness fork as one
+  thing to cover, and the pre-existing `tests/sdd.test.js` staleness-via-HEAD test
+  (T007) advances HEAD with a real file change (`unrelated.txt`), which moves
+  `git-head` **and** `tree-digest` at once — it proves "a new commit invalidates",
+  not that the `git-head` equality check is a genuinely separate branch from the
+  `tree-digest` check inside `detect_feature_phase`'s `if`. T012 instead uses
+  `git commit --allow-empty` for that half of the walk: it stages nothing, so the
+  tree is byte-identical to what `.sdd-state` already recorded, and only `git-head`
+  moves. This isolates the two `if` conditions from each other, which the mutation
+  check below confirms matters: mutating just the `state_phase` case mapping (a
+  different branch entirely) was enough to prove the harness has teeth, but the
+  `--allow-empty` step is what actually exercises the head-equality check on its own
+  rather than as a side effect of a tree change.
+- **ADDED — re-seals mid-walk rather than only asserting staleness**: after each of
+  the two freshness-breaking steps (uncommitted edit, then the empty commit), the
+  walk restores `ready-to-review` before continuing forward (`git checkout --` for
+  the first, a second `sdd state-write` call for the second) so the single walk can
+  still reach `reviewed` and `archived`. Not specified in `plan.md`/`spec.md` at this
+  level — a reasonable reading of AC12 would have made this two separate tests
+  instead of one continuous walk. Kept as one test per the task description's
+  "exercise it here as part of the walk," and because a single continuous walk is
+  what actually proves the eight phases chain correctly end to end, not just that
+  each phase is independently reachable from a hand-built fixture.
+- **Verified via mutation** (per the task's own instruction, not part of the
+  permanent suite): temporarily renamed the `reviewed` case in
+  `detect_feature_phase`'s `state_phase` mapping (`bin/sdd`, the
+  `case "$state_phase" in reviewed) phase="reviewed" ;; ...` line) to a typo
+  (`reviewd`). Re-ran `tests/state-machine.test.js`: failed exactly as expected —
+  `expect(s.phase).toBe("reviewed")` received `"ready-to-review"` instead, at the
+  step 7 assertion. Restored `bin/sdd` from the pre-mutation copy; `git diff
+  bin/sdd` empty afterward; full suite re-run green (160/160).
+- Full suite: 159 (baseline) → 160 (1 new test — the whole eight-phase walk is one
+  `test()`, matching AC12's phrasing of a single traversal rather than eight
+  independent cases). `grep -rn 'auto-commit' bin/ .claude/ .specify/ tests/`
+  re-verified at 0 matches (unaffected by this task; the new needle-check also
+  passed over `tests/state-machine.test.js` itself, which is not in
+  `sweep-retired-symbols.test.js`'s exclusion list).
