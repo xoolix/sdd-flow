@@ -234,3 +234,64 @@ Es la misma clase de defecto que la feature persigue, encontrado dentro de la fe
   routes-through-simplify test) pin behavior that was already true under T005's sentinel-absence
   fallback and pass on both sides — they document the design decision above rather than a new
   code path, since `review-feature/SKILL.md` is prose no CLI test can execute directly.
+
+## Delta: 2026-09-01 — Task T007
+
+- **ADDED — the decision T006 explicitly deferred**: T006's delta left `detect_feature_phase`'s
+  `phase: reviewed` → `next_command` mapping **unconditional** (`/archive-feature <id>` regardless
+  of `verdict`), reasoning that `bin/sdd status` is a hint and the real gate is T007's own
+  pre-flight. T007 makes the mapping **verdict-aware** instead: `reviewed` + `PASS` or
+  `PASS-WITH-WARNINGS` still proposes `/archive-feature`; any other verdict (`FAIL`, `none`, or an
+  unrecognised value from a hand-run `state-write`) now proposes
+  `(blocked — review verdict is <verdict>; a human decision is needed, see decisions.md)`.
+  **Rejected**: leaving the mapping unconditional and only documenting the contradiction as
+  acceptable layering. Rejected because `sdd status` is this pipeline's own primary state oracle,
+  and 025 exists specifically to remove cases where the pipeline asserts state it doesn't have —
+  a judge-blocked feature whose own status command still recommends the exact command its own
+  archive gate refuses is that same defect class, just relocated from a file sentinel to a CLI
+  field. The fix costs one nested `case` on a field (`verdict:`) `detect_feature_phase` already
+  reads the sentinel file for when computing `state_phase` — reading it alongside is not new
+  orchestration logic in `bin/sdd`, just reading one more line out of a file already open for the
+  adjacent read. `bin/sdd` still does zero decision-making about *what to do* about a blocked
+  feature; it only refuses to hand out a command that would fail. Verified live (fresh temp repo):
+  `phase: reviewed` + `verdict: PASS` → `next_command: "/archive-feature 099-demo"`, full
+  move+commit end-to-end still lands `phase: archived`; `phase: reviewed` + `verdict: FAIL` →
+  `next_command` no longer names `/archive-feature` at all.
+- **ADDED — receipt-check mechanism, not specified at this granularity in `plan.md`**: the
+  pre-flight (`sdd-archive-feature.md`, replacing the old freeform "review has been run" check
+  that had no file to verify against) resolves in two reads: `sdd status $ARGUMENTS`'s `phase`
+  field for the reviewed-and-fresh determination (reusing `detect_feature_phase`'s existing
+  HEAD+tree-digest freshness computation rather than having the agent hand-roll a second one in
+  prose — same "writer and reader share one computation" principle T005's `tree_digest()` doc
+  comment already states), then a direct `grep -m1 '^verdict: '` on `specs/$ARGUMENTS/.sdd-state`
+  for the verdict, since `sdd status`'s JSON never surfaces `verdict` at all. `phase: reviewed`
+  alone cannot distinguish a judge block from a passing review — both read `reviewed` — so the
+  gate cannot be satisfied by `sdd status` output alone; verified this ambiguity exists before
+  writing the gate text (see the "AC11: judge-block receipt" test).
+- **ADDED — deletion ordering**: the old `.simplified` deletion in Step 3 (unconditional,
+  immediately after the `mv`, before any commit) is retargeted to `.sdd-state` **and moved** into
+  Step 3.5's "On success" branch, after `sdd commit-slice --moved-from` returns 0. Step 3 now
+  explicitly says not to delete it. Reason: deleting the receipt before the commit lands means an
+  interrupted or failed commit-slice call leaves an archived-looking folder with no receipt at
+  all — exactly the "state the pipeline believes it has and doesn't have" class this feature exists
+  to remove. Consequence, not a bug: when the `auto-commit: off` knob (T008 removes it) is set,
+  Step 3.5 is skipped entirely and the receipt is never deleted — correct under the same ordering
+  rule, since there is no successful commit to key the deletion off of, not an oversight.
+- Tests: 10 new tests in `tests/sdd.test.js`'s "archive-feature verifies the .sdd-state receipt
+  before archiving (025/T007/AC11)" describe block. Verified RED against pre-T007 code by
+  `git stash`-ing `bin/sdd` and `sdd-archive-feature.md` only (keeping the test file) and
+  re-running: 4 of the 10 failed as expected — the two `next_command`-verdict-aware tests (piece 3)
+  and the two prose-wiring guards on `sdd-archive-feature.md` (pre-flight text, deletion ordering).
+  The other 6 passed on **both** sides — they pin AC11 behavior (absent receipt, ready-to-review,
+  verdict distinguishing via direct file read, PASS-WITH-WARNINGS validity, HEAD-moved staleness,
+  and the move+commit mechanics) that was already correct under T005/T006's existing freshness and
+  `state-write` machinery; T007 didn't have to change that code, only consume it from the archive
+  gate. Honest limits: the two prose-wiring tests (`toContain`/ordering-index checks over
+  `sdd-archive-feature.md`) prove the gate's instruction text exists and is ordered correctly —
+  they cannot prove the haiku-tier agent actually obeys it at runtime, since that file is prose for
+  an LLM, not executable code (same limit T006 and the spec's own edge cases already declare for
+  this class of file). Re-verified live end-to-end after the change, in a fresh temp repo: a
+  `reviewed`+`PASS` feature moves, commits (4 deletions + 4 additions for
+  spec/plan/tasks/decisions.md, `.sdd-state` excluded from both sides by `.gitignore`), and reads
+  back `phase: archived`; a `reviewed`+`FAIL` feature's `.sdd-state` is untouched by any of this
+  and its `sdd status` now honestly refuses to suggest `/archive-feature`.

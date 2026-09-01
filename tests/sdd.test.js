@@ -2381,6 +2381,303 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("archive-feature verifies the .sdd-state receipt before archiving (025/T007/AC11)", () => {
+    // Same shape as the T006 describe block's local helper -- duplicated
+    // rather than hoisted, matching this file's existing per-describe-block
+    // convention.
+    function makeReadyProject() {
+      const project = makeTempProject();
+      // Both lines from the real repo's .gitignore (T003, T005) -- the
+      // archive move-and-commit test below needs .parent-branch ignored too,
+      // or its addition at the new path shows up as a real diff line.
+      fs.writeFileSync(
+        path.join(project, ".gitignore"),
+        "specs/**/.parent-branch\nspecs/**/.sdd-state\n",
+      );
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [x] First behavior\n- [x] Second behavior\n",
+      );
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project });
+      return project;
+    }
+
+    // Reads one field directly out of .sdd-state, the same way the
+    // archive-feature.md pre-flight's second bullet does (`grep -m1
+    // '^verdict: ' ...`) -- sdd status never surfaces verdict, so the gate's
+    // own text has to read the receipt file itself.
+    function readStateField(project, featureId, field) {
+      const raw = fs.readFileSync(
+        path.join(project, "specs", featureId, ".sdd-state"),
+        "utf8",
+      );
+      const line = raw.split("\n").find((l) => l.startsWith(`${field}: `));
+      return line ? line.slice(`${field}: `.length) : undefined;
+    }
+
+    test("no .sdd-state at all does not read as reviewed (AC11: absent receipt)", () => {
+      const project = makeReadyProject();
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).not.toBe("reviewed");
+    });
+
+    test("phase: ready-to-review (simplify ran, review never sealed) does not read as reviewed (AC11: simplify-only receipt)", () => {
+      const project = makeReadyProject();
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "ready-to-review"], { cwd: project });
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).toBe("ready-to-review");
+      expect(status.phase).not.toBe("reviewed");
+    });
+
+    test("phase: reviewed with verdict: FAIL reads identically to a passing review via sdd status alone -- the gate must read .sdd-state's verdict directly (AC11: judge-block receipt)", () => {
+      const project = makeReadyProject();
+      execFileSync(
+        sddBin,
+        ["state-write", "001-demo", "--phase", "reviewed", "--verdict", "FAIL"],
+        { cwd: project },
+      );
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      // sdd status's phase field alone cannot distinguish a judge block from
+      // a passing review -- both read "reviewed". This is exactly why the
+      // pre-flight's second bullet reads verdict out of the file directly
+      // rather than trusting `sdd status` for it.
+      expect(status.phase).toBe("reviewed");
+      expect(readStateField(project, "001-demo", "verdict")).toBe("FAIL");
+    });
+
+    test("phase: reviewed with verdict: PASS-WITH-WARNINGS is a valid receipt (AC11: passing verdict, warnings case)", () => {
+      const project = makeReadyProject();
+      execFileSync(
+        sddBin,
+        ["state-write", "001-demo", "--phase", "reviewed", "--verdict", "PASS-WITH-WARNINGS"],
+        { cwd: project },
+      );
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).toBe("reviewed");
+      expect(readStateField(project, "001-demo", "verdict")).toBe("PASS-WITH-WARNINGS");
+      // Piece 3: PASS-WITH-WARNINGS must route to archive same as PASS.
+      expect(status.next_command).toBe("/archive-feature 001-demo");
+    });
+
+    test("a stale receipt -- HEAD moved by a new commit after review sealed it -- falls back and does not read as reviewed (AC11: staleness via HEAD, not just tree-digest)", () => {
+      const project = makeReadyProject();
+      execFileSync(
+        sddBin,
+        ["state-write", "001-demo", "--phase", "reviewed", "--verdict", "PASS"],
+        { cwd: project },
+      );
+
+      const fresh = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(fresh.phase).toBe("reviewed");
+
+      // A new commit moves HEAD without touching the working tree at all --
+      // the uncommitted-edit case (tree-digest drift) is already covered by
+      // the T006 describe block above; this covers the other half of "HEAD
+      // OR tree-digest moved" that AC11 names explicitly.
+      fs.writeFileSync(path.join(project, "unrelated.txt"), "unrelated change\n");
+      execFileSync("git", ["add", "-A"], { cwd: project });
+      execFileSync("git", ["commit", "-q", "-m", "unrelated commit after review sealed"], { cwd: project });
+
+      const stale = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(stale.phase).not.toBe("reviewed");
+      expect(stale.sentinel_fresh).toBe(false);
+    });
+
+    test("piece 3: next_command for phase reviewed + verdict FAIL never points at /archive-feature -- sdd status must not contradict the archive gate", () => {
+      const project = makeReadyProject();
+      execFileSync(
+        sddBin,
+        ["state-write", "001-demo", "--phase", "reviewed", "--verdict", "FAIL"],
+        { cwd: project },
+      );
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).toBe("reviewed");
+      expect(status.next_command).not.toBe("/archive-feature 001-demo");
+      expect(status.next_command).not.toContain("/archive-feature");
+      expect(status.next_command).toContain("FAIL");
+    });
+
+    test("piece 3: next_command for phase reviewed with no verdict recorded (misuse of state-write) also does not point at /archive-feature", () => {
+      const project = makeReadyProject();
+      // Misuse: state-write --phase reviewed with no --verdict defaults to "none".
+      execFileSync(sddBin, ["state-write", "001-demo", "--phase", "reviewed"], { cwd: project });
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+      expect(status.phase).toBe("reviewed");
+      expect(status.next_command).not.toContain("/archive-feature");
+    });
+
+    test("archiving moves the folder, commits both halves of the move, and the receipt survives the commit untouched -- deletion is a separate step after success (AC11 + T007 ordering)", () => {
+      const project = makeReadyProject();
+      execFileSync(
+        sddBin,
+        ["state-write", "001-demo", "--phase", "reviewed", "--verdict", "PASS"],
+        { cwd: project },
+      );
+
+      const oldDir = path.join(project, "specs", "001-demo");
+      const newDir = path.join(project, "specs", "archive", "2099-01-01-001-demo");
+      const archivedStatePath = path.join(newDir, ".sdd-state");
+
+      // This is exactly sdd-archive-feature.md's Step 3: a plain filesystem
+      // move, no git awareness, no deletion of the receipt.
+      fs.mkdirSync(path.join(project, "specs", "archive"), { recursive: true });
+      fs.renameSync(oldDir, newDir);
+      expect(fs.existsSync(archivedStatePath)).toBe(true);
+
+      // Step 3.5's exact call shape (no --files: no delta merge happened).
+      const sha = execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "chore",
+          "--title",
+          "Archive 001-demo",
+          "--moved-from",
+          "specs/001-demo",
+        ],
+        { cwd: project, encoding: "utf8" },
+      ).trim();
+      expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+      // `--no-renames`: by default `git show` collapses a same-content
+      // delete+add into a single "R" (rename) line naming only the new
+      // path -- that would hide the very thing this test is proving, that
+      // BOTH halves (the old-path deletions and the new-path additions)
+      // actually landed in the one commit, not just the visually tidier
+      // rename summary.
+      const nameStatus = execFileSync(
+        "git",
+        ["show", "--no-renames", "--name-status", "--format=", sha],
+        { cwd: project, encoding: "utf8" },
+      )
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.split("\t"));
+      const deletedFiles = nameStatus.filter(([status]) => status === "D").map(([, p]) => p);
+      const addedFiles = nameStatus.filter(([status]) => status === "A").map(([, p]) => p);
+
+      expect(deletedFiles).toEqual(
+        expect.arrayContaining([
+          "specs/001-demo/spec.md",
+          "specs/001-demo/plan.md",
+          "specs/001-demo/tasks.md",
+        ]),
+      );
+      expect(addedFiles).toEqual(
+        expect.arrayContaining([
+          "specs/archive/2099-01-01-001-demo/spec.md",
+          "specs/archive/2099-01-01-001-demo/plan.md",
+          "specs/archive/2099-01-01-001-demo/tasks.md",
+        ]),
+      );
+      // .sdd-state is gitignored: `git add` on the moved directory must not
+      // pick it up, on either half of the move.
+      expect([...deletedFiles, ...addedFiles]).not.toEqual(
+        expect.arrayContaining([expect.stringContaining(".sdd-state")]),
+      );
+
+      // The receipt is untouched by the commit itself -- proving deletion
+      // is a distinct, later step, not something commit-slice does for us.
+      expect(fs.existsSync(archivedStatePath)).toBe(true);
+
+      // Step 3.5's "On success" instruction, run only now: `rm -f` the
+      // receipt. Gitignored, so this needs no git operation of its own.
+      fs.rmSync(archivedStatePath, { force: true });
+      expect(fs.existsSync(archivedStatePath)).toBe(false);
+
+      const statusAfter = execFileSync("git", ["status", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(statusAfter.trim()).toBe("");
+    });
+
+    // Prose-wiring guard, not behavioural coverage: this proves the gate's
+    // instruction text exists and names the right fields/values -- it can
+    // never prove the haiku-tier agent actually obeys it at runtime, since
+    // sdd-archive-feature.md is instructions for an LLM, not executable code.
+    test("pre-flight requires a fresh .sdd-state receipt with phase: reviewed and a passing verdict, not agent memory (T007 prose wiring)", () => {
+      const archiveFeature = fs.readFileSync(
+        path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"),
+        "utf8",
+      );
+
+      // The old check trusted the agent's own memory of what ran, with no
+      // file to verify against -- gone entirely.
+      expect(archiveFeature).not.toContain("has been run with verdict");
+
+      expect(archiveFeature).toContain("sdd status $ARGUMENTS");
+      expect(archiveFeature).toContain("phase` must read exactly `reviewed`");
+      expect(archiveFeature).toContain("git-head` equals `git rev-parse HEAD`");
+      expect(archiveFeature).toContain("tree-digest` equals the current working tree's digest");
+      expect(archiveFeature).toContain("grep -m1 '^verdict: ' specs/$ARGUMENTS/.sdd-state");
+      expect(archiveFeature).toContain("`PASS` or `PASS-WITH-WARNINGS`");
+      expect(archiveFeature).toContain("BLOCKED-JUDGMENT-DAY-HIGH");
+    });
+
+    test("the receipt deletion moved out of Step 3 into Step 3.5's on-success branch, after the commit-slice call (T007 prose wiring, ordering)", () => {
+      const archiveFeature = fs.readFileSync(
+        path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"),
+        "utf8",
+      );
+
+      expect(archiveFeature).not.toContain(".simplified");
+
+      const step3Match = archiveFeature.match(
+        /3\. \*\*Archive the feature\*\*([\s\S]*?)\n### 3\.5\. Commit the slice/,
+      );
+      expect(step3Match).not.toBeNull();
+      const step3Body = step3Match[1];
+
+      // The move happens here; the deletion must not.
+      expect(step3Body).toContain("Move `specs/$ARGUMENTS/`");
+      expect(step3Body).not.toContain("rm -f");
+      expect(step3Body).toContain("Do **not** delete `.sdd-state` here");
+
+      const onSuccessIndex = archiveFeature.indexOf(
+        "run `rm -f specs/archive/YYYY-MM-DD-$ARGUMENTS/.sdd-state`",
+      );
+      const commitSliceCallIndex = archiveFeature.indexOf(
+        "sdd commit-slice $ARGUMENTS --type chore --title \"Archive $ARGUMENTS\"",
+      );
+      expect(onSuccessIndex).toBeGreaterThan(-1);
+      expect(commitSliceCallIndex).toBeGreaterThan(-1);
+      // Deletion instruction must sit after the commit-slice call it depends on.
+      expect(onSuccessIndex).toBeGreaterThan(commitSliceCallIndex);
+
+      // On-failure path must explicitly say not to delete.
+      const onFailureMatch = archiveFeature.match(/On failure\*\* \(`sdd commit-slice`[^\n]*\n/);
+      expect(onFailureMatch).not.toBeNull();
+      expect(archiveFeature).toContain("Do **not** delete `.sdd-state`");
+      expect(archiveFeature).toContain("the folder is mid-archive with no commit behind it");
+    });
+  });
+
   test("build-registry ignores every core skill", () => {
     const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
     const buildRegistry = fs.readFileSync(path.join(repoRoot, ".claude/skills/build-registry/SKILL.md"), "utf8");

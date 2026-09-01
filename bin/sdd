@@ -1400,6 +1400,7 @@ detect_feature_phase() {
     local sentinel_fresh=false
     local sentinel_file="$feature_dir/.sdd-state"
     local state_phase=""
+    local state_verdict=""
     if [ -f "$sentinel_file" ]; then
       local current_head state_head state_digest
       current_head="$(git rev-parse HEAD 2>/dev/null || true)"
@@ -1418,6 +1419,14 @@ detect_feature_phase() {
           # writing "reviewed" here (review-feature Step 5), so this branch
           # never has to tell that case apart from a plain stale sentinel.
           state_phase="$(grep -m1 '^phase: ' "$sentinel_file" 2>/dev/null | sed 's/^phase: //')"
+          # T007: read alongside phase, not computed separately, so the two
+          # can never be read from two different sentinel snapshots. Only
+          # meaningful when state_phase="reviewed" (below) -- a judge block
+          # writes "reviewed" with verdict FAIL, and the next-command
+          # mapping needs to tell that apart from a passing review so it
+          # never points a human at a command sdd-archive-feature.md's own
+          # gate (T007) will refuse.
+          state_verdict="$(grep -m1 '^verdict: ' "$sentinel_file" 2>/dev/null | sed 's/^verdict: //')"
         fi
       fi
     fi
@@ -1456,7 +1465,20 @@ detect_feature_phase() {
     implementing)      next_command="/implement-task ${feature_id}" ;;
     ready-to-simplify) next_command="/simplify-code ${feature_id}" ;;
     ready-to-review)   next_command="/review-feature ${feature_id}" ;;
-    reviewed)          next_command="/archive-feature ${feature_id}" ;;
+    reviewed)
+      # T007: verdict-aware. A judge block (`state-write --phase reviewed
+      # --verdict FAIL`) sets phase to "reviewed" the same as a passing
+      # review does (T006), but sdd-archive-feature.md's own pre-flight gate
+      # (T007/AC11) refuses to archive it. Pointing a human at
+      # /archive-feature here would be exactly the class of bug 025 exists
+      # to remove: a status oracle asserting something the pipeline's own
+      # gate then contradicts. See decisions.md for the rejected
+      # unconditional alternative.
+      case "$state_verdict" in
+        PASS|PASS-WITH-WARNINGS) next_command="/archive-feature ${feature_id}" ;;
+        *) next_command="(blocked — review verdict is ${state_verdict:-none}; a human decision is needed, see decisions.md)" ;;
+      esac
+      ;;
     archived)          next_command="(none — feature archived)" ;;
     *)                 next_command="(unknown)" ;;
   esac

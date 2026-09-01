@@ -28,7 +28,7 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
   - blocked_by: T004; verifies: AC6; touches: bin/sdd, .gitignore, sdd-simplify-code.md, tests
 - [x] **T006 [AFK] review-feature seals verdict, adds `reviewed` phase**: writes verdict via `state-write` after Step 4 and the judge branch; `detect_feature_phase` gains `reviewed`, next command archive. **Also retires the 6 stale `.simplified` references left in `sdd-next/SKILL.md` (4) and `sdd-auto/SKILL.md` (2)** — after T005's clean break they point at a file that no longer exists — and adds the `reviewed` row to `sdd-next`'s phase table following the `archived` row's `sdd status` pattern (`sdd-auto` inherits it by reference).
   - blocked_by: T005; verifies: AC7; touches: review-feature/SKILL.md, sdd-next/SKILL.md, sdd-auto/SKILL.md, bin/sdd, tests
-- [ ] **T007 [AFK] archive verifies the receipt**: pre-flight requires `phase: reviewed` + a passing verdict, blocks otherwise; deletes `.sdd-state` on success.
+- [x] **T007 [AFK] archive verifies the receipt**: pre-flight requires `phase: reviewed` + a passing verdict, blocks otherwise; deletes `.sdd-state` on success.
   - blocked_by: T006; verifies: AC11; touches: sdd-archive-feature.md, tests
 - [ ] **T008 [AFK] Delete the `auto-commit` knob entirely**: strip all 13 references (behavior, `tdd:` illustrations, envelope prose, both `git.md` sections) in one commit; retitle the cross-pinned test (`retired-symbol-proofs`/`sweep-retired-symbols`); invert `sdd.test.js`'s knob assertions; fix the false `docs/adr/0003` line.
   - blocked_by: T004; verifies: AC5; touches: .claude, .specify, docs/adr/0003, tests
