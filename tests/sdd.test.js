@@ -2857,7 +2857,7 @@ describe("sdd CLI smoke tests", () => {
       // DISCOVERY-ACCEPTED entries under `## User decisions`) still has content
       // that would satisfy the "at least one" gate rather than tripping it.
       const ownDiscovery = fs.readFileSync(
-        path.join(repoRoot, "specs/025-pipeline-state-integrity/discovery.md"),
+        path.join(repoRoot, "specs/archive/2026-09-01-025-pipeline-state-integrity/discovery.md"),
         "utf8",
       );
       // Match the heading only at line-start -- finding G's own prose mentions
