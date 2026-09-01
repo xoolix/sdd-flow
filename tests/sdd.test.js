@@ -2807,6 +2807,74 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("simplify blocks on a dirty scoped file instead of committing or discarding it (025/T010/AC9)", () => {
+    // sdd-simplify-code.md is prose an LLM follows, not executable code -- every
+    // assertion below is a wiring guard proving the instruction text exists and
+    // says the right thing, never proof an agent actually obeys it at runtime
+    // (same limit already declared for this class of file by T006/T007/T009).
+    const simplifyCodePath = path.join(repoRoot, ".claude/agents/sdd-simplify-code.md");
+
+    test("a scoped path with uncommitted edits hard-blocks before any edit, commit, or checkout", () => {
+      const simplifyCode = fs.readFileSync(simplifyCodePath, "utf8");
+
+      expect(simplifyCode).toContain("4b. **Block if a scoped path is already dirty**");
+      expect(simplifyCode).toContain("STOP here — before step 4 (Simplify) reads or writes a single file");
+      expect(simplifyCode).toContain("Make no commit, run no `git checkout --`, make no edit");
+      expect(simplifyCode).toContain(
+        "Return `Status: blocked` with `Summary: scoped file(s) already have uncommitted edits — resolve or commit them before running /simplify-code`",
+      );
+    });
+
+    test("dirty paths outside scope stay notice-only via IGNORED_DIRTY -- this block never fires on them", () => {
+      const simplifyCode = fs.readFileSync(simplifyCodePath, "utf8");
+
+      // Pre-existing notice behavior for out-of-scope dirty paths must survive untouched.
+      expect(simplifyCode).toContain("Ignored uncommitted paths outside <base>..HEAD: <list>");
+      expect(simplifyCode).toContain("This is a notice only — the run continues normally. No block is raised.");
+      // The new gate documents itself as the exception to that notice-only rule, not a replacement of it.
+      expect(simplifyCode).toContain(
+        "unlike `IGNORED_DIRTY` above, which only reports paths *outside* scope and never blocks",
+      );
+    });
+
+    test("the block intersects the final post-filter SCOPED_FILES, never the pre-filter committed-diff candidate list", () => {
+      const simplifyCode = fs.readFileSync(simplifyCodePath, "utf8");
+
+      // Anchoring against the pre-filter list (step 2's raw `git diff --name-only`) would
+      // false-positive on a dirty path the exclusion filters (tests/lockfiles/migrations/
+      // configs/SDD artifacts) would have dropped anyway -- exactly the false-positive
+      // risk called out in the task brief.
+      expect(simplifyCode).toContain(
+        "intersect `SCOPED_FILES` (the final, post-exclusion-filter list from step 4 above) with `DIRTY_PATHS`",
+      );
+      expect(simplifyCode).toContain(
+        "never against the pre-filter committed-diff list from step 2 — a path the exclusion filters already dropped is out of scope and must not trip this block",
+      );
+    });
+
+    test("IGNORED_DIRTY and the new block share one git-status collection instead of two independent computations", () => {
+      const simplifyCode = fs.readFileSync(simplifyCodePath, "utf8");
+
+      expect(simplifyCode).toContain("Compute `DIRTY_PATHS` from `git status --short`");
+      expect(simplifyCode).toContain("do not recompute it a second time for sub-step 4b");
+      expect(simplifyCode).toContain(
+        "`IGNORED_DIRTY` = the paths in `DIRTY_PATHS` that are **not** already in the committed diff list",
+      );
+    });
+
+    test("Step 2's baseline guarantee is no longer stated unconditionally", () => {
+      const simplifyCode = fs.readFileSync(simplifyCodePath, "utf8");
+
+      // Old wording asserted an unconditional guarantee that was false whenever a
+      // scoped file was already dirty at baseline time -- the exact bug this task fixes.
+      expect(simplifyCode).not.toContain(
+        "This guarantees that any post-edit failure later is attributable to simplify-code, not a pre-existing regression.",
+      );
+      expect(simplifyCode).toContain("only when no scoped file was already dirty at this point");
+      expect(simplifyCode).toContain("sub-step 4b below");
+    });
+  });
+
   test("build-registry ignores every core skill", () => {
     const sddCli = fs.readFileSync(path.join(repoRoot, "bin/sdd"), "utf8");
     const buildRegistry = fs.readFileSync(path.join(repoRoot, ".claude/skills/build-registry/SKILL.md"), "utf8");

@@ -34,7 +34,7 @@ moving on. Same for the missing `.parent-branch`: write it by hand before T003 l
   - blocked_by: T004; verifies: AC5; touches: .claude, .specify, docs/adr/0003, tests
 - [x] **T009 [AFK] Discovery gate blocks on empty user decisions**: `plan-feature/SKILL.md` blocks when `## User decisions` is empty (weak form — findings carry no IDs).
   - blocked_by: T004; verifies: AC8; touches: plan-feature/SKILL.md, tests
-- [ ] **T010 [AFK] simplify blocks on dirty scoped file**: before rewriting scope, block (no commit, no discard) a scoped file with uncommitted edits.
+- [x] **T010 [AFK] simplify blocks on dirty scoped file**: before rewriting scope, block (no commit, no discard) a scoped file with uncommitted edits.
   - blocked_by: T005; verifies: AC9; touches: sdd-simplify-code.md, tests
 - [ ] **T011 [AFK] `--minimal` resolves the feature path**: parse flags before resolving `specs/<id>/`. Leave shared `sdd-phase-common.md` §I untouched.
   - blocked_by: T004; verifies: AC10; touches: review-feature/SKILL.md, tests

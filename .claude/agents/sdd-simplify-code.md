@@ -37,17 +37,18 @@ Run **Lint**, **Type check**, and **Tests** as parallel Bash calls (three indepe
 - **All pass** → proceed to step 3.
 - **Any fail** → STOP. Return `Status: blocked` with `Summary: baseline is red — fix regressions before running /simplify-code`. Do NOT make any edits.
 
-This guarantees that any post-edit failure later is attributable to simplify-code, not a pre-existing regression.
+This isolates simplify-code's own edits from a pre-existing regression **only when no scoped file was already dirty at this point** — step 3's dirty-scope check (sub-step 4b below) blocks the run before step 4 touches anything if a scoped path already has uncommitted edits, so this baseline can never have silently absorbed a human's in-progress change to a file simplify-code is about to edit.
 
 ### 3. Determine scope
 
 1. Resolve branch base: Run `BASE_BRANCH=$(sdd base-branch "$ARGUMENTS")`. If `sdd base-branch` exits non-zero, forward its stderr and return `Status: blocked` with diagnostic. Then run `git merge-base "$BASE_BRANCH" HEAD`; if this fails → `Status: blocked` with diagnostic. `sdd base-branch` is the canonical scope source — do not hardcode `main` or any other branch name.
 2. Compute touched files as the committed diff only: `git diff --name-only <base-sha>..HEAD`. This is the strict scope — working-tree changes outside this diff are not eligible for simplification. If the result is empty, there is nothing to simplify — skip to step 5.
-2b. Compute `IGNORED_DIRTY`: from `git status --short`, collect paths from `M `, ` M`, `MM`, `A `, `??` entries (ignore `D`, `R`) that are **not** already in the committed diff list. Apply the same exclusion filters as `SCOPED_FILES` (tests, lockfiles, migrations, configs, SDD artifacts). If `IGNORED_DIRTY` is non-empty, print:
-   ```
-   Ignored uncommitted paths outside <base>..HEAD: <list>
-   ```
-   This is a notice only — the run continues normally. No block is raised.
+2b. Compute `DIRTY_PATHS` from `git status --short`: collect paths from `M `, ` M`, `MM`, `A `, `??` entries (ignore `D`, `R`). This raw list is the single source for both checks that use it below — do not recompute it a second time for sub-step 4b.
+   - `IGNORED_DIRTY` = the paths in `DIRTY_PATHS` that are **not** already in the committed diff list. Apply the same exclusion filters as `SCOPED_FILES` (tests, lockfiles, migrations, configs, SDD artifacts). If `IGNORED_DIRTY` is non-empty, print:
+     ```
+     Ignored uncommitted paths outside <base>..HEAD: <list>
+     ```
+     This is a notice only — the run continues normally. No block is raised.
 3. Apply exclusion filters — drop any file matching:
    - **Tests**: `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`, `**/test/**`, `**/tests/**`
    - **Lockfiles**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Cargo.lock`
@@ -55,6 +56,7 @@ This guarantees that any post-edit failure later is attributable to simplify-cod
    - **Configs**: `*.config.*`, `.env*`, `docker-compose.*`, `tsconfig.json`, `vite.config.*`
    - **SDD artifacts**: `specs/**/*.md`, `.claude/skills/**/*.md`, `.claude/agents/**/*.md`, `.claude/CLAUDE.md`, `.specify/templates/*.md`, `docs/adr/**/*.md` — spec, plan, tasks, quick-spec, SKILL.md, agent instructions, templates, orchestrator docs, and architecture decision records are prose artifacts, not code. KISS/DRY/YAGNI applied to these is out of scope and can corrupt load-bearing structure (e.g., `## Tasks` checkboxes).
 4. Record the remaining list as `SCOPED_FILES` — this is the revert target list.
+4b. **Block if a scoped path is already dirty**: intersect `SCOPED_FILES` (the final, post-exclusion-filter list from step 4 above) with `DIRTY_PATHS` (step 2b's raw collection). If the intersection is non-empty, STOP here — before step 4 (Simplify) reads or writes a single file. Make no commit, run no `git checkout --`, make no edit. Return `Status: blocked` with `Summary: scoped file(s) already have uncommitted edits — resolve or commit them before running /simplify-code`, naming the offending paths. This is a hard gate, not a notice — unlike `IGNORED_DIRTY` above, which only reports paths *outside* scope and never blocks. Intersect against `SCOPED_FILES` (the post-filter list), never against the pre-filter committed-diff list from step 2 — a path the exclusion filters already dropped is out of scope and must not trip this block; that would be a false positive stopping a legitimate run.
 5. **If `SCOPED_FILES` is empty** → skip straight to step 6 and report `Commit: none`; write the sentinel with `Summary: no changes needed` and return `Status: success`. Skip steps 4, 5, and 5.5 — there is nothing to simplify and nothing to commit.
 
 ### 4. Simplify

@@ -368,3 +368,42 @@ Es la misma clase de defecto que la feature persigue, encontrado dentro de la fe
   citation, not a heading); switched to a line-anchored regex (`/^## User decisions$/gm`) taking
   the last match. Restored with `git stash pop`. Full suite: 141 (baseline) → 148 (7 new tests),
   all green.
+
+## Delta: 2026-09-01 — Task T010
+
+- **ADDED — exact gate placement, not specified at this granularity in `plan.md`**: `plan.md`'s
+  touched-areas row for `sdd-simplify-code.md` said only "V9: bloqueo tras `:57` y antes del paso
+  4" — a line-number anchor already stale before this task started (T005-T009 both edited this
+  file). Located by heading/content instead: the block sits as a new sub-step `4b`, immediately
+  after step 3's item 4 (`Record the remaining list as SCOPED_FILES`) and before item 5 (the
+  empty-scope skip), so it always sees the final, post-exclusion-filter list and always runs
+  before step 4 (Simplify) opens a single file.
+- **ADDED — shared collection instead of a second `git status --short` call**: sub-step 2b already
+  computed the raw dirty-path list to derive the notice-only `IGNORED_DIRTY`. Renamed that raw
+  collection to `DIRTY_PATHS` and had the new 4b block intersect against it directly, rather than
+  telling the agent to run `git status --short` a second time — one collection, two derived checks,
+  so the two can't read the working tree at different moments and disagree.
+- **MODIFIED**: the new 4b block intersects `DIRTY_PATHS` against `SCOPED_FILES` (the step-4 list,
+  already passed through the exclusion filters), never against the step-2 pre-filter committed-diff
+  list. Intersecting against the pre-filter list would have produced a false-positive block on a
+  dirty test/lockfile/migration/config/SDD-artifact path that the filters would have dropped from
+  scope anyway — exactly the false-positive risk flagged when this task was assigned.
+- **MODIFIED**: Step 2's closing sentence ("This guarantees that any post-edit failure later is
+  attributable to simplify-code, not a pre-existing regression.") was unconditionally false before
+  this task — a scoped file already dirty at baseline time meant the baseline validation ran with
+  that edit already mixed in, so passing there proved nothing about isolation. Reworded to state the
+  guarantee only holds given the new 4b block, which is what actually delivers it (a run either
+  reaches step 4 with no scoped file dirty, or blocks before step 4 touches anything — there is no
+  third path where an edit happens against an already-dirty scoped file).
+- Tests: 5 new tests in `tests/sdd.test.js`'s "simplify blocks on a dirty scoped file instead of
+  committing or discarding it (025/T010/AC9)" describe block. All are prose-wiring guards over
+  `sdd-simplify-code.md` — a `toContain`/`not.toContain` proves the instruction text exists and says
+  the right thing, never that an agent obeys it at runtime (same limit already declared for this
+  class of file by T006/T007/T009). Proved RED with `git stash push --
+  .claude/agents/sdd-simplify-code.md` (test file left in place): all 5 failed against the pre-T010
+  wording, for the expected reasons (no `4b` block, old unconditional guarantee sentence still
+  present, `IGNORED_DIRTY` still computed as its own one-shot filter rather than derived from a
+  named, reusable `DIRTY_PATHS`). Restored with `git stash pop`. Full suite: 148 (baseline) → 153
+  (5 new tests), all green. The pre-existing pinned test for the SDD-artifacts exclusion-filter
+  bullet (`Apply the same exclusion filters as \`SCOPED_FILES\``) was preserved verbatim inside the
+  2b rewrite rather than reworded, since another test pins that exact substring.
