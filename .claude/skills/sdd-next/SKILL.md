@@ -165,6 +165,8 @@ When the sub-agent returns, apply the **Post-Phase Validation Protocol** from `s
 
 For `implement-task`, step 2 (Envelope complete) also covers `TDD-Evidence`: absent or incomplete TDD-Evidence counts as an envelope-complete failure — no separate mechanism, it rides the same retry→ESCALATED budget below.
 
+For `archive-feature`, step 3 (Lint/tests pass) also runs `sdd verify-archive <feature-id>` and trusts only its exit code: a nonzero exit is a validation failure for this non-retryable phase, so the orchestrator reports `Status: blocked` with the CLI's stderr and stops — zero retries, never `ESCALATED`.
+
 If **all checks pass**, proceed to Step 5.
 
 If **any check fails**:

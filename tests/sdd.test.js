@@ -3974,4 +3974,79 @@ describe("sdd CLI smoke tests", () => {
       expect(reviewer).toContain("CRITICAL");
     });
   });
+
+  describe("T007: orchestrator post-archive gate (026/AC6)", () => {
+    // Prose-pin tests, same framing as T005/T006 above. T006 gave archive-feature its
+    // own self-check (agent-side, before deleting .sdd-state); this task is the
+    // independent orchestrator-side gate AC6 also names: after archive-feature
+    // returns, the orchestrator re-runs `sdd verify-archive` itself and trusts only
+    // the exit code -- so a hand-run archive (no agent self-check in the loop at all)
+    // is still caught the next time an orchestrator touches the feature. Unlike T005's
+    // TDD-Evidence clause (a shared substring only, worded differently per file), this
+    // clause is specified as byte-identical across all three files -- the stronger pin.
+    const phaseCommon = fs.readFileSync(
+      path.join(repoRoot, ".claude/skills/_shared/sdd-phase-common.md"),
+      "utf8",
+    );
+    const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
+    const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
+
+    // The full sentence, verbatim in all three files -- not just an overlapping substring.
+    const archiveVerifyGateClause =
+      "For `archive-feature`, step 3 (Lint/tests pass) also runs `sdd verify-archive <feature-id>` " +
+      "and trusts only its exit code: a nonzero exit is a validation failure for this non-retryable " +
+      "phase, so the orchestrator reports `Status: blocked` with the CLI's stderr and stops — zero " +
+      "retries, never `ESCALATED`.";
+
+    test("the same archive-verify gate clause is present verbatim in all 3 files", () => {
+      expect(phaseCommon).toContain(archiveVerifyGateClause);
+      expect(sddNext).toContain(archiveVerifyGateClause);
+      expect(sddAuto).toContain(archiveVerifyGateClause);
+    });
+
+    test("the clause sits inside each file's own post-phase-validation section, not merely somewhere in the file", () => {
+      // Second case, a different code path than the presence check above: bound each
+      // file to its own validation section (heading-to-heading) and assert the clause
+      // falls inside that slice, not e.g. trailing off in an unrelated section.
+      const fStart = phaseCommon.indexOf("## F. Post-Phase Validation Protocol");
+      const gStart = phaseCommon.indexOf("## G. Engram Persistent Memory");
+      expect(fStart).toBeGreaterThan(-1);
+      expect(gStart).toBeGreaterThan(fStart);
+      expect(phaseCommon.slice(fStart, gStart)).toContain(archiveVerifyGateClause);
+
+      const step4Start = sddNext.indexOf("## Step 4: Validate and retry");
+      const step5Start = sddNext.indexOf("## Step 5: Evaluator-optimizer loop (review→fix→re-review)");
+      expect(step4Start).toBeGreaterThan(-1);
+      expect(step5Start).toBeGreaterThan(step4Start);
+      expect(sddNext.slice(step4Start, step5Start)).toContain(archiveVerifyGateClause);
+
+      const step2Start = sddAuto.indexOf("## Step 2: Run pipeline loop");
+      const step2bStart = sddAuto.indexOf("## Step 2b: Evaluator-optimizer loop (review→fix→re-review)");
+      expect(step2Start).toBeGreaterThan(-1);
+      expect(step2bStart).toBeGreaterThan(step2Start);
+      expect(sddAuto.slice(step2Start, step2bStart)).toContain(archiveVerifyGateClause);
+    });
+
+    test("the existing not-exempt / non-retryable clauses stay byte-identical -- the new clause sits alongside, not instead of, them", () => {
+      // Third case: a regression guard, not a presence check on the new text at all --
+      // if the new clause had been spliced in by rewording these instead of adding
+      // beside them, this is what would catch it.
+      const notExemptClause =
+        "`archive-feature` is not exempt: it moves files, not prose, so this step still runs";
+      expect(phaseCommon).toContain(notExemptClause);
+      expect(sddNext).toContain(notExemptClause);
+      expect(sddAuto).toContain(notExemptClause);
+
+      const sharedNonRetryableSentence =
+        "Its post-move pre-flight can't succeed on a second attempt, so on failure report " +
+        "`Status: blocked` with the validation output and stop — zero retries, never `ESCALATED`.";
+      expect(sddNext).toContain(sharedNonRetryableSentence);
+      expect(sddAuto).toContain(sharedNonRetryableSentence);
+
+      expect(phaseCommon).toContain(
+        "On validation failure for a non-retryable phase, the orchestrator MUST report " +
+          "`Status: blocked` with the validation output and stop — zero retries, never `ESCALATED`.",
+      );
+    });
+  });
 });

@@ -109,6 +109,8 @@ A phase passes validation only when **all three steps** succeed.
 
 For `implement-task`, step 2 (Envelope complete) also covers `TDD-Evidence`: absent or incomplete TDD-Evidence counts as an envelope-complete failure — no separate mechanism, it rides the retry→ESCALATED budget below like any other envelope-complete failure.
 
+For `archive-feature`, step 3 (Lint/tests pass) also runs `sdd verify-archive <feature-id>` and trusts only its exit code: a nonzero exit is a validation failure for this non-retryable phase, so the orchestrator reports `Status: blocked` with the CLI's stderr and stops — zero retries, never `ESCALATED`.
+
 ### Retry Logic
 
 **Non-retryable phases** — checked before the retry loop below starts: `archive-feature`. Its pre-flight requires `specs/<id>/spec.md`, `plan.md`, and `tasks.md`; archive's own move already removed them, so a retry would fail pre-flight and produce a misleading diagnostic, not a second chance. On validation failure for a non-retryable phase, the orchestrator MUST report `Status: blocked` with the validation output and stop — zero retries, never `ESCALATED`. The archive move itself is not in question; what broke is downstream.

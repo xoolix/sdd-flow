@@ -42,7 +42,7 @@
   - touches: agents, tests
   - type: feat
 
-- [ ] **T007 [AFK] Orchestrator post-archive gate**: sdd-next Step 4, sdd-auto Step 2 item 3, and sdd-phase-common.md §F carry an identical clause running `sdd verify-archive` post-phase, trusting only its exit code (fail→blocked: archive-feature stays non-retryable, zero retries); consistency-pin test across the three files.
+- [x] **T007 [AFK] Orchestrator post-archive gate**: sdd-next Step 4, sdd-auto Step 2 item 3, and sdd-phase-common.md §F carry an identical clause running `sdd verify-archive` post-phase, trusting only its exit code (fail→blocked: archive-feature stays non-retryable, zero retries); consistency-pin test across the three files.
   - blocked_by: T002
   - verifies: AC6
   - touches: orchestration, tests
