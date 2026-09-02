@@ -581,6 +581,56 @@ describe("sdd CLI smoke tests", () => {
     expect(fenceDelimiters.length).toBe(2);
   });
 
+  test("archive-feature's Step 3.5 self-checks verify-archive before deleting the receipt, blocking on a nonzero exit (026 T006/AC6)", () => {
+    const archiveFeature = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"), "utf8");
+
+    // The self-check invocation itself, as inline code (never a fence -- a
+    // second fenced block would push the Step 3.5 fence count above 2).
+    expect(archiveFeature).toContain("`sdd verify-archive $ARGUMENTS`");
+
+    // Ordering pin, same indexOf pattern the T007 receipt-deletion-ordering test
+    // above already uses: the self-check must run before the receipt is touched
+    // at all, so its call site sits before the literal `rm -f` line.
+    const verifyArchiveIndex = archiveFeature.indexOf("`sdd verify-archive $ARGUMENTS`");
+    const rmReceiptIndex = archiveFeature.indexOf(
+      "run `rm -f specs/archive/YYYY-MM-DD-$ARGUMENTS/.sdd-state`",
+    );
+    expect(verifyArchiveIndex).toBeGreaterThan(-1);
+    expect(rmReceiptIndex).toBeGreaterThan(-1);
+    expect(verifyArchiveIndex).toBeLessThan(rmReceiptIndex);
+
+    // A nonzero exit blocks the phase with the CLI's stderr pasted verbatim and
+    // explicitly does not delete the receipt -- a second, independent assertion
+    // from the ordering pin above (this exercises the nonzero-exit branch's
+    // wording, not just where the call sits).
+    expect(archiveFeature).toContain("nonzero");
+    expect(archiveFeature).toContain("`sdd verify-archive`'s stderr pasted verbatim");
+    expect(archiveFeature).toContain("do not delete `.sdd-state`");
+
+    // Still no shell branching syntax introduced by the self-check prose --
+    // the existing T007/T008 pins already cover this range, this is a direct
+    // regression guard on the exact text this task adds.
+    const step35Match = archiveFeature.match(/### 3\.5\. Commit the slice([\s\S]*?)\n4\. \*\*Present summary\*\*/);
+    expect(step35Match).not.toBeNull();
+    expect(step35Match[1]).not.toMatch(/\bif\s+\[/);
+    expect(step35Match[1]).not.toMatch(/\bcase\b/);
+    expect(step35Match[1]).not.toMatch(/\belif\b/);
+  });
+
+  test("archive-feature's Step 3.6 points the human writing the PR body at branch-pr/chained-pr (026 T006/AC6)", () => {
+    const archiveFeature = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-archive-feature.md"), "utf8");
+
+    const step36Match = archiveFeature.match(/### 3\.6\. Print the PR gate commands([\s\S]*?)\n4\. \*\*Present summary\*\*/);
+    expect(step36Match).not.toBeNull();
+    const step36Body = step36Match[1];
+
+    expect(step36Body).toContain("`branch-pr`");
+    expect(step36Body).toContain("`chained-pr`");
+
+    // No repeat of the retired PR-creation literal here -- already guarded
+    // repo-wide, this file included, by sweep-retired-symbols.test.js's AC5 walk.
+  });
+
   // The two AC4 regression tests proving sdd-next/sdd-auto and CLAUDE.md no longer
   // mention the retired gate's phase label, command, or sentinel file moved to
   // tests/retired-symbol-proofs.test.js — each must name those literal strings to

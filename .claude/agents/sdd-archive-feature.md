@@ -55,7 +55,7 @@ sdd commit-slice $ARGUMENTS --type chore --title "Archive $ARGUMENTS" --moved-fr
 
 By the time this runs, the folder has already moved to `specs/archive/YYYY-MM-DD-$ARGUMENTS/`. This is exactly why sdd commit-slice derives the feature directory (F2 in `decisions.md`): it tries `specs/$ARGUMENTS` first, then falls back to `find specs/archive -maxdepth 1 -type d -name "*-$ARGUMENTS"`. The plain call above works with no path override — do not invent one.
 
-- **On success**: record the printed SHA as `Commit: <sha>` for the result envelope, then run `rm -f specs/archive/YYYY-MM-DD-$ARGUMENTS/.sdd-state` — silent no-op if absent (see CLAUDE.md `## Archive folder format`; the receipt's only job was the pre-flight gate above, and it has no value after a successful archive commit). This is gitignored, so the deletion needs no `git rm` and does not touch the commit just made.
+- **On success**: record the printed SHA as `Commit: <sha>` for the result envelope, then self-check before touching the receipt at all: run `sdd verify-archive $ARGUMENTS` and trust only its exit code. A zero exit confirms the commit that just landed really moved both halves, and only then does it run `rm -f specs/archive/YYYY-MM-DD-$ARGUMENTS/.sdd-state` — silent no-op if absent (see CLAUDE.md `## Archive folder format`; the receipt's only job was the pre-flight gate above, and it has no value after a successful archive commit). This is gitignored, so the deletion needs no `git rm` and does not touch the commit just made. A nonzero exit means the commit did not actually move both halves — return `Status: blocked` with `sdd verify-archive`'s stderr pasted verbatim, and do not delete `.sdd-state`; the receipt stays in place for a human to diagnose.
 - **On failure** (`sdd commit-slice` exits non-zero): return `Status: blocked` with the CLI's stderr pasted verbatim. Do not attempt recovery logic. Do **not** delete `.sdd-state` — the folder is mid-archive with no commit behind it, and a human diagnosing the failure still needs the receipt to see that review did pass.
 
 **This agent runs on `model: haiku`** — the cheapest tier in the pipeline. Before this step it does pure filesystem `mv` with no git awareness at all. Keep this step to exactly one `sdd commit-slice` call with no conditional branching beyond success/failure above: complex conditional git-failure reasoning does not belong here — that branching lives in `bin/sdd`. Do not "improve" this into a decision tree.
@@ -70,6 +70,8 @@ The pipeline ends here — there is no command and no phase to hand off to. Run 
 - **On failure** (non-zero exit): print the same two lines with `<base>` left **unresolved** — a copyable command with a hole beats printing nothing.
 
 Do not run either command yourself — only print them.
+
+Point the human writing the PR body at the `branch-pr` skill for the summary/test-plan shape, or `chained-pr` when this change should ship as a stacked split.
 
 4. **Present summary** — Show the user what was archived and any deltas that were merged.
 

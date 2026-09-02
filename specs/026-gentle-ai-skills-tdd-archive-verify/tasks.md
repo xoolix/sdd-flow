@@ -36,7 +36,7 @@
   - touches: orchestration, agents, tests
   - type: feat
 
-- [ ] **T006 [AFK] archive-feature self-check**: sdd-archive-feature.md Step 3.5 "On success" calls `sdd verify-archive` before .sdd-state deletion (flat prose, no branching, one fenced block per the pin test); add the branch-pr/chained-pr pointer at Step 3.6.
+- [x] **T006 [AFK] archive-feature self-check**: sdd-archive-feature.md Step 3.5 "On success" calls `sdd verify-archive` before .sdd-state deletion (flat prose, no branching, one fenced block per the pin test); add the branch-pr/chained-pr pointer at Step 3.6.
   - blocked_by: T002
   - verifies: AC6
   - touches: agents, tests
