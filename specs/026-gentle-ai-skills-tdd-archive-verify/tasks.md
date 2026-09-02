@@ -30,7 +30,7 @@
 
 ### 2. Core
 
-- [ ] **T005 [AFK] Orchestrator + reviewer validate TDD-Evidence**: sdd-next, sdd-auto and sdd-phase-common §F carry the identical clause failing the phase (retry→ESCALATED) on missing/incomplete TDD-Evidence; sdd-reviewer gets a mechanical evidence-vs-reality step (test exists, passes now, has N cases).
+- [x] **T005 [AFK] Orchestrator + reviewer validate TDD-Evidence**: sdd-next, sdd-auto and sdd-phase-common §F carry the identical clause failing the phase (retry→ESCALATED) on missing/incomplete TDD-Evidence; sdd-reviewer gets a mechanical evidence-vs-reality step (test exists, passes now, has N cases).
   - blocked_by: T004
   - verifies: AC3
   - touches: orchestration, agents, tests

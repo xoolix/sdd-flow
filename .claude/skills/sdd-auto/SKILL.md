@@ -118,6 +118,7 @@ Repeat until pipeline is complete, blocked, or escalated:
    - **Artifacts exist** — `ls` each path listed in the `Artifacts` field of the return envelope.
    - **Envelope complete** — verify the return envelope contains all required fields: Status, Summary, Artifacts, Next, Risks.
    - **Lint/tests pass** — run lint, typecheck, and tests in parallel Bash calls (skip if the phase produces no code, e.g., spec or plan phases — `archive-feature` is not exempt: it moves files, not prose, so this step still runs).
+   - For `implement-task`, step 2 (Envelope complete) also covers `TDD-Evidence`: absent or incomplete TDD-Evidence counts as an envelope-complete failure — no separate mechanism, it rides the same retry→ESCALATED budget as any other envelope-complete failure.
    - For `implement-task`, extract `Task attempted` from the result envelope and parse the first task ID (`Tnnn`). Cache this as `last_attempted_task_id` for retry handling.
 4. **On validation success**:
    - If `status: success` or `partial` → show a one-line summary, continue to next iteration.

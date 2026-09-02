@@ -3867,4 +3867,61 @@ describe("sdd CLI smoke tests", () => {
       expect(tddSkill).toContain("TDD-Evidence");
     });
   });
+
+  describe("T005: orchestrators + reviewer validate TDD-Evidence against reality (026/AC3)", () => {
+    // Same honest framing as the §F/T004 describes above: prose-pin tests, not behavioral
+    // coverage. T004 declared the TDD-Evidence FIELD (§D); this task adds the VALIDATION
+    // rule that treats a missing/incomplete field as an envelope-complete failure, plus
+    // the reviewer's mechanical evidence-vs-reality check. These assert the instruction
+    // text exists in the four locations plan.md names, not that an agent obeys it at runtime.
+    const phaseCommon = fs.readFileSync(
+      path.join(repoRoot, ".claude/skills/_shared/sdd-phase-common.md"),
+      "utf8",
+    );
+    const sddNext = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-next/SKILL.md"), "utf8");
+    const sddAuto = fs.readFileSync(path.join(repoRoot, ".claude/skills/sdd-auto/SKILL.md"), "utf8");
+    const reviewer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-reviewer.md"), "utf8");
+
+    // Distinctive substring only — verified zero hits in all three files before this task.
+    const tddEvidenceGateClause =
+      "absent or incomplete TDD-Evidence counts as an envelope-complete failure";
+
+    test("sdd-phase-common.md §F ties TDD-Evidence to the envelope-complete check for implement-task", () => {
+      expect(phaseCommon).toContain(tddEvidenceGateClause);
+      expect(phaseCommon).toContain("For `implement-task`");
+    });
+
+    test("sdd-phase-common.md §F does not invent a new retry mechanism — it rides the existing budget", () => {
+      // Second case, different code path than the presence check above: the clause must sit
+      // inside §F (the section governing retry→ESCALATED), not merely exist somewhere in the file.
+      const sectionFStart = phaseCommon.indexOf("## F. Post-Phase Validation Protocol");
+      const sectionGStart = phaseCommon.indexOf("## G. Engram Persistent Memory");
+      expect(sectionFStart).toBeGreaterThan(-1);
+      expect(sectionGStart).toBeGreaterThan(sectionFStart);
+      const sectionF = phaseCommon.slice(sectionFStart, sectionGStart);
+      expect(sectionF).toContain(tddEvidenceGateClause);
+    });
+
+    test("sdd-next/SKILL.md Step 4 restates the TDD-Evidence gate inline", () => {
+      expect(sddNext).toContain(tddEvidenceGateClause);
+    });
+
+    test("sdd-auto/SKILL.md Step 2 item 3 restates the TDD-Evidence gate inline", () => {
+      expect(sddAuto).toContain(tddEvidenceGateClause);
+    });
+
+    test("sdd-reviewer.md gains a mechanical step 2.5 validating TDD-Evidence against reality", () => {
+      expect(reviewer).toContain("2.5. **Validate TDD-Evidence against reality**");
+      expect(reviewer).toContain("EXISTS");
+      expect(reviewer).toContain("PASSES");
+    });
+
+    test("sdd-reviewer.md's step 2.5 checks the claimed triangulation count and escalates fabrication to CRITICAL", () => {
+      // Second case: the N-cases check and the fabrication consequence are two different
+      // clauses within the same step — pin both, not just the step's existence above.
+      expect(reviewer).toContain("N triangulation cases");
+      expect(reviewer).toContain("fabricated or unverifiable");
+      expect(reviewer).toContain("CRITICAL");
+    });
+  });
 });
