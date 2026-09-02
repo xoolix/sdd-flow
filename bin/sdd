@@ -8,7 +8,7 @@ SDD_HOME="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")/..
 VERSION="2.1.0"
 
 # ─── Core SDD skills (these go to global ~/.claude/skills/) ──────
-CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto sdd-hitl init-project build-registry feature-spec diagnose-bug tdd grill-me prototype _shared"
+CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto sdd-hitl init-project build-registry feature-spec diagnose-bug tdd grill-me prototype work-unit-commits comment-writer branch-pr chained-pr _shared"
 
 # ─── helpers ───────────────────────────────────────────────────────
 
