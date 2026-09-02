@@ -107,6 +107,15 @@ Usage:
                                  (--phase <p> [--verdict <v>])
   sdd domain-vocab               Print .claude/rules/domains.md;
                                  exit 3 (no output) if empty, comment-only, or absent
+  sdd verify-archive <feature-id> Verify HEAD actually moved both halves of the
+                                 archive: >=1 deletion under specs/<feature-id>/,
+                                 >=1 addition under specs/archive/*-<feature-id>/,
+                                 and specs/<feature-id>/ gone from HEAD's tree
+                                 (exit 0); exit 1 names the missing half; exit 3
+                                 when no archive dir exists for the id, or when
+                                 HEAD adds nothing under it (nothing to verify);
+                                 two archive dirs for the same id resolve to the
+                                 most recent, noted on stderr
   sdd help                       Show this help
 
 Options for 'init':
@@ -1333,6 +1342,132 @@ cmd_state_write() {
   return 0
 }
 
+# ─── verify-archive ──────────────────────────────────────────────────
+
+# Verifies the CURRENT HEAD commit actually moved both halves of an archive:
+# deletions under specs/<feature-id>/ AND additions under the matching
+# specs/archive/*-<feature-id>/ dir, with specs/<feature-id>/ gone from HEAD's
+# tree afterwards. Exists because prose alone never stopped it -- 021 and
+# 294ccfc both landed an "archive" commit that was 6 additions, 0 deletions:
+# a plain copy, not a move, with the old dir left fully tracked. Nothing read
+# the commit after it landed to catch that. `--no-renames` is load-bearing:
+# without it, a same-content delete+add collapses into a single R-line under
+# git's default rename detection, which would hide the very halves this
+# checks for (the reason the user asked for the flag in the first place).
+#
+# HEAD only, deliberately no --commit flag -- orchestrators run this
+# immediately post-phase; a later check for stray duplicate archive dirs is
+# `sdd status`'s job, not this command's (AC5/T003).
+#
+# Multi-date ambiguity (the same feature-id archived under two dates):
+# resolved locally here via a sorted glob, guard-before-expand, never
+# resolve_feature_dir -- that helper's first-match `find | head -1` stays
+# untouched; other callers depend on its current behavior. Directory names
+# are YYYY-MM-DD-prefixed, so lexicographic order is chronological order:
+# the max is the most recent. A stderr note names the choice so a stale
+# leftover dir is never silently favored.
+cmd_verify_archive() {
+  local usage_msg='usage: sdd verify-archive <feature-id>'
+
+  local feature_id="${1:-}"
+  [ $# -gt 0 ] && shift
+
+  if [ -z "$feature_id" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  if ! validate_feature_id "$feature_id"; then
+    printf 'error: invalid feature-id: "%s" (must not be empty, contain "..", contain "/", or start with "-")\n' "$feature_id" >&2
+    return 2
+  fi
+
+  if [ $# -gt 0 ]; then
+    printf 'error: unknown option: %s\n' "$1" >&2
+    return 2
+  fi
+
+  local specs_dir
+  specs_dir="$(pwd)/specs"
+
+  local -a matches=()
+  local candidate
+  for candidate in "$specs_dir"/archive/*-"$feature_id"; do
+    [ -d "$candidate" ] && matches+=("$candidate")
+  done
+
+  if [ "${#matches[@]}" -eq 0 ]; then
+    printf 'error: no archive directory found for %s under specs/archive/\n' "$feature_id" >&2
+    return 3
+  fi
+
+  local archive_dir
+  if [ "${#matches[@]}" -gt 1 ]; then
+    archive_dir="$(printf '%s\n' "${matches[@]}" | sort | tail -1)"
+    printf 'note: multiple archive directories found for %s; using the most recent: %s\n' \
+      "$feature_id" "$(basename "$archive_dir")" >&2
+  else
+    archive_dir="${matches[0]}"
+  fi
+
+  local archive_rel
+  archive_rel="specs/archive/$(basename "$archive_dir")"
+
+  local head
+  head="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$head" ]; then
+    printf 'error: no commits on the current branch -- cannot resolve HEAD\n' >&2
+    return 3
+  fi
+
+  local name_status
+  name_status="$(git show --no-renames --name-status --format= "$head" 2>/dev/null || true)"
+
+  local deleted_count=0 added_count=0
+  local deleted_prefix="specs/${feature_id}/"
+  local change_type change_path
+  while IFS=$'\t' read -r change_type change_path; do
+    [ -n "$change_type" ] || continue
+    case "$change_type" in
+      D)
+        case "$change_path" in
+          "$deleted_prefix"*) deleted_count=$((deleted_count + 1)) ;;
+        esac
+        ;;
+      A)
+        case "$change_path" in
+          "$archive_rel/"*) added_count=$((added_count + 1)) ;;
+        esac
+        ;;
+    esac
+  done <<EOF
+$name_status
+EOF
+
+  # Nothing added under the archive dir: HEAD is not an archive commit for
+  # this feature at all (e.g. run long after the fact, on an unrelated
+  # commit) -- unresolvable, not a verification failure. This is also what
+  # keeps documented-cli-usage's fixture (specs/<id>/ present, no archive at
+  # all) at exit 3 rather than 1 or 2.
+  if [ "$added_count" -eq 0 ]; then
+    printf 'error: HEAD (%s) adds nothing under %s -- nothing to verify\n' "$head" "$archive_rel" >&2
+    return 3
+  fi
+
+  local still_tracked
+  still_tracked="$(git ls-tree -r --name-only HEAD -- "specs/${feature_id}" 2>/dev/null || true)"
+
+  if [ "$deleted_count" -eq 0 ] || [ -n "$still_tracked" ]; then
+    printf 'error: archive commit %s is missing the deletions under specs/%s/ (found %s addition(s) under %s, %s deletion(s) under specs/%s/)\n' \
+      "$head" "$feature_id" "$added_count" "$archive_rel" "$deleted_count" "$feature_id" >&2
+    return 1
+  fi
+
+  printf 'ok: %s archived cleanly in %s (%s deletion(s), %s addition(s) under %s)\n' \
+    "$feature_id" "$head" "$deleted_count" "$added_count" "$archive_rel"
+  return 0
+}
+
 # ─── status ────────────────────────────────────────────────────────
 
 # Computes phase, task counts, sentinel freshness, and the next command for
@@ -1673,6 +1808,7 @@ case "${1:-help}" in
   commit-slice) shift; cmd_commit_slice "$@" ;;
   status)       shift; cmd_status "$@" ;;
   state-write)  shift; cmd_state_write "$@" ;;
+  verify-archive) shift; cmd_verify_archive "$@" ;;
   domain-vocab) cmd_domain_vocab ;;
   help|--help|-h) usage ;;
   version|--version|-v) echo "sdd v${VERSION}" ;;

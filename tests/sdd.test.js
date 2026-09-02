@@ -1,7 +1,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 
 const repoRoot = path.resolve(__dirname, "..");
 const sddBin = path.join(repoRoot, "bin", "sdd");
@@ -2733,6 +2733,131 @@ describe("sdd CLI smoke tests", () => {
       expect(onFailureMatch).not.toBeNull();
       expect(archiveFeature).toContain("Do **not** delete `.sdd-state`");
       expect(archiveFeature).toContain("the folder is mid-archive with no commit behind it");
+    });
+  });
+
+  describe("sdd verify-archive (T002/AC4)", () => {
+    // Same fixture shape as the two describe blocks above: both sidecars
+    // gitignored, all tasks checked, seeded, on the feature branch.
+    function makeReadyProject() {
+      const project = makeTempProject();
+      fs.writeFileSync(
+        path.join(project, ".gitignore"),
+        "specs/**/.parent-branch\nspecs/**/.sdd-state\n",
+      );
+      fs.writeFileSync(
+        path.join(project, "specs", "001-demo", "tasks.md"),
+        "# Tasks\n\n- [x] First behavior\n- [x] Second behavior\n",
+      );
+      seedCommit(project);
+      execFileSync(sddBin, ["branch", "001-demo"], { cwd: project });
+      return project;
+    }
+
+    // The real move-and-commit sdd-archive-feature.md's Step 3 / 3.5 do: a
+    // filesystem rename, then `commit-slice --moved-from` stages both halves
+    // in one commit. Returns the archive dir's absolute path.
+    function legitArchive(project, dateStr) {
+      const oldDir = path.join(project, "specs", "001-demo");
+      const newDir = path.join(project, "specs", "archive", `${dateStr}-001-demo`);
+      fs.mkdirSync(path.join(project, "specs", "archive"), { recursive: true });
+      fs.renameSync(oldDir, newDir);
+      execFileSync(
+        sddBin,
+        [
+          "commit-slice",
+          "001-demo",
+          "--type",
+          "chore",
+          "--title",
+          "Archive 001-demo",
+          "--moved-from",
+          "specs/001-demo",
+        ],
+        { cwd: project },
+      );
+      return newDir;
+    }
+
+    test("a legit --moved-from archive verifies clean: exit 0 (AC4)", () => {
+      const project = makeReadyProject();
+      legitArchive(project, "2099-01-01");
+
+      const output = execFileSync(sddBin, ["verify-archive", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(output).toContain("001-demo");
+    });
+
+    test("a bypass commit (plain copy, additions only, no --moved-from) fails naming the missing deletions (the 294ccfc shape, AC4)", () => {
+      const project = makeReadyProject();
+
+      // The bypass reproduced twice in the wild: a plain filesystem copy
+      // (not a rename) committed directly with `git commit`, never through
+      // commit-slice --moved-from. specs/001-demo/ is never touched by this
+      // commit -- it was already committed in the seed -- so the new commit
+      // carries only "A" lines under the archive dir, zero "D" lines, and
+      // specs/001-demo/ is still fully tracked at HEAD afterwards.
+      const oldDir = path.join(project, "specs", "001-demo");
+      const newDir = path.join(project, "specs", "archive", "2099-01-01-001-demo");
+      fs.mkdirSync(newDir, { recursive: true });
+      for (const name of fs.readdirSync(oldDir)) {
+        fs.copyFileSync(path.join(oldDir, name), path.join(newDir, name));
+      }
+      execFileSync("git", ["add", "-A"], { cwd: project });
+      execFileSync("git", ["commit", "-q", "-m", "bypass: archive 001-demo (altas only)"], {
+        cwd: project,
+      });
+
+      const error = sddFail(["verify-archive", "001-demo"], { cwd: project });
+      expect(error.status).toBe(1);
+      expect(error.stderr).toContain("specs/001-demo");
+      expect(error.stderr.toLowerCase()).toContain("delet");
+    });
+
+    test("two archive dirs for the same feature-id resolve to the most recent, with a stderr note (AC4)", () => {
+      const project = makeReadyProject();
+
+      // A stale leftover archive dir under an older date, committed as if it
+      // were historical baggage never touched again. Seeded directly rather
+      // than through legitArchive/commit-slice: with two "*-001-demo" dirs
+      // on disk, commit-slice's own resolve_feature_dir (a plain
+      // find | head -1, deliberately untouched by this task -- verify-archive
+      // gets its own local resolution instead) would pick one of the two
+      // ambiguously, which is exactly the multi-date problem this test is
+      // isolating on verify-archive's side, not commit-slice's.
+      const staleDir = path.join(project, "specs", "archive", "2098-01-01-001-demo");
+      fs.mkdirSync(staleDir, { recursive: true });
+      fs.writeFileSync(path.join(staleDir, "spec.md"), "# Old spec\n");
+      execFileSync("git", ["add", "-A"], { cwd: project });
+      execFileSync("git", ["commit", "-q", "-m", "seed a stale archive dir"], { cwd: project });
+
+      // The real, legit archive lands under a later date, via a plain `git
+      // mv` + commit -- `git show --no-renames` still reports this as a
+      // separate D + A pair regardless of how the move was staged.
+      execFileSync(
+        "git",
+        ["mv", "specs/001-demo", "specs/archive/2099-01-01-001-demo"],
+        { cwd: project },
+      );
+      execFileSync("git", ["commit", "-q", "-m", "archive 001-demo (legit move)"], { cwd: project });
+
+      const result = spawnSync(sddBin, ["verify-archive", "001-demo"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("2099-01-01-001-demo");
+      expect(result.stderr).not.toContain("2098-01-01-001-demo");
+    });
+
+    test("no archive directory at all: exit 3, not 1 or 2 (keeps documented-cli-usage's no-archive fixture green)", () => {
+      const project = makeReadyProject();
+
+      const error = sddFail(["verify-archive", "001-demo"], { cwd: project });
+      expect(error.status).toBe(3);
+      expect(error.stderr).toContain("archive");
     });
   });
 

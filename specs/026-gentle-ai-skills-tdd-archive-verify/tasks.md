@@ -10,7 +10,7 @@
   - touches: cli, skills, tests
   - type: feat
 
-- [ ] **T002 [AFK] `sdd verify-archive <id>` subcommand**: pure-shell command using `git show --no-renames --name-status` on the archive commit; exit 0 only when ≥1 D under specs/<id>/ and ≥1 A under specs/archive/*-<id>/ and specs/<id>/ is gone from HEAD; exit ≠0 naming the missing half otherwise; resolve multi-date archive dirs to most recent or fail clearly. Temp-repo tests cover a simulated bypass (altas-only commit) and a legit --moved-from archive.
+- [x] **T002 [AFK] `sdd verify-archive <id>` subcommand**: pure-shell command using `git show --no-renames --name-status` on the archive commit; exit 0 only when ≥1 D under specs/<id>/ and ≥1 A under specs/archive/*-<id>/ and specs/<id>/ is gone from HEAD; exit ≠0 naming the missing half otherwise; resolve multi-date archive dirs to most recent or fail clearly. Temp-repo tests cover a simulated bypass (altas-only commit) and a legit --moved-from archive.
   - blocked_by: none
   - verifies: AC4
   - touches: cli, tests
