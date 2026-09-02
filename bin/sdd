@@ -1393,6 +1393,19 @@ resolve_archive_dir() {
   fi
 }
 
+# T009 (judge finding #1): true when git history contains at least one
+# commit touching specs/<feature_id>/, even if that path is gone from HEAD
+# now -- the signal that a feature was tracked at some point, as opposed to
+# an id that was never used. `-1` stops at the first match, so this stays
+# cheap regardless of repo depth. Assumes cwd is the repo root, the same
+# convention cmd_verify_archive's own git calls already rely on.
+feature_history_exists() {
+  local feature_id="$1"
+  local hit
+  hit="$(git log --oneline -1 -- "specs/${feature_id}/" 2>/dev/null || true)"
+  [ -n "$hit" ]
+}
+
 cmd_verify_archive() {
   local usage_msg='usage: sdd verify-archive <feature-id>'
 
@@ -1420,7 +1433,21 @@ cmd_verify_archive() {
   resolve_archive_dir "$feature_id" "$specs_dir"
 
   if [ "${#ARCHIVE_DIR_MATCHES[@]}" -eq 0 ]; then
-    printf 'error: no archive directory found for %s under specs/archive/\n' "$feature_id" >&2
+    # Three shapes collapse to exit 3 here, and only the stderr text tells
+    # them apart (T009, judge finding #1): specs/<id>/ still present is the
+    # ordinary "not yet archived" case (unchanged message, most common);
+    # specs/<id>/ gone with no git history is a typo'd/never-used id;
+    # specs/<id>/ gone WITH git history is the pure-deletion bypass -- worse
+    # than "not found", since the spec/plan/decisions are actually lost.
+    if [ ! -d "$specs_dir/$feature_id" ] && feature_history_exists "$feature_id"; then
+      printf 'error: specs/%s/ was tracked in git history but is now gone -- no archive directory exists under specs/archive/ either, so nothing under specs/%s/ can be found in any location (pure-deletion bypass)\n' \
+        "$feature_id" "$feature_id" >&2
+    elif [ ! -d "$specs_dir/$feature_id" ]; then
+      printf 'error: no archive directory found for %s under specs/archive/ (never started -- no git history under specs/%s/ either)\n' \
+        "$feature_id" "$feature_id" >&2
+    else
+      printf 'error: no archive directory found for %s under specs/archive/\n' "$feature_id" >&2
+    fi
     return 3
   fi
 
@@ -1499,23 +1526,42 @@ EOF
 # resolve_feature_dir stays untouched -- its other callers depend on the
 # current first-match behavior.
 #
+# T009 (judge finding #1) extends this to a second broken shape: specs/
+# <feature_id>/ present in NEITHER location, but git history proves it was
+# tracked at some point (a pure-deletion bypass -- `git rm -r` or an
+# interrupted move, never archived). Two other "specs/<feature_id>/ absent"
+# outcomes stay unbroken on purpose: a feature already archived correctly
+# (resolve_archive_dir finds its dir) and an id that never existed (no git
+# history either) both fall through to the plain "not found" path a caller
+# already has.
+#
 # Args: feature_id, specs_dir
 # Sets (globals): ARCHIVE_INTEGRITY_BROKEN ("true"/"false", usable directly
-#                 in `if`), ARCHIVE_MATCH_RESULT ("specs/archive/<dir>" when
-#                 broken, else "")
+#                 in `if`), ARCHIVE_MATCH_RESULT ("specs/archive/<dir>" for
+#                 the duplicate-tracked shape, "" for the pure-deletion
+#                 bypass shape -- there is no archive dir to name; callers
+#                 branch on emptiness to tell the two apart)
 check_archive_integrity() {
   local feature_id="$1" specs_dir="$2"
 
   ARCHIVE_INTEGRITY_BROKEN=false
   ARCHIVE_MATCH_RESULT=""
 
-  [ -d "$specs_dir/$feature_id" ] || return 0
+  if [ -d "$specs_dir/$feature_id" ]; then
+    resolve_archive_dir "$feature_id" "$specs_dir"
+    [ -z "$ARCHIVE_DIR_CHOSEN" ] && return 0
+
+    ARCHIVE_INTEGRITY_BROKEN=true
+    ARCHIVE_MATCH_RESULT="specs/archive/$(basename "$ARCHIVE_DIR_CHOSEN")"
+    return 0
+  fi
 
   resolve_archive_dir "$feature_id" "$specs_dir"
-  [ -z "$ARCHIVE_DIR_CHOSEN" ] && return 0
+  [ -n "$ARCHIVE_DIR_CHOSEN" ] && return 0
+
+  feature_history_exists "$feature_id" || return 0
 
   ARCHIVE_INTEGRITY_BROKEN=true
-  ARCHIVE_MATCH_RESULT="specs/archive/$(basename "$ARCHIVE_DIR_CHOSEN")"
 }
 
 # Computes phase, task counts, sentinel freshness, and the next command for
@@ -1764,12 +1810,13 @@ cmd_status() {
     [ "$feature_dir" = "$specs_dir/$feature_id" ] || is_archived=true
   fi
 
-  if [ -z "$feature_dir" ]; then
-    printf 'error: feature not found: %s\n' "$feature_id" >&2
-    exit 1
-  fi
-
-  # ── Blockers array ──────────────────────────────────────────────
+  # ── Integrity pre-check ──────────────────────────────────────────
+  # Runs even when feature_dir failed to resolve above (T009, judge finding
+  # #1): a pure-deletion bypass leaves a feature-id absent from BOTH
+  # locations, which resolve_feature_dir alone reports identically to an id
+  # that never existed. check_archive_integrity tells the two apart via git
+  # history, so this must run before the plain "not found" exit below, not
+  # after it.
   local blockers='[]'
 
   check_archive_integrity "$feature_id" "$specs_dir"
@@ -1778,9 +1825,18 @@ cmd_status() {
     TASKS_TOTAL_RESULT=0
     TASKS_REMAINING_RESULT=0
     SENTINEL_FRESH_RESULT="false"
-    NEXT_COMMAND_RESULT="(blocked -- specs/${feature_id}/ and ${ARCHIVE_MATCH_RESULT}/ are both tracked; resolve manually before continuing)"
-    blockers="$(printf '[{"type": "archive-integrity-broken", "message": "specs/%s/ and %s/ are both tracked"}]' \
-      "$feature_id" "$ARCHIVE_MATCH_RESULT")"
+    if [ -n "$ARCHIVE_MATCH_RESULT" ]; then
+      NEXT_COMMAND_RESULT="(blocked -- specs/${feature_id}/ and ${ARCHIVE_MATCH_RESULT}/ are both tracked; resolve manually before continuing)"
+      blockers="$(printf '[{"type": "archive-integrity-broken", "message": "specs/%s/ and %s/ are both tracked"}]' \
+        "$feature_id" "$ARCHIVE_MATCH_RESULT")"
+    else
+      NEXT_COMMAND_RESULT="(blocked -- specs/${feature_id}/ has git history but is absent from both specs/${feature_id}/ and specs/archive/; resolve manually before continuing)"
+      blockers="$(printf '[{"type": "archive-integrity-broken", "message": "specs/%s/ has git history but is absent from both specs/%s/ and specs/archive/"}]' \
+        "$feature_id" "$feature_id")"
+    fi
+  elif [ -z "$feature_dir" ]; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    exit 1
   else
     detect_feature_phase "$feature_id" "$feature_dir" "$is_archived"
   fi

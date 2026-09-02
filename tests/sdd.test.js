@@ -2216,6 +2216,78 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("sdd status / verify-archive detect a pure-deletion bypass (026/T009, judge finding #1)", () => {
+    // Worse than the duplicate-tracked bypass above: an agent runs `git rm -r
+    // specs/<id>/` (or an interrupted move) and commits with no
+    // specs/archive/*-<id>/ ever created. specs/001-demo/ is fully tracked by
+    // the seed commit, then deleted by a SECOND commit -- so git history
+    // proves the feature was tracked, but neither location holds it anymore.
+    function makeVanishedProject() {
+      const project = makeTempProject();
+      seedCommit(project);
+      execFileSync("git", ["rm", "-r", "-q", "specs/001-demo"], { cwd: project });
+      execFileSync("git", ["commit", "-q", "-m", "bypass: delete specs/001-demo, never archived"], {
+        cwd: project,
+      });
+      return project;
+    }
+
+    test("sdd status reports archive-integrity-broken (not feature-not-found) for a vanished-but-historied id", () => {
+      const project = makeVanishedProject();
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+
+      expect(status.phase).toBe("archive-integrity-broken");
+      expect(Array.isArray(status.blockers)).toBe(true);
+      expect(status.blockers.length).toBeGreaterThan(0);
+      expect(status.blockers[0].message).toContain("specs/001-demo");
+    });
+
+    test("sdd status exit code stays 0 for the vanished-but-historied shape too -- status reports, gates decide", () => {
+      const project = makeVanishedProject();
+
+      const result = spawnSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" });
+      expect(result.status).toBe(0);
+    });
+
+    test("sdd verify-archive exits 3 for the vanished-but-historied id, stderr saying 'tracked' and 'gone' (not the plain no-archive message)", () => {
+      const project = makeVanishedProject();
+
+      const error = sddFail(["verify-archive", "001-demo"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      const stderr = error.stderr.toLowerCase();
+      expect(stderr).toContain("tracked");
+      expect(stderr).toContain("gone");
+    });
+
+    test("an id with zero git history stays plain not-found (status) and 'never started' (verify-archive) -- no false positive", () => {
+      const project = makeTempProject();
+      seedCommit(project); // only specs/001-demo/ ever existed in this repo
+
+      const statusError = sddFail(["status", "999-never-existed"], { cwd: project });
+      expect(statusError.status).not.toBe(0);
+      expect(statusError.stderr).toContain("feature not found");
+
+      const verifyError = sddFail(["verify-archive", "999-never-existed"], { cwd: project });
+      expect(verifyError.status).toBe(3);
+      expect(verifyError.stderr.toLowerCase()).toContain("never started");
+    });
+
+    test("a feature not yet archived (specs/<id>/ still present, no archive dir) keeps today's plain verify-archive message", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const error = sddFail(["verify-archive", "001-demo"], { cwd: project });
+
+      expect(error.status).toBe(3);
+      expect(error.stderr).not.toContain("was tracked");
+      expect(error.stderr.toLowerCase()).not.toContain("never started");
+    });
+  });
+
   describe("sdd state-write (T005/AC6)", () => {
     // A project whose single task list is fully checked, on its own feature
     // branch, with a real HEAD to diff against -- the shape detect_feature_phase
