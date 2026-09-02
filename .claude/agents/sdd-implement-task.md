@@ -162,6 +162,18 @@ When a task has testable behavior, apply these rules whether or not the repo is 
     - Dedupe rule is **consecutive-only**: read the last `implemented-by:` line in the file (if any). Skip the append only when that last line's value equals the current runtime's value. Do not dedupe against earlier, non-consecutive lines — an alternating sequence like `claude` → `codex` → `claude` must record all three.
     - If `decisions.md` doesn't exist yet, create it with a `# Decisions` heading before appending.
 
+6c. **Persist TDD-Evidence durably**: Append a compact per-task entry to `specs/$ARGUMENTS/decisions.md` under a `## TDD-Evidence` section (create the section, right after the `implemented-by:` marker area, if it doesn't exist yet):
+    ```
+    ### TDD-Evidence: Tnnn
+    - RED: <first line(s) of the real failure output, compressed>
+    - GREEN: <pass summary line>
+    - TRIANGULATE: <N cases, or "skipped: <reason>">
+    ```
+    - `Tnnn` is the selected task's ID (or a short description for a legacy bullet with no ID).
+    - This is the DURABLE copy `sdd-reviewer`'s step 2.5 reads at review time. The Result envelope's `TDD-Evidence` field (see below) is unchanged — it stays the immediate signal for the orchestrator's structural check; this step doesn't replace it, it persists it.
+    - Keep it compact — `decisions.md` is prose, not a log dump: RED is a compressed excerpt (the first line or two of the real failure), not the full paste; GREEN is one summary line.
+    - For a non-testable task, mirror the `Test-skip rationale` note: `RED: skipped — <reason>`, `GREEN: skipped`, `TRIANGULATE: skipped: <reason>`.
+
 7. **Delta spec check**: If the selected task changed, added, or removed requirements from the original spec, document all deltas in `specs/$ARGUMENTS/decisions.md` in a single entry:
    ```
    ## Delta: [date] — Task Tnnn

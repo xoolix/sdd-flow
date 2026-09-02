@@ -64,7 +64,7 @@
   - touches: cli, tests
   - type: fix
 
-- [ ] **T010 [AFK] Persist TDD-Evidence + wire it to the reviewer**: sdd-implement-task.md appends a per-task TDD-Evidence entry to decisions.md (implemented-by pattern); sdd-reviewer.md step 2.5 reads it from decisions.md, not "envelopes"; review-feature Step 3 forwards it; RED-unfalsifiability recorded as accepted residual risk (decisions.md + one ADR 0005 line). Prose pins updated.
+- [x] **T010 [AFK] Persist TDD-Evidence + wire it to the reviewer**: sdd-implement-task.md appends a per-task TDD-Evidence entry to decisions.md (implemented-by pattern); sdd-reviewer.md step 2.5 reads it from decisions.md, not "envelopes"; review-feature Step 3 forwards it; RED-unfalsifiability recorded as accepted residual risk (decisions.md + one ADR 0005 line). Prose pins updated.
   - blocked_by: none
   - verifies: judge-high-2
   - touches: agents, orchestration, docs, tests

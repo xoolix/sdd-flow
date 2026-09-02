@@ -70,6 +70,10 @@ términos: *"A model asserting 'I verified it, it passes' is prose, not proof."*
 - Todo gate que se agregue de acá en más al pipeline hereda el mismo principio: verificar el
   efecto en git o en el filesystem después del hecho, nunca conformarse con que el agente narre
   haber seguido el procedimiento.
+- Riesgo residual aceptado: la evidencia RED es inherentemente infalsificable post-hoc — el
+  reviewer solo puede confirmar que el test pasa AHORA y que los casos existen; la afirmación de
+  que falló ANTES queda como riesgo residual aceptado, respaldada por persistencia y verificación
+  mecánica, no por garantía determinista equivalente a verify-archive.
 
 ## Alternativas consideradas
 

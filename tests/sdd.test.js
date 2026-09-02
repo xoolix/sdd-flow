@@ -4121,4 +4121,73 @@ describe("sdd CLI smoke tests", () => {
       );
     });
   });
+
+  describe("T010: TDD-Evidence gains a durable persistence channel; reviewer reads decisions.md, not envelopes (026/judge finding #2)", () => {
+    // Same prose-pin framing as T004/T005/T007/T009 above: these assert the instruction
+    // text exists where plan.md says it must, not that an agent obeys it at runtime.
+    // Judge finding #2: T005 wired step 2.5 to read TDD-Evidence "recorded in each
+    // implement-task envelope", but nothing ever persists the field anywhere durable --
+    // the reviewer has nothing to check. This task closes that gap.
+    const implementTask = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-implement-task.md"), "utf8");
+    const reviewer = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-reviewer.md"), "utf8");
+    const reviewFeature = fs.readFileSync(
+      path.join(repoRoot, ".claude/skills/review-feature/SKILL.md"),
+      "utf8",
+    );
+    const adr0005 = fs.readFileSync(
+      path.join(repoRoot, "docs/adr/0005-phase-handoffs-verified-by-cli.md"),
+      "utf8",
+    );
+
+    test("sdd-implement-task.md gains Step 6c persisting a compact TDD-Evidence entry to decisions.md", () => {
+      expect(implementTask).toContain("6c. **Persist TDD-Evidence durably**");
+      expect(implementTask).toContain("## TDD-Evidence");
+      expect(implementTask).toContain("### TDD-Evidence: Tnnn");
+    });
+
+    test("Step 6c sits between 6b (implemented-by) and Step 7 (deltas), not merely somewhere in the file", () => {
+      // Second case, a different facet than the presence check above: ordering, not content.
+      const idx6b = implementTask.indexOf("6b. **Record the `implemented-by` marker**");
+      const idx6c = implementTask.indexOf("6c. **Persist TDD-Evidence durably**");
+      const idx7 = implementTask.indexOf("7. **Delta spec check**");
+      expect(idx6b).toBeGreaterThan(-1);
+      expect(idx6c).toBeGreaterThan(idx6b);
+      expect(idx7).toBeGreaterThan(idx6c);
+    });
+
+    test("sdd-reviewer.md's step 2.5 reads TDD-Evidence from decisions.md's durable section, not the envelope", () => {
+      expect(reviewer).toContain("decisions.md`'s `## TDD-Evidence` section");
+      expect(reviewer).not.toContain("recorded in each implement-task envelope");
+      // The mechanical checks from T005 must survive the reword untouched.
+      expect(reviewer).toContain("EXISTS");
+      expect(reviewer).toContain("PASSES");
+      expect(reviewer).toContain("N triangulation cases");
+      expect(reviewer).toContain("fabricated or unverifiable");
+    });
+
+    test("sdd-reviewer.md's step 2.5 requires genuinely different triangulation code paths (judge finding #6)", () => {
+      expect(reviewer).toContain("genuinely different code paths or inputs");
+    });
+
+    test("sdd-reviewer.md's step 2.5 flags a feature with no TDD-Evidence contract coverage as CRITICAL", () => {
+      expect(reviewer).toContain("no `## TDD-Evidence` section at all");
+      expect(reviewer).toContain("Test-skip rationale");
+    });
+
+    test("review-feature/SKILL.md Step 3 explicitly forwards decisions.md's TDD-Evidence section to the reviewer", () => {
+      const step3Match = reviewFeature.match(/### 3\. Launch review agents([\s\S]*?)### 4\./);
+      expect(step3Match).not.toBeNull();
+      expect(step3Match[1]).toContain("## TDD-Evidence` section");
+    });
+
+    test("ADR 0005 records RED-unfalsifiability as an accepted residual risk in Consecuencias (Spanish register)", () => {
+      const consStart = adr0005.indexOf("## Consecuencias");
+      const altStart = adr0005.indexOf("## Alternativas consideradas");
+      expect(consStart).toBeGreaterThan(-1);
+      expect(altStart).toBeGreaterThan(consStart);
+      const consBody = adr0005.slice(consStart, altStart);
+      expect(consBody).toContain("infalsificable");
+      expect(consBody).toContain("riesgo residual aceptado");
+    });
+  });
 });

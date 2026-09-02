@@ -41,3 +41,59 @@ Date: 2026-09-02
 ## Delta: 2026-09-02 — Task T009
 - **ADDED**: AC5 is extended beyond the duplicate-tracked shape it originally specced. `check_archive_integrity`/`sdd status` (single-feature mode) now also report `archive-integrity-broken` for a feature-id absent from BOTH `specs/<id>/` and `specs/archive/*-<id>/` when `git log --oneline -1 -- specs/<id>/` proves it was tracked at some point (a pure-deletion bypass: `git rm -r` or an interrupted move, never archived) — previously indistinguishable from an id that never existed (judge finding #1). The `blockers` entry in this shape carries no `specs/archive/...` path (there is none to name); `ARCHIVE_MATCH_RESULT` is `""` and callers branch on that to tell it apart from the original duplicate-tracked shape. `cmd_verify_archive`'s exit-3 "no archive directory found" arm now distinguishes three shapes in stderr: `specs/<id>/` present (unchanged message, "not yet archived"), absent with no git history ("never started"), absent with git history ("was tracked, now gone" / pure-deletion bypass). Exit code stays 3 in all three — only stderr text changed. `sdd status`'s list mode is unextended on purpose: it iterates existing `specs/*/` directories, so a fully-vanished feature-id can never reach its loop in the first place — noted here per the task brief rather than touched.
 - **MODIFIED**: `check_archive_integrity`'s doc comment and control flow (`bin/sdd`) restructured from a single early-return guard into an if/else over `specs/<feature_id>/` presence, to make room for the new absent-but-historied branch without changing the existing duplicate-tracked behavior (verified unchanged by the full pre-existing test suite, still green).
+
+[2026-09-02T03:46:00Z] ACCEPTED-RESIDUAL-RISK: la evidencia RED es inherentemente infalsificable post-hoc — el reviewer solo puede confirmar que el test pasa AHORA y que los casos existen; la afirmación de que falló ANTES queda como riesgo residual aceptado, respaldada por persistencia y verificación mecánica, no por garantía determinista equivalente a verify-archive.
+
+## TDD-Evidence
+
+Backfilled for T001-T009 (contract introduced by T010; entries below are reconstructed from the current test suite, not from each slice's original session). T010 onward records its own entry live, per Step 6c.
+
+### TDD-Evidence: T001
+- RED: not persisted (contract predates T010)
+- GREEN: `build-registry ignores every core skill` (tests/sdd.test.js) passes — the 4 drafted skill names are present in both `CORE_SKILLS` and build-registry's ignore list
+- TRIANGULATE: skipped: single structural loop over the fixed 4-name list, no branching behavior to triangulate
+
+### TDD-Evidence: T002
+- RED: not persisted (contract predates T010)
+- GREEN: describe("sdd verify-archive (T002/AC4)") (tests/sdd.test.js) passes, 4 tests
+- TRIANGULATE: 4 cases — bypass commit (altas only) exit 1, legit `--moved-from` exit 0, two archive dirs exit 0 + stderr note, no archive exit 3
+
+### TDD-Evidence: T003
+- RED: not persisted (contract predates T010)
+- GREEN: describe("sdd status detects a broken archive (026/T003/AC5)") (tests/sdd.test.js) passes, 4 tests
+- TRIANGULATE: 4 cases — single-feature mode and list mode, both over the duplicate-tracked shape
+
+### TDD-Evidence: T004
+- RED: not persisted (contract predates T010)
+- GREEN: describe("T004: TRIANGULATE joins the TDD cycle, TDD-Evidence joins the envelope (026/AC2)") (tests/sdd.test.js) passes, 8 tests
+- TRIANGULATE: 8 cases across the implement-task cycle text, the envelope field, sdd-phase-common.md's §D schema, and the testing.md/tdd-skill sync
+
+### TDD-Evidence: T005
+- RED: not persisted (contract predates T010)
+- GREEN: describe("T005: orchestrators + reviewer validate TDD-Evidence against reality (026/AC3)") (tests/sdd.test.js) passes, 6 tests
+- TRIANGULATE: 6 cases across the §F gate clause, its placement inside §F, sdd-next/sdd-auto restatement, and the reviewer's step 2.5 existence + N-cases/CRITICAL checks
+
+### TDD-Evidence: T006
+- RED: not persisted (contract predates T010)
+- GREEN: "archive-feature's Step 3.5 self-checks verify-archive before deleting the receipt, blocking on a nonzero exit (026 T006/AC6)" + "archive-feature's Step 3.6 points ... branch-pr/chained-pr (026 T006/AC6)" (tests/sdd.test.js) both pass
+- TRIANGULATE: 2 cases — self-check ordering/no-branching-syntax test, PR-pointer test
+
+### TDD-Evidence: T007
+- RED: not persisted (contract predates T010)
+- GREEN: describe("T007: orchestrator post-archive gate (026/AC6)") (tests/sdd.test.js) passes, 3 tests
+- TRIANGULATE: 3 cases — byte-identical clause across all 3 orchestration files, clause-sits-inside-its-section boundary check, regression guard that pre-existing clauses stay untouched
+
+### TDD-Evidence: T008
+- RED: not persisted (contract predates T010)
+- GREEN: tests/sweep-retired-symbols.test.js AC5 (1 test) + AC7 (4 tests) pass; purity greps 0; full suite green
+- TRIANGULATE: 5 cases across the two sweep describes — 024-symbols repo-wide walk, plus 025 commit-policy knob fixtures (bin/sdd literal, .claude literal, clean fixture)
+
+### TDD-Evidence: T009
+- RED: not persisted (contract predates T010)
+- GREEN: describe("sdd status / verify-archive detect a pure-deletion bypass (026/T009, judge finding #1)") (tests/sdd.test.js) passes, 5 tests
+- TRIANGULATE: 5 cases — git-rm bypass caught by `sdd status`, caught by `verify-archive`'s distinguishing stderr, unknown id stays plain not-found, list-mode noted unextended (by design), single-mode duplicate-tracked shape unaffected
+
+### TDD-Evidence: T010
+- RED: 7/7 new tests failed for the expected reason before the prose edits — e.g. `expect(reviewer).toContain("no \`## TDD-Evidence\` section at all")` failed with "Received string" showing the pre-reword step 2.5 text; `expect(consBody).toContain("infalsificable")` failed against the unmodified ADR 0005 Consecuencias block
+- GREEN: same 7 tests pass after editing sdd-implement-task.md (Step 6c), sdd-reviewer.md (step 2.5 reword), review-feature/SKILL.md (Step 3 forwarding line), and docs/adr/0005 (Consecuencias line); full suite 223/223 passed, 5/5 suites, 22.3s
+- TRIANGULATE: 7 cases across 4 files — Step 6c presence, Step 6c ordering (6b < 6c < Step 7), reviewer's decisions.md-as-source phrasing, reviewer's different-code-paths line, reviewer's absent-evidence CRITICAL rule, review-feature Step 3 forwarding line scoped inside Step 3's own section, ADR 0005 Consecuencias content

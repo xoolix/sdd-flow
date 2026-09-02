@@ -131,6 +131,8 @@ Each agent receives the same state context:
 - **FAST_LANE = false**: full `spec.md`, `plan.md`, `tasks.md`, and `decisions.md`.
 - **FAST_LANE = true**: full `quick-spec.md` and `decisions.md`.
 
+This state context's `decisions.md` copy carries its `## TDD-Evidence` section verbatim — the durable source `sdd-reviewer`'s step 2.5 reads for its RED/GREEN/TRIANGULATE reality check.
+
 Prompt `sdd-reviewer` and `sdd-judge` to run real tests where relevant and return their exact output format. For `sdd-judge`, explicitly remind it that a high finding must be scoped, plausible, and actionable; otherwise it should be medium/low or omitted. `sdd-cross-reviewer` follows its own agent protocol (companion invocation) — it does not run the repo's test suite itself.
 
 ### 4. Consolidate verdicts
