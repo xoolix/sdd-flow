@@ -16,7 +16,7 @@
   - touches: cli, tests
   - type: feat
 
-- [ ] **T003 [AFK] `sdd status` integrity check**: detect specs/<id>/ and specs/archive/*-<id>/ both tracked and report integrity-broken (phase literal + `blockers` entry per plan.md), in single and list mode.
+- [x] **T003 [AFK] `sdd status` integrity check**: detect specs/<id>/ and specs/archive/*-<id>/ both tracked and report integrity-broken (phase literal + `blockers` entry per plan.md), in single and list mode.
   - blocked_by: none
   - verifies: AC5
   - touches: cli, tests

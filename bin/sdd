@@ -1470,6 +1470,40 @@ EOF
 
 # ─── status ────────────────────────────────────────────────────────
 
+# T003/AC5: detects specs/<feature_id>/ and specs/archive/*-<feature_id>/
+# present at once -- the shape a bypassed archive run leaves behind (021,
+# 294ccfc). Runs independent of resolve_feature_dir: that helper's
+# first-match `find | head -1` picks specs/<feature_id>/ and stops, so a
+# caller relying on it alone never learns the archive half exists too. This
+# re-probes the filesystem itself so it can't inherit that blind spot.
+# resolve_feature_dir stays untouched -- its other callers depend on the
+# current first-match behavior.
+#
+# Args: feature_id, specs_dir
+# Sets (globals): ARCHIVE_INTEGRITY_BROKEN ("true"/"false", usable directly
+#                 in `if`), ARCHIVE_MATCH_RESULT ("specs/archive/<dir>" when
+#                 broken, else "")
+check_archive_integrity() {
+  local feature_id="$1" specs_dir="$2"
+
+  ARCHIVE_INTEGRITY_BROKEN=false
+  ARCHIVE_MATCH_RESULT=""
+
+  [ -d "$specs_dir/$feature_id" ] || return 0
+
+  local -a matches=()
+  local candidate
+  for candidate in "$specs_dir"/archive/*-"$feature_id"; do
+    [ -d "$candidate" ] && matches+=("$candidate")
+  done
+  [ "${#matches[@]}" -eq 0 ] && return 0
+
+  local chosen
+  chosen="$(printf '%s\n' "${matches[@]}" | sort | tail -1)"
+  ARCHIVE_INTEGRITY_BROKEN=true
+  ARCHIVE_MATCH_RESULT="specs/archive/$(basename "$chosen")"
+}
+
 # Computes phase, task counts, sentinel freshness, and the next command for
 # one resolved feature directory. Extracted from cmd_status so both the
 # single-feature JSON and the no-arg listing (T003/F12) derive phase the same
@@ -1662,7 +1696,13 @@ cmd_status_list() {
       feature_id="$(basename "$dir")"
       [ "$feature_id" = "archive" ] && continue
 
-      detect_feature_phase "$feature_id" "${dir%/}" false
+      check_archive_integrity "$feature_id" "$specs_dir"
+      if $ARCHIVE_INTEGRITY_BROKEN; then
+        PHASE_RESULT="archive-integrity-broken"
+        NEXT_COMMAND_RESULT="(blocked -- specs/${feature_id}/ and ${ARCHIVE_MATCH_RESULT}/ are both tracked; resolve manually before continuing)"
+      else
+        detect_feature_phase "$feature_id" "${dir%/}" false
+      fi
 
       local entry
       entry="$(printf '{"feature_id": "%s", "phase": "%s", "next_command": "%s"}' \
@@ -1715,10 +1755,21 @@ cmd_status() {
     exit 1
   fi
 
-  detect_feature_phase "$feature_id" "$feature_dir" "$is_archived"
-
   # ── Blockers array ──────────────────────────────────────────────
   local blockers='[]'
+
+  check_archive_integrity "$feature_id" "$specs_dir"
+  if $ARCHIVE_INTEGRITY_BROKEN; then
+    PHASE_RESULT="archive-integrity-broken"
+    TASKS_TOTAL_RESULT=0
+    TASKS_REMAINING_RESULT=0
+    SENTINEL_FRESH_RESULT="false"
+    NEXT_COMMAND_RESULT="(blocked -- specs/${feature_id}/ and ${ARCHIVE_MATCH_RESULT}/ are both tracked; resolve manually before continuing)"
+    blockers="$(printf '[{"type": "archive-integrity-broken", "message": "specs/%s/ and %s/ are both tracked"}]' \
+      "$feature_id" "$ARCHIVE_MATCH_RESULT")"
+  else
+    detect_feature_phase "$feature_id" "$feature_dir" "$is_archived"
+  fi
 
   # ── JSON emission ────────────────────────────────────────────────
   printf '{\n'

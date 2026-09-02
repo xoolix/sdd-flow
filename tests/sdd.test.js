@@ -2104,6 +2104,68 @@ describe("sdd CLI smoke tests", () => {
     });
   });
 
+  describe("sdd status detects a broken archive (026/T003/AC5)", () => {
+    // The exact shape a bypassed archive leaves behind (021, 294ccfc):
+    // specs/<id>/ and specs/archive/<date>-<id>/ both present at once.
+    // resolve_feature_dir stays untouched (plan.md) and still matches
+    // specs/<id>/ first -- this pre-check re-probes the filesystem itself,
+    // independent of that helper, so it can't inherit its blind spot.
+    function makeDuplicatedProject() {
+      const project = makeTempProject();
+      const archiveDir = path.join(project, "specs", "archive", "2099-01-01-001-demo");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.writeFileSync(path.join(archiveDir, "spec.md"), "# Spec\n");
+      seedCommit(project);
+      return project;
+    }
+
+    test("single-feature mode reports archive-integrity-broken and a blockers entry naming both paths (AC5)", () => {
+      const project = makeDuplicatedProject();
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+
+      expect(status.phase).toBe("archive-integrity-broken");
+      expect(Array.isArray(status.blockers)).toBe(true);
+      expect(status.blockers.length).toBeGreaterThan(0);
+      expect(status.blockers[0].message).toContain("specs/001-demo");
+      expect(status.blockers[0].message).toContain("specs/archive/2099-01-01-001-demo");
+    });
+
+    test("exit code stays 0 even when integrity is broken -- status reports, gates decide (AC5)", () => {
+      const project = makeDuplicatedProject();
+
+      const result = spawnSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" });
+      expect(result.status).toBe(0);
+    });
+
+    test("list mode reports the same phase literal, keeping its narrower JSON shape (AC5)", () => {
+      const project = makeDuplicatedProject();
+
+      const entries = JSON.parse(
+        execFileSync(sddBin, ["status"], { cwd: project, encoding: "utf8" }),
+      );
+
+      const entry = entries.find((item) => item.feature_id === "001-demo");
+      expect(entry).toBeDefined();
+      expect(entry.phase).toBe("archive-integrity-broken");
+      expect(Object.keys(entry).sort()).toEqual(["feature_id", "next_command", "phase"]);
+    });
+
+    test("a normal, non-duplicated feature is unaffected (no false positive)", () => {
+      const project = makeTempProject();
+      seedCommit(project);
+
+      const status = JSON.parse(
+        execFileSync(sddBin, ["status", "001-demo"], { cwd: project, encoding: "utf8" }),
+      );
+
+      expect(status.phase).not.toBe("archive-integrity-broken");
+      expect(status.blockers).toEqual([]);
+    });
+  });
+
   describe("sdd state-write (T005/AC6)", () => {
     // A project whose single task list is fully checked, on its own feature
     // branch, with a real HEAD to diff against -- the shape detect_feature_phase
