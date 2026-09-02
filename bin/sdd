@@ -1366,6 +1366,33 @@ cmd_state_write() {
 # are YYYY-MM-DD-prefixed, so lexicographic order is chronological order:
 # the max is the most recent. A stderr note names the choice so a stale
 # leftover dir is never silently favored.
+#
+# Shared by cmd_verify_archive and check_archive_integrity, which both need
+# the same resolution rule.
+# Args: feature_id, specs_dir
+# Sets (globals): ARCHIVE_DIR_MATCHES (array, all specs/archive/*-<feature_id>
+#                 matches, glob order), ARCHIVE_DIR_CHOSEN (the most recent
+#                 match, or "" if none)
+resolve_archive_dir() {
+  local feature_id="$1" specs_dir="$2"
+
+  ARCHIVE_DIR_MATCHES=()
+  ARCHIVE_DIR_CHOSEN=""
+
+  local candidate
+  for candidate in "$specs_dir"/archive/*-"$feature_id"; do
+    [ -d "$candidate" ] && ARCHIVE_DIR_MATCHES+=("$candidate")
+  done
+
+  [ "${#ARCHIVE_DIR_MATCHES[@]}" -eq 0 ] && return 0
+
+  if [ "${#ARCHIVE_DIR_MATCHES[@]}" -gt 1 ]; then
+    ARCHIVE_DIR_CHOSEN="$(printf '%s\n' "${ARCHIVE_DIR_MATCHES[@]}" | sort | tail -1)"
+  else
+    ARCHIVE_DIR_CHOSEN="${ARCHIVE_DIR_MATCHES[0]}"
+  fi
+}
+
 cmd_verify_archive() {
   local usage_msg='usage: sdd verify-archive <feature-id>'
 
@@ -1390,24 +1417,17 @@ cmd_verify_archive() {
   local specs_dir
   specs_dir="$(pwd)/specs"
 
-  local -a matches=()
-  local candidate
-  for candidate in "$specs_dir"/archive/*-"$feature_id"; do
-    [ -d "$candidate" ] && matches+=("$candidate")
-  done
+  resolve_archive_dir "$feature_id" "$specs_dir"
 
-  if [ "${#matches[@]}" -eq 0 ]; then
+  if [ "${#ARCHIVE_DIR_MATCHES[@]}" -eq 0 ]; then
     printf 'error: no archive directory found for %s under specs/archive/\n' "$feature_id" >&2
     return 3
   fi
 
-  local archive_dir
-  if [ "${#matches[@]}" -gt 1 ]; then
-    archive_dir="$(printf '%s\n' "${matches[@]}" | sort | tail -1)"
+  local archive_dir="$ARCHIVE_DIR_CHOSEN"
+  if [ "${#ARCHIVE_DIR_MATCHES[@]}" -gt 1 ]; then
     printf 'note: multiple archive directories found for %s; using the most recent: %s\n' \
       "$feature_id" "$(basename "$archive_dir")" >&2
-  else
-    archive_dir="${matches[0]}"
   fi
 
   local archive_rel
@@ -1491,17 +1511,11 @@ check_archive_integrity() {
 
   [ -d "$specs_dir/$feature_id" ] || return 0
 
-  local -a matches=()
-  local candidate
-  for candidate in "$specs_dir"/archive/*-"$feature_id"; do
-    [ -d "$candidate" ] && matches+=("$candidate")
-  done
-  [ "${#matches[@]}" -eq 0 ] && return 0
+  resolve_archive_dir "$feature_id" "$specs_dir"
+  [ -z "$ARCHIVE_DIR_CHOSEN" ] && return 0
 
-  local chosen
-  chosen="$(printf '%s\n' "${matches[@]}" | sort | tail -1)"
   ARCHIVE_INTEGRITY_BROKEN=true
-  ARCHIVE_MATCH_RESULT="specs/archive/$(basename "$chosen")"
+  ARCHIVE_MATCH_RESULT="specs/archive/$(basename "$ARCHIVE_DIR_CHOSEN")"
 }
 
 # Computes phase, task counts, sentinel freshness, and the next command for
