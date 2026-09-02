@@ -50,7 +50,7 @@
 
 ### 3. Validation
 
-- [ ] **T008 [AFK] ADR 0005 + invariant sweep**: write docs/adr/0005-*.md ("phase handoffs are verified by deterministic CLI checks, not agent prose"), citing the 021/294ccfc bypasses and gentle-ai's doctrine; add the concatenated-needle sweep test (sweep-retired-symbols.test.js) pinning zero retired-commit-knob hits in bin/ .claude/ .specify/ tests/; confirm purity grep 0 and full suite green.
+- [x] **T008 [AFK] ADR 0005 + invariant sweep**: write docs/adr/0005-*.md ("phase handoffs are verified by deterministic CLI checks, not agent prose"), citing the 021/294ccfc bypasses and gentle-ai's doctrine; add the concatenated-needle sweep test (sweep-retired-symbols.test.js) pinning zero retired-commit-knob hits in bin/ .claude/ .specify/ tests/; confirm purity grep 0 and full suite green.
   - blocked_by: T001, T002, T003, T004, T005, T006, T007
   - verifies: AC7
   - touches: docs, tests

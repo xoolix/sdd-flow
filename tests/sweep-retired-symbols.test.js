@@ -176,6 +176,82 @@ describe("sweep: retired 024 symbols do not survive on the living surface (AC5)"
   });
 });
 
+// 026/T008/AC7: feature 025 deleted the per-phase commit-policy knob entirely
+// (13 sites) and pinned it with a grep test inside tests/sdd.test.js -- but
+// tests/sdd.test.js is itself part of the living surface this file sweeps, so
+// that pin has to build its needle by concatenation instead of writing the
+// literal. This describe block is the same sweep, reusing this file's own
+// livingSurfaceFiles() walk, but for that different retired literal. It lives
+// here -- not in tests/sdd.test.js -- because this file is one of the two
+// paths EXCLUDED_PATHS removes from the walk (see the file-level comment):
+// writing "look for the string X" without X is impossible, and the only file
+// allowed to hold X unswept is this one.
+describe("sweep: retired 025 commit-policy knob does not survive on the living surface (AC7)", () => {
+  // Assembled at runtime, never written as a literal "auto" + "-" + "commit"
+  // string -- so this test cannot trip its own sweep, the AC7 grep it mirrors
+  // (grep -rn '<knob>' bin/ .claude/ .specify/ tests/), or the other describe
+  // block above when both walk the same tests/** files.
+  const KNOB_NEEDLE = ["auto", "commit"].join("-");
+
+  function findKnobHits(filePaths) {
+    const hits = [];
+    for (const filePath of filePaths) {
+      const content = fs.readFileSync(filePath, "utf8");
+      content.split("\n").forEach((line, index) => {
+        if (line.includes(KNOB_NEEDLE)) {
+          hits.push(`${filePath}:${index + 1}`);
+        }
+      });
+    }
+    return hits;
+  }
+
+  test("no file under bin/, src/, .claude/**, .specify/templates/**, or tests/** (excluding this file and tests/retired-symbol-proofs.test.js) contains the retired commit-policy knob literal", () => {
+    const absPaths = livingSurfaceFiles().map((relPath) => path.join(repoRoot, relPath));
+    expect(findKnobHits(absPaths)).toEqual([]);
+  });
+
+  // Triangulation: two different swept-root shapes must both be caught, and a
+  // clean file must not be flagged. Fixture dirs, not the real repo -- these
+  // prove findKnobHits() itself catches a hit, independent of the real
+  // repo's current (already-clean) state.
+  test("catches a planted knob hit in a bin/-shaped fixture root (triangulation case 1)", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "knob-sweep-bin-"));
+    try {
+      const plantedFile = path.join(fixtureDir, "sdd");
+      fs.writeFileSync(plantedFile, `commit policy: ${KNOB_NEEDLE}: off\n`);
+
+      expect(findKnobHits([plantedFile])).toEqual([`${plantedFile}:1`]);
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  test("catches a planted knob hit in a .claude/-shaped fixture root (triangulation case 2)", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "knob-sweep-claude-"));
+    try {
+      const plantedFile = path.join(fixtureDir, "sdd-implement-task.md");
+      fs.writeFileSync(plantedFile, `Grep the rules file for \`${KNOB_NEEDLE}: off\` before committing.\n`);
+
+      expect(findKnobHits([plantedFile])).toEqual([`${plantedFile}:1`]);
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+
+  test("passes clean (empty hits) when the needle is absent from a fixture root", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "knob-sweep-clean-"));
+    try {
+      const cleanFile = path.join(fixtureDir, "sdd");
+      fs.writeFileSync(cleanFile, "no retired knobs here, commit-slice only\n");
+
+      expect(findKnobHits([cleanFile])).toEqual([]);
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+});
+
 // Re-review cycle 2, low finding #3: the walk followed a symlink wherever it
 // resolved, with no containment to the repo or exclusion of docs/specs. The
 // judge and reviewer characterized this as blast radius (more false positives
