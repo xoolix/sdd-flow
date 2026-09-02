@@ -22,7 +22,7 @@
   - touches: cli, tests
   - type: feat
 
-- [ ] **T004 [AFK] TDD contract: TRIANGULATE + TDD-Evidence envelope**: add TRIANGULATE to the RED→GREEN→REFACTOR cycle (default-mandatory; skip only structural, noted) and a mandatory envelope field TDD-Evidence (RED output, GREEN output, TRIANGULATE case count or skip note) in sdd-implement-task.md and sdd-phase-common.md §D; add the work-unit-commits pointer at Step 7.5; sync stale TDD-cycle mentions in testing.md, its templates mirror and `/tdd`. Prose-pinned by tests.
+- [x] **T004 [AFK] TDD contract: TRIANGULATE + TDD-Evidence envelope**: add TRIANGULATE to the RED→GREEN→REFACTOR cycle (default-mandatory; skip only structural, noted) and a mandatory envelope field TDD-Evidence (RED output, GREEN output, TRIANGULATE case count or skip note) in sdd-implement-task.md and sdd-phase-common.md §D; add the work-unit-commits pointer at Step 7.5; sync stale TDD-cycle mentions in testing.md, its templates mirror and `/tdd`. Prose-pinned by tests.
   - blocked_by: none
   - verifies: AC2
   - touches: agents, rules, tests

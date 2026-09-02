@@ -3794,4 +3794,77 @@ describe("sdd CLI smoke tests", () => {
       expect(output).toContain("- regla real de dominio");
     });
   });
+
+  describe("T004: TRIANGULATE joins the TDD cycle, TDD-Evidence joins the envelope (026/AC2)", () => {
+    // Prose-pin tests, not behavioral coverage -- same honest framing as the §F describe
+    // above: these assert the instruction text exists in the files plan.md names as
+    // needing lockstep edits for AC2, not that an agent actually produces the evidence
+    // at runtime (that's AC3/T005's job).
+    const implementTask = fs.readFileSync(path.join(repoRoot, ".claude/agents/sdd-implement-task.md"), "utf8");
+    const phaseCommon = fs.readFileSync(
+      path.join(repoRoot, ".claude/skills/_shared/sdd-phase-common.md"),
+      "utf8",
+    );
+    const testingRules = fs.readFileSync(path.join(repoRoot, ".claude/rules/testing.md"), "utf8");
+    const testingTemplate = fs.readFileSync(
+      path.join(repoRoot, ".specify/templates/rules/testing.md"),
+      "utf8",
+    );
+    const tddSkill = fs.readFileSync(path.join(repoRoot, ".claude/skills/tdd/SKILL.md"), "utf8");
+
+    test("sdd-implement-task.md's cycle is 4-step: RED -> GREEN -> TRIANGULATE -> REFACTOR", () => {
+      expect(implementTask).toContain("RED → GREEN → TRIANGULATE → REFACTOR cycle");
+      // Step 4c's parenthetical must name the same 4-step cycle, not the old 3-step one.
+      expect(implementTask).toContain(
+        "c. Write the code change (if TDD mode: follow RED → GREEN → TRIANGULATE → REFACTOR cycle).",
+      );
+    });
+
+    test("TRIANGULATE is default-mandatory, with a minimum-2-cases rule and an annotated structural skip", () => {
+      expect(implementTask).toContain("minimum 2 cases per behavior");
+      expect(implementTask).toContain(
+        "Default-mandatory. Skip ONLY for a purely-structural task with literally one possible output",
+      );
+      expect(implementTask).toContain("Triangulation skipped: <reason>");
+    });
+
+    test("the quality bar's RED-evidence and refactor-timing bullets stay consistent with the 4-step cycle", () => {
+      // L79: RED evidence now has one home (the envelope field), not a dispersed pair.
+      expect(implementTask).toContain("Paste the real RED output in the `TDD-Evidence` envelope field");
+      expect(implementTask).not.toContain("Paste the real RED output in `Validations-Output` or the task notes.");
+      // L82: refactor timing now follows TRIANGULATE, not GREEN directly.
+      expect(implementTask).toContain("Refactor only after TRIANGULATE");
+    });
+
+    test("sdd-implement-task.md's Result envelope carries a mandatory TDD-Evidence field", () => {
+      expect(implementTask).toContain(
+        '- **TDD-Evidence**: [RED: real failure output pasted | GREEN: pass output | TRIANGULATE: N cases, or "skipped: <reason>"]',
+      );
+      expect(implementTask).toContain("mandatory for every task in this agent's own contract");
+      expect(implementTask).toContain("the same skip note as the `Test-skip rationale` entry");
+    });
+
+    test("Step 7.5 points at the work-unit-commits skill for choosing --files", () => {
+      expect(implementTask).toContain("the `work-unit-commits` skill");
+    });
+
+    test("sdd-phase-common.md §D declares TDD-Evidence optional at the schema level, mandatory in implement-task's own contract", () => {
+      expect(phaseCommon).toContain(
+        "**TDD-Evidence** _(optional)_: [RED failure output, GREEN pass output, TRIANGULATE case count or skip note]",
+      );
+      expect(phaseCommon).toContain("mandatory in `/implement-task`'s own contract");
+    });
+
+    test("testing.md and its templates mirror both name the 4-step cycle, not the old undifferentiated test-first mention", () => {
+      for (const doc of [testingRules, testingTemplate]) {
+        expect(doc).toContain("RED → GREEN → TRIANGULATE → REFACTOR cycle is mandatory");
+        expect(doc).toContain("start the RED → GREEN → TRIANGULATE → REFACTOR cycle");
+      }
+    });
+
+    test("/tdd points at implement-task's stricter 4-step contract without rewriting its own doctrine", () => {
+      expect(tddSkill).toContain("/implement-task` runs a 4-step variant of this cycle");
+      expect(tddSkill).toContain("TDD-Evidence");
+    });
+  });
 });

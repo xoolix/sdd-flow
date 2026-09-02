@@ -63,10 +63,11 @@ Determine `TDD_MODE` deterministically. It is **ON** if ANY of these is true:
 
 `.claude/rules/testing.md` provides explicit overrides that win over auto-detection: a `tdd: strict` line forces `TDD_MODE` ON (even with no tests yet — introduce the framework and write the failing test first); a `tdd: off` line forces it OFF (test-first stays preferred, not gated). Absent an explicit line, silence never turns `TDD_MODE` OFF when tests/framework exist.
 
-When `TDD_MODE` is ON, execute each task with testable behavior using the RED → GREEN → REFACTOR cycle:
+When `TDD_MODE` is ON, execute each task with testable behavior using the RED → GREEN → TRIANGULATE → REFACTOR cycle:
 1. **RED**: Write a failing test that captures the expected behavior for this task. Run it; paste the real failure output.
 2. **GREEN**: Write the minimum code to make the test pass.
-3. **REFACTOR**: Clean up the code while keeping tests green.
+3. **TRIANGULATE**: Add a second test case with different inputs than the first — minimum 2 cases per behavior, the happy path plus one that exercises a different code path — and generalize the implementation when a Fake-It/hardcoded GREEN breaks under the new case. Default-mandatory. Skip ONLY for a purely-structural task with literally one possible output, noted explicitly as `Triangulation skipped: <reason>`.
+4. **REFACTOR**: Clean up the code while keeping tests green.
 
 `TDD_MODE` OFF (greenfield repo with no tests and no framework yet): still write a test-first for any testable behavior when a framework can be added trivially; otherwise follow the standard flow and record why in `decisions.md`.
 
@@ -76,10 +77,10 @@ When a task has testable behavior, apply these rules whether or not the repo is 
 
 - Test through public interfaces, not private helpers or internal call shape.
 - Work in vertical slices: one behavior → one failing test → minimal implementation → green. Do NOT write all tests first and then all implementation.
-- A test must fail for the expected reason before implementation. Paste the real RED output in `Validations-Output` or the task notes.
+- A test must fail for the expected reason before implementation. Paste the real RED output in the `TDD-Evidence` envelope field (see Result envelope) — it has one home now, not a dispersed pair.
 - Prefer integration-style tests over mocks. Mock only slow/flaky/paid/unavailable external boundaries.
 - Test names must read like behavior specs and use domain terms from the spec/plan/codebase.
-- Never refactor while RED. Refactor only after the current behavior is GREEN, then rerun the relevant tests.
+- Never refactor while RED. Refactor only after TRIANGULATE — or immediately after GREEN when triangulation is skipped per its rule — then rerun the relevant tests.
 - Do not mark a task complete until the behavior has a passing test or a `Test-skip rationale` entry explains why no test applies.
 
 ## Steps
@@ -131,7 +132,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
       - The test must exercise the public interface that users/callers rely on. Do not couple the test to private functions, transient data shape, or implementation-only collaborators.
       - Write exactly one new behavior test at a time. Get it GREEN before adding the next behavior test.
       - **If the task is not testable** (infra, config, migration, exploration, prose docs): document the reason inline in `decisions.md` under a `## Test-skip rationale` heading for that task — one line is enough.
-   c. Write the code change (if TDD mode: follow RED → GREEN → REFACTOR cycle).
+   c. Write the code change (if TDD mode: follow RED → GREEN → TRIANGULATE → REFACTOR cycle).
    d. **Self-review before marking complete** — re-read the full diff for this task and confirm:
       - (a) every change is in scope of the current task,
       - (b) nothing was added that wasn't asked for,
@@ -177,6 +178,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
      sdd commit-slice $ARGUMENTS --type <type> [--task Tnnn] --title "<slice title>" --files <paths…>
      ```
      `--files` lists only the paths this slice actually touched — never `git add -A` — and goes last (it is variadic and stops at the next `--*` token). Omit `--task` for a legacy bullet with no ID.
+   - Unsure what belongs in this slice's commit? See the `work-unit-commits` skill.
    - **On success**: record the printed SHA as `Commit: <sha>` for the result envelope.
    - **On failure** (`sdd commit-slice` exits non-zero): flip the task bullet back from `- [x]` to `- [ ]` — the same shape as the `FORCE_TASK_ID` re-open in Step 3 — set `Task completed: None (blocked before completion)` and `Commit: none`, and return `Status: blocked` with the CLI's stderr pasted verbatim. Note which graded exit code fired so the failure is diagnosable: `2`=usage, `3`=unresolvable, `4`=git failure, `5`=nothing staged. This preserves the invariant *task complete ⟹ commit exists*, which `/simplify-code`'s committed-diff scope depends on.
 
@@ -195,6 +197,7 @@ After completing the selected slice, output this summary:
 - **Artifacts**: [files modified/created]
 - **Validations**: Lint: PASS/FAIL/SKIP | Types: PASS/FAIL/SKIP | Tests: PASS/FAIL/SKIP
 - **Validations-Output**: [paste the concrete terminal output from the final validation run]
+- **TDD-Evidence**: [RED: real failure output pasted | GREEN: pass output | TRIANGULATE: N cases, or "skipped: <reason>"]
 - **Task attempted**: [Task ID + exact task bullet selected for this invocation]
 - **Task completed**: [Task ID + exact task bullet, or "None (blocked before completion)"]
 - **Commit**: [SHA printed by `sdd commit-slice`, or "none" when the task was blocked before Step 7.5]
@@ -212,3 +215,4 @@ After completing the selected slice, output this summary:
 - Always output the result envelope — it provides context for the next run.
 - Document spec divergences as deltas in `decisions.md` — this feeds `/archive-feature` later.
 - The `tasks.md` file MUST stay under 530 words. If updating it, keep it concise.
+- `TDD-Evidence` is mandatory for every task in this agent's own contract — RED failure output, GREEN pass output, and TRIANGULATE case count or its skip note. For a non-testable task, the field carries the same skip note as the `Test-skip rationale` entry in `decisions.md`.

@@ -33,3 +33,7 @@ Use this when the work has observable behavior and should be implemented test-fi
 ## Output
 
 When reporting back, include the real RED and GREEN command output. Do not say "tests pass" without evidence.
+
+## SDD pipeline note
+
+`/implement-task` runs a 4-step variant of this cycle (RED → GREEN → TRIANGULATE → REFACTOR) with a mandatory `TDD-Evidence` envelope field — see `.claude/agents/sdd-implement-task.md`.

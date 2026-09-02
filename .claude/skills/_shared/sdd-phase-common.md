@@ -61,6 +61,7 @@ Every phase MUST return this envelope at the end:
 - **Next**: [next phase to run, or specific action needed]
 - **Risks**: [risks discovered, or "None"]
 - **Validations-Output** _(optional)_: [concrete test/lint/typecheck output from the phase]
+- **TDD-Evidence** _(optional)_: [RED failure output, GREEN pass output, TRIANGULATE case count or skip note]
 - **Review-Feedback** _(optional)_: [structured list of failed criteria and fix instructions from review]
 - **Commit** _(optional)_: [commit SHA when this phase committed, or `none` when the phase does not commit]
 ```
@@ -68,6 +69,7 @@ Every phase MUST return this envelope at the end:
 Rules:
 - Always include the five core fields (Status, Summary, Artifacts, Next, Risks).
 - `Validations-Output` is optional. Include it when the phase runs tests, lint, or typecheck. Paste the concrete command output so downstream phases and the orchestrator can act on it. Primarily used by `/implement-task`.
+- `TDD-Evidence` is optional at the schema level, the same way `Commit` is — but mandatory in `/implement-task`'s own contract for every task with testable behavior: RED output, GREEN output, and TRIANGULATE case count or skip note (see `sdd-implement-task.md`). A missing or incomplete field there is a failed validation for that phase.
 - `Review-Feedback` is optional. Include it when a review phase produces a FAIL or PASS WITH WARNINGS verdict. It must be a structured list of failed criteria with actionable fix instructions. Primarily used by `/review-feature` to feed the evaluator-optimizer loop.
 - `Commit` is optional. It holds the commit SHA when the phase calls `sdd commit-slice` (the committing phases are `/implement-task`, `/simplify-code`, and `/archive-feature`); it is `none` when the phase does not commit. A commit failure is reported via `Status: blocked`, never through this field.
 - Envelopes without the optional fields remain valid — existing phases are not required to emit them.
