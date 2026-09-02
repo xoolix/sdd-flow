@@ -36,6 +36,8 @@ Finding #1 is a realistic, scoped, actionable data-loss gap squarely in this fea
 Source: sdd-judge, review-feature phase
 Date: 2026-09-02
 
+[2026-09-02T04:36:55Z] Cross-Review (re-review): skipped — cross-agent failure: codex companion colgado en el arranque con cero output durante 40m26s (mismo patrón de broker trabado de la primera ronda); proceso matado sin resultado. Reviewer PASS + Judge PASS consolidaron sin él (advisory). Recomendación del agente: tratar el broker de codex como no disponible en esta sesión.
+
 [2026-09-02T03:28:18Z] JUDGMENT-DAY-HIGH RESOLUTION: el usuario decidió cerrar los dos highs ("cerra los highs"). Findings #1 y #2 se cierran vía tareas nuevas T009 (detección de borrado puro en status/check_archive_integrity + stderr de verify-archive que distingue "never started" de "was tracked, now gone") y T010 (persistir TDD-Evidence por tarea en decisions.md con el patrón de `implemented-by:` + el reviewer lo lee de ahí + riesgo residual de infalsificabilidad del RED registrado explícito). Los mediums #3-#5 y el low #6 quedan como JUDGMENT-DAY warnings registrados, no bloqueantes. Re-review completo requerido tras los fixes.
 
 ## Delta: 2026-09-02 — Task T009
@@ -96,4 +98,13 @@ Backfilled for T001-T009 (contract introduced by T010; entries below are reconst
 ### TDD-Evidence: T010
 - RED: 7/7 new tests failed for the expected reason before the prose edits — e.g. `expect(reviewer).toContain("no \`## TDD-Evidence\` section at all")` failed with "Received string" showing the pre-reword step 2.5 text; `expect(consBody).toContain("infalsificable")` failed against the unmodified ADR 0005 Consecuencias block
 - GREEN: same 7 tests pass after editing sdd-implement-task.md (Step 6c), sdd-reviewer.md (step 2.5 reword), review-feature/SKILL.md (Step 3 forwarding line), and docs/adr/0005 (Consecuencias line); full suite 223/223 passed, 5/5 suites, 22.3s
+
+## Simplify: 2026-09-02 — /simplify-code
+- **Files simplified**: none (zero-edit pass)
+- **Scope reviewed**: `bin/sdd` (`feature_history_exists()`, restructured `check_archive_integrity`, three-way stderr branch in `cmd_verify_archive`, reordered `cmd_status`/`cmd_status_list` — the T009/T010 additions since the first simplify pass, commit cfc50b0). All four already single-purpose with comments documenting non-obvious invariants; no unused params, dead branches, or speculative abstractions. Two candidate DRY extractions considered and rejected as not worth the added indirection: (1) the duplicated "archive-integrity-broken" message line between `cmd_status_list` and `cmd_status` — the two call sites diverge enough downstream (JSON `blockers`, task-count resets) that a shared helper would add a function for a single-line saving with low drift risk; (2) collapsing the repeated `[ ! -d "$specs_dir/$feature_id" ]` test in `cmd_verify_archive`'s three-way branch into a nested form — trades a duplicated cheap stat-test for an added nesting level, no net win.
+- **Scope exclusion judgment call**: `.claude/rules/testing.md` and `.specify/templates/rules/testing.md` were in the committed diff (both carry the identical T010 TDD-stance reword) but not literally covered by the exclusion glob list (`.claude/rules/**` isn't listed; `.specify/templates/*.md` doesn't cross the `rules/` subdirectory by glob semantics). Treated both as out of scope per the exclusion rationale's own text ("templates... are prose artifacts, not code") — they are a template and its generated instance, intentionally byte-identical; DRY-ing one against the other would defeat the templating purpose. Flagging the glob-list gap for anyone tightening the exclusion patterns later.
+- **Baseline**: pass (223/223 tests, 5/5 suites, ~22s; no lint/typecheck tooling configured in this repo) | **Post-edit**: n/a (no edits applied)
 - TRIANGULATE: 7 cases across 4 files — Step 6c presence, Step 6c ordering (6b < 6c < Step 7), reviewer's decisions.md-as-source phrasing, reviewer's different-code-paths line, reviewer's absent-evidence CRITICAL rule, review-feature Step 3 forwarding line scoped inside Step 3's own section, ADR 0005 Consecuencias content
+
+## Deltas merged
+[2026-09-02T15:00:00Z] Merged T001 (MODIFIED branch-pr line-15), T009 (ADDED AC5 pure-deletion detection), and T010 (ADDED TDD-Evidence persistence) into spec.md; all acceptance criteria now checked.

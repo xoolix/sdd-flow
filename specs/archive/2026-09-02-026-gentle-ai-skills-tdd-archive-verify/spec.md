@@ -29,13 +29,13 @@ Tres adopciones de gentle-ai post-025: instalar cuatro skills ya adaptados (work
 - Tarea no testeable: `TDD-Evidence` con skip anotado (cf. `Test-skip rationale`).
 
 ## Acceptance Criteria
-- [ ] AC1: Given los 4 drafts copiados a `.claude/skills/`, When se leen `CORE_SKILLS` y la lista de ignorados de build-registry, Then los cuatro nombres figuran en ambas y el test "build-registry ignores every core skill" pasa sin modificarlo.
-- [ ] AC2: Given `sdd-implement-task.md`, When una tarea tiene comportamiento testeable, Then el contrato exige RED→GREEN→TRIANGULATE→REFACTOR y el envelope lleva `TDD-Evidence` obligatorio — pineado por tests de prosa.
-- [ ] AC3: Given `sdd-next`/`sdd-auto`, When validan un envelope de implement-task sin `TDD-Evidence` completo, Then la fase falla (retry→ESCALATED); y `sdd-reviewer` valida la evidencia contra la realidad.
-- [ ] AC4: Given un commit de archive por bypass (git commit directo: solo altas) en repo temporal, When corre `sdd verify-archive <id>`, Then exit ≠ 0 nombrando la mitad faltante; Given un archive legítimo vía `commit-slice --moved-from`, Then exit 0.
-- [ ] AC5: Given `specs/<id>/` y `specs/archive/*-<id>/` trackeados a la vez, When corre `sdd status`, Then reporta integridad rota en vez de `archived`.
-- [ ] AC6: Given los orquestadores, When la fase archive-feature termina, Then corren `sdd verify-archive` como validación post-fase y confían solo en su exit code.
-- [ ] AC7: Given el repo completo, Then `docs/adr/0005` existe, `grep -c 'node\|npx\|src/' bin/sdd` = 0, `grep -rn 'auto-commit' bin/ .claude/ .specify/ tests/` = 0, y la suite completa queda verde.
+- [x] AC1: Given los 4 drafts copiados a `.claude/skills/`, When se leen `CORE_SKILLS` y la lista de ignorados de build-registry, Then los cuatro nombres figuran en ambas y el test "build-registry ignores every core skill" pasa sin modificarlo.
+- [x] AC2: Given `sdd-implement-task.md`, When una tarea tiene comportamiento testeable, Then el contrato exige RED→GREEN→TRIANGULATE→REFACTOR y el envelope lleva `TDD-Evidence` obligatorio — pineado por tests de prosa.
+- [x] AC3: Given `sdd-next`/`sdd-auto`, When validan un envelope de implement-task sin `TDD-Evidence` completo, Then la fase falla (retry→ESCALATED); y `sdd-reviewer` valida la evidencia contra la realidad.
+- [x] AC4: Given un commit de archive por bypass (git commit directo: solo altas) en repo temporal, When corre `sdd verify-archive <id>`, Then exit ≠ 0 nombrando la mitad faltante; Given un archive legítimo vía `commit-slice --moved-from`, Then exit 0.
+- [x] AC5: Given `specs/<id>/` y `specs/archive/*-<id>/` trackeados a la vez, When corre `sdd status`, Then reporta integridad rota en vez de `archived`. **Extended (T009 delta)**: Also detect pure-deletion bypass — a feature-id absent from both locations when git history shows it was tracked. `cmd_verify-archive`'s exit-3 stderr now distinguishes three shapes: `specs/<id>/` present ("not yet archived"), absent with no git history ("never started"), absent with git history ("was tracked, now gone" / pure-deletion bypass). List mode remains unextended by design.
+- [x] AC6: Given los orquestadores, When la fase archive-feature termina, Then corren `sdd verify-archive` como validación post-fase y confían solo en su exit code.
+- [x] AC7: Given el repo completo, Then `docs/adr/0005` existe, `grep -c 'node\|npx\|src/' bin/sdd` = 0, `grep -rn 'auto-commit' bin/ .claude/ .specify/ tests/` = 0, y la suite completa queda verde. **TDD-Evidence persistence (T010 delta)**: TDD-Evidence is persisted per task in decisions.md (via `implemented-by:` pattern); sdd-reviewer.md step 2.5 reads it from decisions.md; review-feature Step 3 forwards it. RED-unfalsifiability is an accepted residual risk.
 
 ## Rollback Plan
 - Un commit por slice sobre `feature/026-…` contra `integration/sdd-020-021`: `git revert` del rango deshace todo. Skills: sacar los 4 nombres de ambas listas. Compuerta: revertir la línea de validación del orquestador. Sin migraciones, nada pusheado.
