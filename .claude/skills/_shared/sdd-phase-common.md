@@ -61,13 +61,17 @@ Every phase MUST return this envelope at the end:
 - **Next**: [next phase to run, or specific action needed]
 - **Risks**: [risks discovered, or "None"]
 - **Validations-Output** _(optional)_: [concrete test/lint/typecheck output from the phase]
+- **TDD-Evidence** _(optional)_: [RED failure output, GREEN pass output, TRIANGULATE case count or skip note]
 - **Review-Feedback** _(optional)_: [structured list of failed criteria and fix instructions from review]
+- **Commit** _(optional)_: [commit SHA when this phase committed, or `none` when the phase does not commit]
 ```
 
 Rules:
 - Always include the five core fields (Status, Summary, Artifacts, Next, Risks).
 - `Validations-Output` is optional. Include it when the phase runs tests, lint, or typecheck. Paste the concrete command output so downstream phases and the orchestrator can act on it. Primarily used by `/implement-task`.
+- `TDD-Evidence` is optional at the schema level, the same way `Commit` is — but mandatory in `/implement-task`'s own contract for every task with testable behavior: RED output, GREEN output, and TRIANGULATE case count or skip note (see `sdd-implement-task.md`). A missing or incomplete field there is a failed validation for that phase.
 - `Review-Feedback` is optional. Include it when a review phase produces a FAIL or PASS WITH WARNINGS verdict. It must be a structured list of failed criteria with actionable fix instructions. Primarily used by `/review-feature` to feed the evaluator-optimizer loop.
+- `Commit` is optional. It holds the commit SHA when the phase calls `sdd commit-slice` (the committing phases are `/implement-task`, `/simplify-code`, and `/archive-feature`); it is `none` when the phase does not commit. A commit failure is reported via `Status: blocked`, never through this field.
 - Envelopes without the optional fields remain valid — existing phases are not required to emit them.
 - `Next` should name the specific skill (e.g., `/implement-task 001-feature-name`).
 - If blocked, explain what's needed before the phase can continue.
@@ -99,13 +103,19 @@ After a sub-agent completes a phase, the orchestrator MUST validate before advan
 |------|-------|-----|
 | 1. Artifacts exist | All files listed in `Artifacts` field exist on disk | `ls` each path |
 | 2. Envelope complete | Return envelope has all required fields (Status, Summary, Artifacts, Next, Risks) and optional fields where applicable (Validations-Output, Review-Feedback) | Parse sub-agent output |
-| 3. Lint/tests pass | Run lint, typecheck, and tests if applicable to the phase | Parallel Bash calls; skip if phase produces no code (e.g., spec, plan) |
+| 3. Lint/tests pass | Run lint, typecheck, and tests if applicable to the phase | Parallel Bash calls; skip if phase produces no code (e.g., spec, plan) — `archive-feature` is not exempt: it moves files, not prose, so this step still runs |
 
 A phase passes validation only when **all three steps** succeed.
 
+For `implement-task`, step 2 (Envelope complete) also covers `TDD-Evidence`: absent or incomplete TDD-Evidence counts as an envelope-complete failure — no separate mechanism, it rides the retry→ESCALATED budget below like any other envelope-complete failure.
+
+For `archive-feature`, step 3 (Lint/tests pass) also runs `sdd verify-archive <feature-id>` and trusts only its exit code: a nonzero exit is a validation failure for this non-retryable phase, so the orchestrator reports `Status: blocked` with the CLI's stderr and stops — zero retries, never `ESCALATED`.
+
 ### Retry Logic
 
-- **Max retries**: 2 per phase invocation.
+**Non-retryable phases** — checked before the retry loop below starts: `archive-feature`. Its pre-flight requires `specs/<id>/spec.md`, `plan.md`, and `tasks.md`; archive's own move already removed them, so a retry would fail pre-flight and produce a misleading diagnostic, not a second chance. On validation failure for a non-retryable phase, the orchestrator MUST report `Status: blocked` with the validation output and stop — zero retries, never `ESCALATED`. The archive move itself is not in question; what broke is downstream.
+
+- **Max retries**: 2 per phase invocation, for any phase not named in the non-retryable list above.
 - On failure, re-launch the sub-agent with the original prompt **plus** the error context from the failed validation step(s).
 - Each retry includes: which step(s) failed, the error output, and the retry attempt number.
 - If **2 retries are exhausted** without passing validation, the orchestrator MUST stop and report with `Status: ESCALATED`, including a diagnostic with the error output from each attempt so the human can distinguish agent errors from environment issues.

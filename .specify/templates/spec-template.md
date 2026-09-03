@@ -13,15 +13,10 @@
 3.
 
 ## Domains
-<!-- Check all that apply -->
-- [ ] Database / storage
-- [ ] API / backend
-- [ ] Frontend / UI
-- [ ] Infrastructure / deploy
-- [ ] Auth / permissions
-- [ ] Notifications / messaging
-- [ ] External integrations
-- [ ] Other:
+<!-- Name the real modules touched. No checklist. Names come from
+     `.claude/rules/domains.md` if it has content,
+     else from your Step 0 scan. One line per module. -->
+- `<path/or/module>` — <what changes>
 
 ## Edge Cases
 <!--  At least 2. What can go wrong? What are the tricky scenarios? -->

@@ -46,11 +46,11 @@ Check which artifacts exist in `specs/<feature-id>/`:
 | Has `plan.md`? | File exists |
 | Has `tasks.md`? | File exists |
 | All tasks checked? | Full-flow: read `tasks.md`; fast-lane: read `quick-spec.md` `## Tasks` section; count `- [ ]` vs `- [x]` |
-| Has **fresh** `.simplified` sentinel? | File exists AND `git-head:` line in the sentinel equals `git rev-parse HEAD`. A stale sentinel (SHA mismatch) is treated as absent — it will be cleaned up by `/simplify-code`'s pre-flight. |
+| Has **fresh** `.sdd-state` sentinel with `phase: ready-to-review`? | `sdd state-write`'s receipt (025/T005-T006, replaces `.simplified`): fresh means BOTH `git-head:` equals `git rev-parse HEAD` AND `tree-digest:` equals the current working tree's digest — an uncommitted edit to a tracked file changes the digest without touching HEAD, and must still count as stale. A stale or missing sentinel is treated as absent — it will be cleaned up by `/simplify-code`'s pre-flight. This check is only about the `ready-to-review` value; `phase: reviewed` is a distinct value handled by its own row below (keyed off `sdd status`, same pattern as the `archived` row). |
 
 Apply the decision table:
 
-| Lane | Artifacts | All tasks [x]? | Fresh `.simplified`? | → Action |
+| Lane | Artifacts | All tasks [x]? | Fresh `.sdd-state` (`ready-to-review`)? | → Action |
 |---|---|:---:|:---:|---|
 | none | no `spec.md`, no `quick-spec.md` | — | — | STOP: "Run `/sdd-new` first." |
 | full | `spec.md`, missing `plan.md` or `tasks.md` | — | — | Launch `/plan-feature` |
@@ -60,8 +60,14 @@ Apply the decision table:
 | fast | `quick-spec.md` and no `plan.md` | No | — | Launch `/implement-task` |
 | fast | `quick-spec.md` and no `plan.md` | Yes | No | Launch `/simplify-code` |
 | fast | `quick-spec.md` and no `plan.md` | Yes | Yes | Launch `/review-feature` |
+| any | `sdd status <feature-id>` reports `phase: reviewed` | — | — | Launch `/archive-feature` |
+| any | `sdd status <feature-id>` reports `phase: archived` | — | — | STOP — pipeline complete |
+
+> **The `reviewed` and `archived` rows key off `sdd status`, not file existence.** Whether `.sdd-state` reads as `ready-to-review` or `reviewed` depends on its own `phase:` field plus the HEAD+tree-digest freshness check above — a file-existence check alone can't tell them apart, so `sdd status <feature-id>`'s `phase` field (backed by `bin/sdd`'s `detect_feature_phase`) is the source of truth for that distinction. Once `/archive-feature` moves the folder, `specs/<feature-id>/` no longer exists — the file-existence checks above can't see it either (F4 in `decisions.md`); the CLI's own archive-folder fallback resolves the moved path under `specs/archive/`.
 
 If both `quick-spec.md` and `plan.md`/`tasks.md` exist, treat this as an invalid mixed lane and STOP with `Status: blocked`; ask the user to archive one lane or normalize the feature folder.
+
+If the detected phase is `archived`, STOP: the pipeline is already complete. Skip Step 2b and Step 3 — show a one-line summary and go straight to Step 7 (Engram session close).
 
 ## Step 2b: Load skill registry
 
@@ -93,7 +99,7 @@ If the resolved phase ∈ KNOWN_ORCHESTRATORS AND `.claude/agents/sdd-<phase>.md
   `.claude/agents/sdd-<phase>.md` or fix your local fork. See feature 015 ADR for context.
   ```
 - Stop the pipeline (do not spawn, do not fall back to inline). Return Status: ESCALATED with this diagnostic.
-- Sentinel preservation: if `specs/<feature-id>/.simplified` exists, leave it intact.
+- Sentinel preservation: if `specs/<feature-id>/.sdd-state` exists, leave it intact.
 
 ---
 
@@ -101,7 +107,7 @@ If the resolved phase ∈ KNOWN_ORCHESTRATORS AND `.claude/agents/sdd-<phase>.md
 
 ```
 if .claude/agents/sdd-<phase>.md EXISTS → leaf phase → spawn native agent
-if .claude/agents/sdd-<phase>.md ABSENT  → orchestrator phase → execute SKILL.md inline
+if .claude/agents/sdd-<phase>.md ABSENT  → orchestrator phase → invoke skill via Skill tool (runs inline)
 ```
 
 This check is filesystem-only — no hardcoded list of phase names. Orchestrator phases (those whose body now lives in `.claude/skills/<phase>/SKILL.md`) have no agent file after the migration. Leaf phases (standalone executors) always have an agent file.
@@ -141,9 +147,11 @@ Agent(
 
 ### Branch B — Orchestrator phase (agent file ABSENT)
 
-Read `.claude/skills/<phase>/SKILL.md` (the full orchestration body). If the file does not exist, **STOP with a hard error** — do NOT fall back to a general-purpose agent (D-003: no orchestrator fallback). Report the missing SKILL.md path and the phase name so the user can diagnose.
+Invoke the `<phase>` skill via the Skill tool, passing the resolved feature-id as args (append ` --minimal` when `has_minimal_flag = true` and the phase is `review-feature`). The skill body loads into the current context and you (the main Claude instance) carry out its orchestration steps inline. Do NOT re-implement the phase from memory, and do NOT Read the SKILL.md manually as a substitute for the Skill tool — the Skill tool is the only sanctioned load path.
 
-Execute the SKILL.md body inline (you, the main Claude instance, carry out the orchestration steps described in that file). Pass the same prompt content as Branch A (feature-id, sdd-phase-common.md, engram-protocol.md, project name, compact rules).
+If the Skill tool reports the skill does not exist, **STOP with a hard error** — do NOT fall back to a general-purpose agent (D-003: no orchestrator fallback). Report the missing skill name and the phase so the user can diagnose.
+
+The Branch A context still governs the inline execution: apply `sdd-phase-common.md` and `engram-protocol.md`, use the resolved Engram project name, and inject compact rules from Step 2b into any sub-agents the phase spawns.
 
 **Do NOT use a `model=` override** — inline execution runs in the current model context.
 
@@ -153,11 +161,16 @@ When the sub-agent returns, apply the **Post-Phase Validation Protocol** from `s
 
 1. **Artifacts exist** — `ls` each path listed in the `Artifacts` field of the return envelope.
 2. **Envelope complete** — verify the return envelope contains all required fields: Status, Summary, Artifacts, Next, Risks.
-3. **Lint/tests pass** — run lint, typecheck, and tests in parallel Bash calls (skip if the phase produces no code, e.g., spec or plan phases).
+3. **Lint/tests pass** — run lint, typecheck, and tests in parallel Bash calls (skip if the phase produces no code, e.g., spec or plan phases — `archive-feature` is not exempt: it moves files, not prose, so this step still runs).
+
+For `implement-task`, step 2 (Envelope complete) also covers `TDD-Evidence`: absent or incomplete TDD-Evidence counts as an envelope-complete failure — no separate mechanism, it rides the same retry→ESCALATED budget below.
+
+For `archive-feature`, step 3 (Lint/tests pass) also runs `sdd verify-archive <feature-id>` and trusts only its exit code: a nonzero exit is a validation failure for this non-retryable phase, so the orchestrator reports `Status: blocked` with the CLI's stderr and stops — zero retries, never `ESCALATED`.
 
 If **all checks pass**, proceed to Step 5.
 
 If **any check fails**:
+- **Non-retryable phases** (checked before any retry branch below): `archive-feature`. Its post-move pre-flight can't succeed on a second attempt, so on failure report `Status: blocked` with the validation output and stop — zero retries, never `ESCALATED`.
 - If the failed phase is `implement-task`, pin the retry to the same slice:
   - Extract the `Task attempted` field from the previous result envelope.
   - Parse the first task ID in that field (`Tnnn`).
@@ -197,7 +210,7 @@ Initialize `review_cycle = 1`.
    ```
    The sub-agent should address only the failed criteria, not re-implement everything.
 3. **Validate implement-task result**: Apply Step 4 validation to the implement-task result (artifacts exist, envelope complete, lint/tests pass). If validation fails, follow Step 4 retry logic.
-4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.simplified`, so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 3 pattern).
+4. **Re-launch `/simplify-code`**: The prior `/review-feature` FAIL deleted `specs/<feature-id>/.sdd-state` (per `review-feature`'s Step 5), so fix code must pass through simplify before re-review. Launch the simplify-code sub-agent (using Step 3 pattern).
 5. **Validate simplify-code result**: Apply Step 4 validation. If simplify-code returns `Status: blocked` (regression revert or baseline red), **STOP** the fix loop and report the blocked status — the human must resolve the regression before the loop can continue.
 6. **Re-launch `/review-feature`**: Launch the review-feature sub-agent (using Step 3 pattern) to re-review the updated implementation.
 7. **Validate review result**: Apply Step 4 validation to the review result.

@@ -1,6 +1,6 @@
 # Agent + skill router pattern — canonical shape
 
-Referencia para los 10 native sub-agents de `.claude/agents/sdd-*.md` y los skill routers/comandos de `.claude/skills/<phase>/SKILL.md`. Patrón validado en T3 pilot (2026-04-23) y alineado con gentle-ai v1.23. Pattern partially walked back in feature 015 for orchestrator phases and in the Pocock cleanup for conversational intake phases.
+Referencia para los 11 native sub-agents de `.claude/agents/sdd-*.md` y los skill routers/comandos de `.claude/skills/<phase>/SKILL.md`. Patrón validado en T3 pilot (2026-04-23) y alineado con gentle-ai v1.23. Pattern partially walked back in feature 015 for orchestrator phases and in the Pocock cleanup for conversational intake phases.
 
 ## Por qué algunas fases tienen dos archivos
 
@@ -38,7 +38,7 @@ Feature-id: `$ARGUMENTS`
 ### Claves del agent
 
 - **NO incluir `skills: [<phase>]`**: si el skill ahora es un router, el preload cargaría "Launch agent sdd-X..." y provocaría recursión. La lógica vive en el body del agent directamente.
-- **`disallowedTools: [Agent]`** en los 10 native agents para impedir recursión. No hay excepciones — `sdd-new-feature`, `sdd-new-quick-feature`, `sdd-new-fix`, `sdd-plan-feature` y `sdd-review-feature` no existen como agents nativos (son SKILLs inline).
+- **`disallowedTools: [Agent]`** en los 11 native agents para impedir recursión. No hay excepciones — `sdd-new-feature`, `sdd-new-quick-feature`, `sdd-new-fix`, `sdd-plan-feature` y `sdd-review-feature` no existen como agents nativos (son SKILLs inline).
 - **`$ARGUMENTS`** sigue funcionando: el orquestador (o el router skill) pasa el feature-id en el `prompt` del Agent tool call, y el body del agent lo resuelve por literal string substitution.
 
 ## Leaf skill router shape
@@ -74,6 +74,8 @@ If `.claude/agents/sdd-<phase>.md` is not present (agents directory not deployed
 - Preguntas de a una, esperando respuesta del usuario
 - Result envelope final
 
+**Flag `disable-model-invocation`**: los skills inline que reciben delegación de otro skill (`new-feature`, `new-quick-feature`, `new-fix`, y las fases orquestadoras `plan-feature` / `review-feature`) NO deben llevar `disable-model-invocation: true`. La delegación se hace vía Skill tool (p.ej. `/sdd-new` → `Skill(new-fix)`, `/sdd-next` Branch B → `Skill(plan-feature)`), y el flag la bloquea con error — además su semántica de harness prohíbe replicar el workflow por otros medios (el viejo patrón "Read SKILL.md + execute inline" la violaba). El anti-auto-invocación se cubre con un **Invocation guard** textual al inicio del body: correr solo si el usuario tipeó el comando o un orquestador SDD ruteó ahí. `sdd-new` y los leaf routers sí conservan el flag: nadie los invoca vía Skill tool (el usuario tipea `sdd-new`; los leaf phases se lanzan vía Agent tool).
+
 ## Field reference (agent frontmatter)
 
 | Field | Obligatorio | Valores | Comentario |
@@ -81,7 +83,7 @@ If `.claude/agents/sdd-<phase>.md` is not present (agents directory not deployed
 | `name` | ✅ | kebab-case, único, prefix `sdd-` | Usado en `Agent(subagent_type="sdd-<name>")` |
 | `description` | ✅ | ≤1024 chars | Una línea describiendo el trigger de la fase |
 | `model` | ⭕ | `opus` \| `sonnet` \| `haiku` \| `inherit` | Default `inherit`. Ver mapping en plan 008 |
-| `disallowedTools` | ⭕ | ej. `[Agent]` | Presente en todos los 10 native agents sin excepción |
+| `disallowedTools` | ⭕ | ej. `[Agent]` | Presente en todos los 11 native agents sin excepción |
 | `mcpServers` | ⭕ | ej. `[engram]` | Default: hereda de `.claude/settings.json` |
 | `context` | ⭕ | `fork` | Solo para `sdd-research-spike` (aislamiento fuerte) |
 
@@ -93,7 +95,7 @@ If `.claude/agents/sdd-<phase>.md` is not present (agents directory not deployed
 
 **4 conversational inline intakes** (sin agent nativo): `sdd-new`, `new-feature`, `new-quick-feature`, `new-fix`.
 
-**6 internal native agents** (no skill router, spawneados por main Claude ejecutando plan-feature/SKILL.md o review-feature/SKILL.md): `sdd-explore-agent`, `sdd-discovery-evaluator`, `sdd-designer`, `sdd-task-planner`, `sdd-reviewer`, `sdd-judge`.
+**7 internal native agents** (no skill router, spawneados por main Claude ejecutando plan-feature/SKILL.md o review-feature/SKILL.md): `sdd-explore-agent`, `sdd-discovery-evaluator`, `sdd-designer`, `sdd-task-planner`, `sdd-reviewer`, `sdd-judge`, `sdd-cross-reviewer` (spawneado por review-feature/SKILL.md como tercer agente advisory en paralelo con `sdd-reviewer`/`sdd-judge`).
 
 ## Invocación desde orquestadores
 
@@ -107,3 +109,5 @@ Agent(
 ```
 
 No pasar `model=` desde el orquestador — el frontmatter del agent es la fuente de verdad (AC4).
+
+Para fases orquestadoras sin agent nativo (`plan-feature`, `review-feature` — Branch B), la invocación es vía **Skill tool** con el feature-id como args (más ` --minimal` cuando aplica a review-feature). Nunca vía Read manual del SKILL.md ni re-implementación de memoria.

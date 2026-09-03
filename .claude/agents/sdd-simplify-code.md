@@ -17,10 +17,10 @@ Before starting, **resolve lane** per `.claude/skills/_shared/sdd-phase-common.m
 - [ ] **FAST_LANE = false**: `specs/$ARGUMENTS/spec.md`, `plan.md`, and `tasks.md` exist; all tasks in `tasks.md` checked (`- [x]`)
 - [ ] **FAST_LANE = true**: `specs/$ARGUMENTS/quick-spec.md` exists; all `- [ ]` in its `## Tasks` section are `- [x]`
 - [ ] `specs/$ARGUMENTS/decisions.md` has no unresolved `JUDGMENT-DAY-HIGH` entry
-- [ ] `specs/$ARGUMENTS/.simplified` is absent OR is stale (its `git-head` field ≠ `git rev-parse HEAD`) — a stale sentinel is deleted and treated as absent
+- [ ] `specs/$ARGUMENTS/.sdd-state` is absent OR is stale — run `sdd status $ARGUMENTS` and read its `sentinel_fresh` field; `false` (or the file absent) means proceed, `true` means fresh
 - [ ] `sdd base-branch $ARGUMENTS` exits 0 (base branch is resolvable) AND `git merge-base "$(sdd base-branch $ARGUMENTS)" HEAD` resolves to a valid commit SHA
 
-**Stale sentinel handling**: if `.simplified` exists, read its `git-head` line. If it equals the current `git rev-parse HEAD`, the sentinel is fresh — abort pre-flight with `Status: blocked` (`Summary: already simplified at this HEAD`). If it differs, the sentinel is stale (e.g., user amended HEAD, rebased, or spoofed the file) — `rm specs/$ARGUMENTS/.simplified` and proceed.
+**Stale sentinel handling**: `.sdd-state` freshness is tied to BOTH the commit (`git-head`) and the working tree (`tree-digest`) — never hand-compute or hand-compare either field; always go through `sdd status $ARGUMENTS`'s `sentinel_fresh` field, which reads them the same way `sdd state-write` writes them. If `sentinel_fresh` is `true`, the sentinel is fresh — abort pre-flight with `Status: blocked` (`Summary: already simplified at this HEAD`). If `.sdd-state` exists but `sentinel_fresh` is `false`, the sentinel is stale (e.g., user amended HEAD, rebased, edited a tracked file without committing, or spoofed the file) — `rm specs/$ARGUMENTS/.sdd-state` and proceed.
 
 If any other check fails, stop and tell the user what's needed (typically `/implement-task` or resolving a `JUDGMENT-DAY-HIGH`).
 
@@ -37,25 +37,27 @@ Run **Lint**, **Type check**, and **Tests** as parallel Bash calls (three indepe
 - **All pass** → proceed to step 3.
 - **Any fail** → STOP. Return `Status: blocked` with `Summary: baseline is red — fix regressions before running /simplify-code`. Do NOT make any edits.
 
-This guarantees that any post-edit failure later is attributable to simplify-code, not a pre-existing regression.
+This isolates simplify-code's own edits from a pre-existing regression **only when no scoped file was already dirty at this point** — step 3's dirty-scope check (sub-step 4b below) blocks the run before step 4 touches anything if a scoped path already has uncommitted edits, so this baseline can never have silently absorbed a human's in-progress change to a file simplify-code is about to edit.
 
 ### 3. Determine scope
 
 1. Resolve branch base: Run `BASE_BRANCH=$(sdd base-branch "$ARGUMENTS")`. If `sdd base-branch` exits non-zero, forward its stderr and return `Status: blocked` with diagnostic. Then run `git merge-base "$BASE_BRANCH" HEAD`; if this fails → `Status: blocked` with diagnostic. `sdd base-branch` is the canonical scope source — do not hardcode `main` or any other branch name.
 2. Compute touched files as the committed diff only: `git diff --name-only <base-sha>..HEAD`. This is the strict scope — working-tree changes outside this diff are not eligible for simplification. If the result is empty, there is nothing to simplify — skip to step 5.
-2b. Compute `IGNORED_DIRTY`: from `git status --short`, collect paths from `M `, ` M`, `MM`, `A `, `??` entries (ignore `D`, `R`) that are **not** already in the committed diff list. Apply the same exclusion filters as `SCOPED_FILES` (tests, lockfiles, migrations, configs, SDD artifacts). If `IGNORED_DIRTY` is non-empty, print:
-   ```
-   Ignored uncommitted paths outside <base>..HEAD: <list>
-   ```
-   This is a notice only — the run continues normally. No block is raised.
+2b. Compute `DIRTY_PATHS` from `git status --short`: collect paths from `M `, ` M`, `MM`, `A `, `??` entries (ignore `D`, `R`). This raw list is the single source for both checks that use it below — do not recompute it a second time for sub-step 4b.
+   - `IGNORED_DIRTY` = the paths in `DIRTY_PATHS` that are **not** already in the committed diff list. Apply the same exclusion filters as `SCOPED_FILES` (tests, lockfiles, migrations, configs, SDD artifacts). If `IGNORED_DIRTY` is non-empty, print:
+     ```
+     Ignored uncommitted paths outside <base>..HEAD: <list>
+     ```
+     This is a notice only — the run continues normally. No block is raised.
 3. Apply exclusion filters — drop any file matching:
    - **Tests**: `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`, `**/test/**`, `**/tests/**`
    - **Lockfiles**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Cargo.lock`
    - **Migrations**: `**/migrations/**`, `**/db/migrate/**`
    - **Configs**: `*.config.*`, `.env*`, `docker-compose.*`, `tsconfig.json`, `vite.config.*`
-   - **SDD artifacts**: `specs/**/*.md`, `.claude/skills/**/*.md`, `.claude/CLAUDE.md`, `.specify/templates/*.md` — spec, plan, tasks, quick-spec, SKILL.md, templates, and orchestrator docs are prose artifacts, not code. KISS/DRY/YAGNI applied to these is out of scope and can corrupt load-bearing structure (e.g., `## Tasks` checkboxes).
+   - **SDD artifacts**: `specs/**/*.md`, `.claude/skills/**/*.md`, `.claude/agents/**/*.md`, `.claude/CLAUDE.md`, `.specify/templates/*.md`, `docs/adr/**/*.md` — spec, plan, tasks, quick-spec, SKILL.md, agent instructions, templates, orchestrator docs, and architecture decision records are prose artifacts, not code. KISS/DRY/YAGNI applied to these is out of scope and can corrupt load-bearing structure (e.g., `## Tasks` checkboxes).
 4. Record the remaining list as `SCOPED_FILES` — this is the revert target list.
-5. **If `SCOPED_FILES` is empty** → write the sentinel (step 6) with `Summary: no changes needed` and return `Status: success`. Skip steps 4 and 5.
+4b. **Block if a scoped path is already dirty**: intersect `SCOPED_FILES` (the final, post-exclusion-filter list from step 4 above) with `DIRTY_PATHS` (step 2b's raw collection). If the intersection is non-empty, STOP here — before step 4 (Simplify) reads or writes a single file. Make no commit, run no `git checkout --`, make no edit. Return `Status: blocked` with `Summary: scoped file(s) already have uncommitted edits — resolve or commit them before running /simplify-code`, naming the offending paths. This is a hard gate, not a notice — unlike `IGNORED_DIRTY` above, which only reports paths *outside* scope and never blocks. Intersect against `SCOPED_FILES` (the post-filter list), never against the pre-filter committed-diff list from step 2 — a path the exclusion filters already dropped is out of scope and must not trip this block; that would be a false positive stopping a legitimate run.
+5. **If `SCOPED_FILES` is empty** → skip straight to step 6 and report `Commit: none`; write the sentinel with `Summary: no changes needed` and return `Status: success`. Skip steps 4, 5, and 5.5 — there is nothing to simplify and nothing to commit.
 
 ### 4. Simplify
 
@@ -79,6 +81,10 @@ For each file in `SCOPED_FILES`:
 - Never rewrite algorithms — only rearrange or remove.
 - **Never delete files** and never create new files. Only **modify in place**. A simplification that would remove an entire file is out of scope — surface it in the decisions.md entry as "candidate for manual removal" instead.
 
+### 4.5. Zero edits applied
+
+If step 4 read every file in `SCOPED_FILES` and applied no edit to any of them — a non-empty scope where nothing violated KISS/DRY/YAGNI — treat it the same as the empty-scope path in step 3's item 5: skip straight to step 6, report `Commit: none`, write the sentinel with `Summary: no changes needed`, and return `Status: success`. Skip steps 5 and 5.5 — there is nothing to re-validate and nothing to commit. This is a distinct shape from an empty `SCOPED_FILES` (files really were in scope; review just found nothing worth changing), but the outcome is identical, and step 6 still runs so the decisions.md entry records which files were reviewed.
+
 ### 5. Post-validation
 
 Re-run **Lint**, **Type check**, and **Tests** as parallel Bash calls.
@@ -88,24 +94,31 @@ Re-run **Lint**, **Type check**, and **Tests** as parallel Bash calls.
   1. **Pre-revert integrity check**: run `git status --porcelain -- <SCOPED_FILES>`. Expect only `M` (modified) entries. If any entry shows `D` (deleted), `A` (added), `R` (renamed), or `??` (untracked), that is a skill-internal bug (NEVER list violation) — do NOT attempt `git checkout --`. Return `Status: blocked` with `Summary: simplify-code produced a non-modification diff; aborted before revert` and list the offending paths.
   2. Run `git checkout -- <file1> <file2> ...` with the explicit `SCOPED_FILES` list (no wildcards).
   3. Verify revert: `git diff HEAD -- <file1> <file2> ...` must come back empty for every file.
-  4. Do NOT create `.simplified`.
+  4. Do NOT run `sdd state-write`.
   5. Return `Status: blocked` with `Summary: simplify-code reverted — post-validation failed` and the validation error output in `Validations-Output`.
+
+### 5.5. Commit the slice
+
+If `SCOPED_FILES` was empty (step 3.5 above), there is nothing to commit — that path already skips this step and reports `Commit: none`.
+
+Otherwise, call:
+
+```
+sdd commit-slice $ARGUMENTS --type refactor --title "<slice title>" --files <SCOPED_FILES...>
+```
+
+No `--task` flag — a simplify pass has no task ID.
+
+- **On success**: record the printed SHA as `Commit: <sha>` for the result envelope, then proceed to step 6.
+- **On failure** (`sdd commit-slice` exits non-zero): do NOT run `sdd state-write`. Return `Status: blocked` with the CLI's stderr pasted verbatim and `Commit: none`.
+
+**Ordering is load-bearing — commit FIRST, write the sentinel SECOND. Never reverse this.** Step 6 calls `sdd state-write`, which captures `git rev-parse HEAD` for the sentinel's `git-head:` field *after* this commit lands. If the sentinel were written before the commit, the commit would advance HEAD past the recorded value; `bin/sdd`'s `cmd_status` freshness check (sentinel `git-head:`/`tree-digest:` vs current HEAD/tree) would then read the sentinel as stale on every subsequent check, and `/sdd-next` would route back to `/simplify-code` and loop `/simplify-code` forever. Do not reorder these two steps.
 
 ### 6. Write sentinel and decisions.md entry
 
-1. **TOCTOU guard**: re-check that `specs/$ARGUMENTS/.simplified` does NOT exist. If it now exists (a concurrent `/simplify-code` completed while this run was editing), abort without overwriting: return `Status: blocked` with `Summary: sentinel written concurrently — another /simplify-code run finished first`.
-2. Capture current HEAD: `git rev-parse HEAD`.
-3. Write `specs/$ARGUMENTS/.simplified` with contents:
-
-   ```
-   git-head: <git-rev-parse-HEAD>
-   simplified: <ISO-8601 timestamp>
-   files:
-   - <file1>
-   - <file2>
-   ```
-
-4. Append to `specs/$ARGUMENTS/decisions.md`:
+1. **TOCTOU guard**: re-check that `specs/$ARGUMENTS/.sdd-state` does NOT exist. If it now exists (a concurrent `/simplify-code` completed while this run was editing), abort without overwriting: return `Status: blocked` with `Summary: sentinel written concurrently — another /simplify-code run finished first`.
+2. Run `sdd state-write $ARGUMENTS --phase ready-to-review`. This writes `specs/$ARGUMENTS/.sdd-state` (`phase`, `git-head`, `tree-digest`, `verdict: none`, `at`) computing `git-head` and `tree-digest` from the current commit and working tree — never hand-write these fields, and never hand-compute the digest; `sdd state-write` and `sdd status`'s freshness check share the same computation so they can't drift apart. On failure (non-zero exit), do not retry by hand: return `Status: blocked` with the CLI's stderr pasted verbatim.
+3. Append to `specs/$ARGUMENTS/decisions.md`:
 
    ```
    ## Simplify: <date> — /simplify-code
@@ -124,11 +137,12 @@ Save **only if** a non-obvious simplification pattern surfaced (e.g., a recurrin
 ## Result
 - **Status**: success | blocked
 - **Summary**: [1-3 sentences — what was simplified, or why it blocked]
-- **Artifacts**: [modified files + specs/$ARGUMENTS/.simplified + specs/$ARGUMENTS/decisions.md]
+- **Artifacts**: [modified files + specs/$ARGUMENTS/.sdd-state + specs/$ARGUMENTS/decisions.md]
 - **Validations**: Baseline: PASS | Post-edit: PASS/FAIL/SKIP
 - **Validations-Output**: [short summary on success; last 100 lines of terminal output on failure]
 - **Files-Simplified**: [list or `none` for empty diff]
 - **Revert-Applied**: [true/false]
+- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when `SCOPED_FILES` was empty, step 4 applied zero edits, or the run blocked before step 5.5]
 - **Next**: /review-feature $ARGUMENTS
 - **Risks**: [anything the reviewer should double-check, or "None"]
 ```
@@ -140,4 +154,5 @@ Save **only if** a non-obvious simplification pattern surfaced (e.g., a recurrin
 - **Behavior preservation is the hard constraint** — the NEVER list above is non-negotiable.
 - **Revert is file-scoped, not branch-scoped** — only touch files in `SCOPED_FILES`.
 - **Empty diff is a success** — do not invent work. Write the sentinel and move on.
+- **Commit before sentinel, never the reverse** — step 5.5 must run before step 6. The sentinel's `git-head:` has to be the post-commit HEAD; writing it first self-invalidates the sentinel and loops `/simplify-code` forever.
 - Always output the result envelope at the end.

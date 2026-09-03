@@ -2,7 +2,6 @@
 name: new-quick-feature
 description: "Fast-lane (small changes): Create a quick-spec.md for a low-risk single-domain enhancement or refactor (no new deps, ≤2 GWT)"
 user-invocable: true
-disable-model-invocation: true
 arguments: idea or request description
 ---
 
@@ -13,6 +12,8 @@ Intent:
 `$ARGUMENTS`
 
 **Main Claude executes this skill body inline.** Do NOT launch a sub-agent — this intake is conversational and must ask the user one question at a time.
+
+**Invocation guard**: run this intake only when the user explicitly typed `/new-quick-feature`, or `/sdd-new` classified the lane and routed here. Never start it on your own initiative mid-conversation — if an intake seems warranted, suggest the command and let the user decide.
 
 ## Approach
 
@@ -34,7 +35,7 @@ Ground yourself in the codebase. ~30-60 seconds:
 
 **Silent escalation guard** (no questions): while scanning, if the change as understood genuinely requires a schema/data migration, auth/permission change, billing/payments, a public API/integration contract change, background jobs, concurrency, or other rollback-hard behavior, stop the fast lane and tell the user once:
 > "Esto toca `<concrete trigger found in code>` — lo trato como `/new-feature` para no subdimensionarlo."
-Then execute `/new-feature` inline with the same intent. Do NOT ask the four old gate questions; this guard fires only on a concrete trigger you actually found, otherwise stay fast-lane silently.
+Then invoke the `new-feature` skill via the Skill tool with the same intent. Do NOT ask the four old gate questions; this guard fires only on a concrete trigger you actually found, otherwise stay fast-lane silently.
 
 ## Grill-me intake (one question at a time)
 
@@ -72,7 +73,7 @@ SUCCESS METRIC:
 
 **Hard gate**: do NOT write `quick-spec.md` until the user confirms (or corrects) the three blocks. If they correct, rewrite and re-present. The artifact still carries strict Given/When/Then acceptance criteria — you authored them, the user only validated.
 
-If drafting the acceptance criteria forces you past 2 G/W/T to capture "done", that is a signal the change outgrew fast-lane — switch to `/new-feature` with the same intent.
+If drafting the acceptance criteria forces you past 2 G/W/T to capture "done", that is a signal the change outgrew fast-lane — invoke the `new-feature` skill via the Skill tool with the same intent.
 
 ## Generate quick-spec.md
 

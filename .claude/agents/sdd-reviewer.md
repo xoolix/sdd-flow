@@ -23,6 +23,8 @@ The orchestrator passes you:
 
 2. **Run tests**: Execute the project's test suite or relevant subset. Use real command output. Do NOT rely on static analysis alone.
 
+2.5. **Validate TDD-Evidence against reality**: Read the `TDD-Evidence` claims from `decisions.md`'s `## TDD-Evidence` section for this feature — its actual durable source; the implement-task envelope only carries the immediate copy consumed by the orchestrator's structural check. For each per-task RED/GREEN/TRIANGULATE claim, check it mechanically against the actual codebase — do not trust the text: the referenced test file EXISTS, it PASSES when run now, and it contains the claimed N triangulation cases (or a documented skip note). Triangulation cases must exercise genuinely different code paths or inputs, not just different literal values down the same path. A fabricated or unverifiable claim is CRITICAL — feed it into the Gaps/Verdict criteria in step 7 the same as any other CRITICAL gap. Absent-evidence case: any task completed after this contract existed must have its own entry; a feature with no `## TDD-Evidence` section at all and no per-task entries is CRITICAL (evidence contract not honored) unless every task instead carries a documented `Test-skip rationale`.
+
 3. **Build GWT compliance matrix**: Each row MUST map to a specific Given/When/Then scenario from the spec or quick-spec. Preserve the exact GWT wording.
 
    | # | Given | When | Then | Test | Result | Status |

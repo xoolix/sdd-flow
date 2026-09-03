@@ -2,7 +2,6 @@
 name: plan-feature
 description: Turn a feature spec into a technical plan and task list
 user-invocable: true
-disable-model-invocation: true
 arguments: feature-id
 ---
 
@@ -11,6 +10,8 @@ arguments: feature-id
 Feature-id: `$ARGUMENTS`
 
 **Main Claude executes this skill body inline. You orchestrate sub-agents and synthesize results. Do NOT do the analysis work yourself — delegate to sub-agents.**
+
+**Invocation guard**: run this phase only when the user explicitly typed `/plan-feature`, or an SDD orchestrator (`/sdd-next`, `/sdd-auto`) detected it as the next phase and invoked it. Never start it on your own initiative — if planning seems warranted, suggest the command and let the user decide.
 
 > Sub-agents you launch MUST follow the executor boundary from `.claude/skills/_shared/sdd-phase-common.md` — they do the work themselves without re-delegating.
 
@@ -33,8 +34,12 @@ For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the 
 
 **Before proceeding with exploration**, check if `specs/$ARGUMENTS/discovery.md` already exists.
 
-- **If `discovery.md` exists**: The user has already reviewed the discovery findings. Skip Step 4 (Explore agents) and Step 4.5 (Discovery Checkpoint) entirely. Read `discovery.md` and inject its content as additional context into the Design + Task agents in Step 5. Record any `DISCOVERY-ACCEPTED` / `DISCOVERY-DISCARDED` user decisions from `discovery.md` into `specs/$ARGUMENTS/decisions.md`.
 - **If `discovery.md` does not exist**: Proceed normally through all steps.
+- **If `discovery.md` exists**: Existence alone does not mean reviewed — read its `## User decisions` section.
+  - **Contains at least one `DISCOVERY-ACCEPTED` or `DISCOVERY-DISCARDED` entry**: The user has reviewed the findings. Skip Step 4 (Explore agents) and Step 4.5 (Discovery Checkpoint) entirely. Read `discovery.md` and inject its content as additional context into the Design + Task agents in Step 5. Record the `DISCOVERY-ACCEPTED` / `DISCOVERY-DISCARDED` user decisions from `discovery.md` into `specs/$ARGUMENTS/decisions.md`.
+  - **Empty, or contains only the schema's placeholder line** (`- (leave blank — user fills in DISCOVERY-ACCEPTED or DISCOVERY-DISCARDED entries)`): The findings exist but nobody has decided anything yet. Do NOT treat the file as reviewed, do NOT proceed to Step 5, and do NOT fall back to re-running Step 4/4.5 as if `discovery.md` were absent — the findings already exist, only the decision is missing. Return `Status: blocked` (see the Blocked path below), telling the user to add at least one `DISCOVERY-ACCEPTED` or `DISCOVERY-DISCARDED` line under `## User decisions` in `specs/$ARGUMENTS/discovery.md`, then re-run `/plan-feature $ARGUMENTS`.
+
+  **Ceiling on this check — state it plainly, never imply more**: this only proves *a* decision was recorded, not that every high-impact finding got one. `sdd-discovery-evaluator`'s JSON contract (`{category, description, impact, rationale}`) and `discovery.md`'s bullet schema carry no finding IDs anywhere, and `## User decisions` is free-form prose — so "one decision per high-impact finding" is not mechanically checkable here. A single `DISCOVERY-ACCEPTED` line satisfies this gate even if other high-impact findings above it were never addressed. That is a known, accepted limitation (see `spec.md`'s edge cases), not a gap this check is meant to close.
 
 ## Steps
 
@@ -50,8 +55,14 @@ For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the 
 
 2. Read `specs/$ARGUMENTS/spec.md`. If it doesn't exist, tell the user to run `/new-feature` first.
 
+2.5. **Domain vocabulary** — Resolve the project's domain vocabulary before Step 3 needs it, by running `sdd domain-vocab`:
+   - Exit 0 with output ⇒ that stdout **is** the project's domain vocabulary. Step 3 identifies domains from it.
+   - Exit non-zero, or the command unavailable ⇒ derive the domain list from `spec.md` instead — already read in Step 2 and always in context. Never from Step 4's exploration findings: the discovery-resume path above skips Step 4 entirely, so on that path those findings don't exist (021 took exactly this path).
+
+   **Why this stays 2.5 instead of becoming the new Step 3** (renumbering everything after it): this file already has a `4.5` step, so a fractional insertion is the established pattern here, not a special case. Two references below are load-bearing on the *current* numbers — the discovery-resume note above ("Skip Step 4 ... and Step 4.5 ... into ... Step 5") and the designer hand-off note in Step 5 ("Domain analysis summary (from step 3)") — and both stay true untouched only because nothing was renumbered. Renumber this step and both go stale silently. Only the Domain vocabulary bullet inside Step 5 changes, into a back-pointer at this step instead of repeating the old instruction.
+
 3. **Domain analysis** — Based on the spec, identify:
-   - Which domains are involved (db, api, frontend, infra, auth, notifications, integrations, etc.)
+   - Which domains are involved — from Step 2.5's vocabulary, or from `spec.md` when Step 2.5 came back empty
    - For each domain, assess complexity: **SMALL** (trivial change), **MEDIUM** (meaningful work), **LARGE** (significant effort or risk)
    - Determine overall strategy:
      - **SMALL** (1-2 domains, all small/medium): Execute directly, minimal planning overhead
@@ -90,14 +101,15 @@ For an unresolved `PROTOTYPE-REQUIRED`, do not suggest `/new-feature`; tell the 
    ```
 
 5. **Delegate design and tasks in parallel** — Launch **both sub-agents simultaneously in a single message** with two `Agent` tool calls:
+   - **Domain vocabulary.** Already resolved in Step 2.5 — pass that vocabulary (or its spec-derived fallback) to `sdd-designer` unchanged; do not re-resolve it here. Per ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): the CLI resolves content (`sdd domain-vocab`), the agent reads knobs (like the `tdd` knob in `testing.md`) directly.
    - **`sdd-designer`**: Receives the spec + exploration findings (+ `discovery.md` content if resuming). Creates `specs/$ARGUMENTS/plan.md` using `.specify/templates/plan-template.md` as base. Fills in:
      - Domain analysis summary (from step 3)
      - Current state of relevant code
      - Proposed design
-     - Touched files/modules, APIs, DB/schema, jobs, UI
+     - Touched areas — a `| Module / path | Change |` table, real paths only
      - Data flow
-     - Migration / rollout strategy
-     - Observability plan
+     - Migration / rollout — conditional: real content, or `N/A — <reason>` when this feature has no rollout surface
+     - Observability — conditional: real content, or `N/A — <reason>` when this feature has no observability surface
      - Test strategy
      - Risks and mitigations
      - **Size budget**: The generated `plan.md` MUST be under 800 words. Prefer tables over prose.
@@ -131,9 +143,9 @@ After completing, output:
 - **Risks**: [unknowns, complexity concerns, or "None"]
 ```
 
-**Blocked path**: When `Status: blocked` is returned due to high-impact discovery findings:
+**Blocked path**: `Status: blocked` is returned in two cases — Step 4.5 writing a fresh `discovery.md` with high-impact findings, and the Discovery resume check finding an existing `discovery.md` with no recorded decisions. In both cases:
 - `Artifacts` MUST list `specs/$ARGUMENTS/discovery.md`
-- `Summary` MUST summarize each high-impact finding
+- `Summary` MUST summarize each high-impact finding, or — for the resume-check case — state that `discovery.md` already exists but `## User decisions` has no entries yet
 - `Next` MUST instruct the user to review `discovery.md`, add `DISCOVERY-ACCEPTED` or `DISCOVERY-DISCARDED` decisions under `## User decisions`, then re-run `/plan-feature $ARGUMENTS`
 
 ## Rules

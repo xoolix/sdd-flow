@@ -27,6 +27,8 @@ Then verify:
 
 If any check fails, tell the user what's missing and suggest the appropriate step.
 
+Once the lane is resolved and the required files confirmed, call `sdd branch $ARGUMENTS` before any implementation work. It is idempotent — a no-op when already on `feature/$ARGUMENTS`, a checkout when the branch exists, a `checkout -b` otherwise — and prints the branch name. This is the only sanctioned way to create or switch the feature branch: never run a raw `git checkout -b` here — ADR 0002 makes `bin/sdd` the sole git-write path.
+
 ## Task graph format
 
 `tasks.md` and fast-lane `quick-spec.md` `## Tasks` use vertical slices:
@@ -36,12 +38,14 @@ If any check fails, tell the user what's missing and suggest the appropriate ste
   - blocked_by: none
   - verifies: AC1
   - touches: api, ui, tests
+  - type: feat
 ```
 
 Rules:
 - Task ID is the `Tnnn` token. Legacy bullets without IDs are allowed; treat them as AFK tasks with implicit order.
 - Type is `[AFK]` or `[HITL]`. Missing type defaults to `[AFK]` for legacy tasks.
 - `blocked_by` is `none` or comma-separated task IDs.
+- `type` (`feat`/`fix`/`refactor`/`chore`/`docs`, set by the task planner) drives the commit type prefix in Step 7.5. Missing on a Step 2b auto-generated review-fix task ⇒ `fix`; missing anywhere else ⇒ `chore`.
 - A task is unlocked only when all `blocked_by` IDs are completed (`- [x]`).
 - `[HITL]` tasks are human checkpoints. Do not implement them. If the next unlocked work is HITL-only, return `Status: blocked` with the exact task and `Next: /sdd-hitl $ARGUMENTS <Tnnn> "<decision>"`.
 - Default scope is **one unlocked AFK vertical slice** per invocation. `/sdd-next` and `/sdd-auto` will re-run you for the next unlocked slice, keeping each sub-agent context clean.
@@ -59,10 +63,11 @@ Determine `TDD_MODE` deterministically. It is **ON** if ANY of these is true:
 
 `.claude/rules/testing.md` provides explicit overrides that win over auto-detection: a `tdd: strict` line forces `TDD_MODE` ON (even with no tests yet — introduce the framework and write the failing test first); a `tdd: off` line forces it OFF (test-first stays preferred, not gated). Absent an explicit line, silence never turns `TDD_MODE` OFF when tests/framework exist.
 
-When `TDD_MODE` is ON, execute each task with testable behavior using the RED → GREEN → REFACTOR cycle:
+When `TDD_MODE` is ON, execute each task with testable behavior using the RED → GREEN → TRIANGULATE → REFACTOR cycle:
 1. **RED**: Write a failing test that captures the expected behavior for this task. Run it; paste the real failure output.
 2. **GREEN**: Write the minimum code to make the test pass.
-3. **REFACTOR**: Clean up the code while keeping tests green.
+3. **TRIANGULATE**: Add a second test case with different inputs than the first — minimum 2 cases per behavior, the happy path plus one that exercises a different code path — and generalize the implementation when a Fake-It/hardcoded GREEN breaks under the new case. Default-mandatory. Skip ONLY for a purely-structural task with literally one possible output, noted explicitly as `Triangulation skipped: <reason>`.
+4. **REFACTOR**: Clean up the code while keeping tests green.
 
 `TDD_MODE` OFF (greenfield repo with no tests and no framework yet): still write a test-first for any testable behavior when a framework can be added trivially; otherwise follow the standard flow and record why in `decisions.md`.
 
@@ -72,10 +77,10 @@ When a task has testable behavior, apply these rules whether or not the repo is 
 
 - Test through public interfaces, not private helpers or internal call shape.
 - Work in vertical slices: one behavior → one failing test → minimal implementation → green. Do NOT write all tests first and then all implementation.
-- A test must fail for the expected reason before implementation. Paste the real RED output in `Validations-Output` or the task notes.
+- A test must fail for the expected reason before implementation. Paste the real RED output in the `TDD-Evidence` envelope field (see Result envelope) — it has one home now, not a dispersed pair.
 - Prefer integration-style tests over mocks. Mock only slow/flaky/paid/unavailable external boundaries.
 - Test names must read like behavior specs and use domain terms from the spec/plan/codebase.
-- Never refactor while RED. Refactor only after the current behavior is GREEN, then rerun the relevant tests.
+- Never refactor while RED. Refactor only after TRIANGULATE — or immediately after GREEN when triangulation is skipped per its rule — then rerun the relevant tests.
 - Do not mark a task complete until the behavior has a passing test or a `Test-skip rationale` entry explains why no test applies.
 
 ## Steps
@@ -95,6 +100,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
        - blocked_by: none
        - verifies: review-feedback
        - touches: affected files from the feedback, or unknown
+       - type: fix
      ```
      Pick the next unused task ID.
 
@@ -102,6 +108,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
 
 3. **Select the next vertical slice**
    - Parse all checkbox task bullets and their indented metadata.
+   - Also capture each task's `type:` metadata alongside `blocked_by` — Step 7.5 needs it for the commit message. Missing `type:` on a Step 2b auto-generated review-fix task ⇒ `fix`; missing anywhere else ⇒ `chore`.
    - Build a completed-ID set from all `- [x]` tasks.
    - Parse optional `FORCE_TASK_ID=Tnnn` from the invoker prompt.
    - If `FORCE_TASK_ID` is present:
@@ -125,7 +132,7 @@ When a task has testable behavior, apply these rules whether or not the repo is 
       - The test must exercise the public interface that users/callers rely on. Do not couple the test to private functions, transient data shape, or implementation-only collaborators.
       - Write exactly one new behavior test at a time. Get it GREEN before adding the next behavior test.
       - **If the task is not testable** (infra, config, migration, exploration, prose docs): document the reason inline in `decisions.md` under a `## Test-skip rationale` heading for that task — one line is enough.
-   c. Write the code change (if TDD mode: follow RED → GREEN → REFACTOR cycle).
+   c. Write the code change (if TDD mode: follow RED → GREEN → TRIANGULATE → REFACTOR cycle).
    d. **Self-review before marking complete** — re-read the full diff for this task and confirm:
       - (a) every change is in scope of the current task,
       - (b) nothing was added that wasn't asked for,
@@ -146,6 +153,27 @@ When a task has testable behavior, apply these rules whether or not the repo is 
    - **FAST_LANE = false**: change the selected task bullet from `- [ ]` to `- [x]` in `tasks.md`.
    - **FAST_LANE = true**: change the selected task bullet from `- [ ]` to `- [x]` in `quick-spec.md` `## Tasks` section (NOT `tasks.md` — there is no `tasks.md` for fast-lane features).
 
+6b. **Record the `implemented-by` marker**: Append one line to `specs/$ARGUMENTS/decisions.md`:
+    ```
+    [<ISO-8601 UTC timestamp>] implemented-by: <runtime>
+    ```
+    - Timestamp: `date -u +%Y-%m-%dT%H:%M:%SZ`.
+    - `<runtime>` is the runtime executing this task — `claude` when running in Claude Code, `codex` when the Codex port runs this same agent. Never hardcode `claude`; use whichever runtime you actually are.
+    - Dedupe rule is **consecutive-only**: read the last `implemented-by:` line in the file (if any). Skip the append only when that last line's value equals the current runtime's value. Do not dedupe against earlier, non-consecutive lines — an alternating sequence like `claude` → `codex` → `claude` must record all three.
+    - If `decisions.md` doesn't exist yet, create it with a `# Decisions` heading before appending.
+
+6c. **Persist TDD-Evidence durably**: Append a compact per-task entry to `specs/$ARGUMENTS/decisions.md` under a `## TDD-Evidence` section (create the section, right after the `implemented-by:` marker area, if it doesn't exist yet):
+    ```
+    ### TDD-Evidence: Tnnn
+    - RED: <first line(s) of the real failure output, compressed>
+    - GREEN: <pass summary line>
+    - TRIANGULATE: <N cases, or "skipped: <reason>">
+    ```
+    - `Tnnn` is the selected task's ID (or a short description for a legacy bullet with no ID).
+    - This is the DURABLE copy `sdd-reviewer`'s step 2.5 reads at review time. The Result envelope's `TDD-Evidence` field (see below) is unchanged — it stays the immediate signal for the orchestrator's structural check; this step doesn't replace it, it persists it.
+    - Keep it compact — `decisions.md` is prose, not a log dump: RED is a compressed excerpt (the first line or two of the real failure), not the full paste; GREEN is one summary line.
+    - For a non-testable task, mirror the `Test-skip rationale` note: `RED: skipped — <reason>`, `GREEN: skipped`, `TRIANGULATE: skipped: <reason>`.
+
 7. **Delta spec check**: If the selected task changed, added, or removed requirements from the original spec, document all deltas in `specs/$ARGUMENTS/decisions.md` in a single entry:
    ```
    ## Delta: [date] — Task Tnnn
@@ -154,6 +182,17 @@ When a task has testable behavior, apply these rules whether or not the repo is 
    - **REMOVED**: [requirement dropped and why]
    ```
    Only include sections (ADDED/MODIFIED/REMOVED) that apply. Skip this step if all tasks matched the spec exactly.
+
+7.5. **Commit the slice** — runs after Step 6 (checkbox flip), Step 6b (`implemented-by` marker), and Step 7 (deltas), so the commit captures all three.
+   - Resolve `type` for the selected task (captured in Step 3): the task's `type:` value, else `fix` for a Step 2b auto-generated review-fix task, else `chore`.
+   - Call:
+     ```
+     sdd commit-slice $ARGUMENTS --type <type> [--task Tnnn] --title "<slice title>" --files <paths…>
+     ```
+     `--files` lists only the paths this slice actually touched — never `git add -A` — and goes last (it is variadic and stops at the next `--*` token). Omit `--task` for a legacy bullet with no ID.
+   - Unsure what belongs in this slice's commit? See the `work-unit-commits` skill.
+   - **On success**: record the printed SHA as `Commit: <sha>` for the result envelope.
+   - **On failure** (`sdd commit-slice` exits non-zero): flip the task bullet back from `- [x]` to `- [ ]` — the same shape as the `FORCE_TASK_ID` re-open in Step 3 — set `Task completed: None (blocked before completion)` and `Commit: none`, and return `Status: blocked` with the CLI's stderr pasted verbatim. Note which graded exit code fired so the failure is diagnosable: `2`=usage, `3`=unresolvable, `4`=git failure, `5`=nothing staged. This preserves the invariant *task complete ⟹ commit exists*, which `/simplify-code`'s committed-diff scope depends on.
 
 8. **Engram memory** (skip if Engram unavailable):
    - Save **only if** you discovered a gotcha, unexpected behavior, or non-obvious pattern during the slice → `mem_save` type: `discovery` or `pattern`, `project: "{project}"`
@@ -170,8 +209,10 @@ After completing the selected slice, output this summary:
 - **Artifacts**: [files modified/created]
 - **Validations**: Lint: PASS/FAIL/SKIP | Types: PASS/FAIL/SKIP | Tests: PASS/FAIL/SKIP
 - **Validations-Output**: [paste the concrete terminal output from the final validation run]
+- **TDD-Evidence**: [RED: real failure output pasted | GREEN: pass output | TRIANGULATE: N cases, or "skipped: <reason>"]
 - **Task attempted**: [Task ID + exact task bullet selected for this invocation]
 - **Task completed**: [Task ID + exact task bullet, or "None (blocked before completion)"]
+- **Commit**: [SHA printed by `sdd commit-slice`, or "none" when the task was blocked before Step 7.5]
 - **Tasks remaining**: [N unchecked / total, plus locked/HITL count if relevant]
 - **Next**: [next phase or "/review-feature $ARGUMENTS" if all complete]
 - **Risks**: [blockers, questions, or spec divergences — or "None"]
@@ -186,3 +227,4 @@ After completing the selected slice, output this summary:
 - Always output the result envelope — it provides context for the next run.
 - Document spec divergences as deltas in `decisions.md` — this feeds `/archive-feature` later.
 - The `tasks.md` file MUST stay under 530 words. If updating it, keep it concise.
+- `TDD-Evidence` is mandatory for every task in this agent's own contract — RED failure output, GREEN pass output, and TRIANGULATE case count or its skip note. For a non-testable task, the field carries the same skip note as the `Test-skip rationale` entry in `decisions.md`.

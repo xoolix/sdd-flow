@@ -27,7 +27,8 @@ Launch an Explore agent (subagent_type: "Explore", thoroughness: "very thorough"
 7. Test framework and test locations
 8. Lint/format configuration
 9. Package manager (npm, pnpm, yarn, pip, cargo, etc.)
-10. Any existing documentation or ADRs"
+10. Any existing documentation or ADRs
+11. Functional domains: name the project's business/functional areas (not directory or file names) — this becomes the shared domain vocabulary other phases reuse"
 ```
 
 ### 2. Generate architecture-map
@@ -61,9 +62,14 @@ Update `.claude/rules/conventions.md` based on detected conventions:
 - **Naming**: Detect from existing code (kebab-case files? camelCase? snake_case?)
 - **Folder structure**: Document the actual folder structure
 - **Lint / Format**: Detect from config files (eslint, prettier, ruff, clippy, etc.)
-- **Domain rules**: Leave as TODO for the user to fill
 
 If `conventions.md` already has non-template content, ask the user before overwriting.
+
+### 3a. Pre-fill domain rules
+
+Update `.claude/rules/domains.md` with the functional domains detected in Step 1 (business/functional areas, not directory names) — this becomes the shared domain vocabulary other phases read before naming things themselves.
+
+If `domains.md` already has non-template content, ask the user before overwriting.
 
 ### 4. Pre-fill testing conventions
 
@@ -96,11 +102,12 @@ Present what was generated and what still needs manual attention:
 
 Architecture: .claude/skills/architecture-map/SKILL.md ✔
 Conventions:  .claude/rules/conventions.md ✔
+Domains:      .claude/rules/domains.md ✔
 Testing:      .claude/rules/testing.md ✔
 Git:          .claude/rules/git.md ✔
 
 Manual attention needed:
-- [ ] Review and adjust conventions.md (domain rules section)
+- [ ] Review and adjust domains.md
 - [ ] Review architecture-map for accuracy
 - [ ] Add any domain-specific rules
 

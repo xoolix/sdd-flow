@@ -101,6 +101,7 @@ The orchestrator only pauses for:
                  └─ still reviewer FAIL after 2 fix cycles → ESCALATE
     ↓
 /sdd-next → archive                  (archive-feature)
+                 └─ prints `git push -u origin HEAD` and `gh pr create --draft --base <base>` for the human to run by hand
 ```
 
 ### Phase Detection Logic (for /sdd-next)
@@ -278,6 +279,7 @@ Default assignments:
 | Review orchestrator | review-feature | sonnet |
 | Review agent | internal worker for review-feature phase (`sdd-reviewer`) | sonnet |
 | Judge agent | internal worker for review-feature phase (`sdd-judge`) | sonnet |
+| Cross-review agent | internal worker for review-feature phase (`sdd-cross-reviewer`) | sonnet |
 | Archive | archive-feature | haiku |
 | Research | research-spike | sonnet |
 
@@ -335,7 +337,7 @@ Archived features are stored under `specs/archive/` using this naming convention
 ## Result envelope
 All skills output a structured result envelope at the end:
 ```
-Status | Summary | Artifacts | Next | Risks
+Status | Summary | Artifacts | Next | Risks | Commit
 ```
 This enables consistent handoff between phases.
 

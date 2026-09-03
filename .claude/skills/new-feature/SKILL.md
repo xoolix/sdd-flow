@@ -2,7 +2,6 @@
 name: new-feature
 description: "Run a short, code-anchored technical interview to produce clarify.md + spec.md for a feature (full-spec lane). For fast bugfixes/refactors use /new-fix or /new-quick-feature."
 user-invocable: true
-disable-model-invocation: true
 arguments: idea or request description
 ---
 
@@ -11,6 +10,8 @@ arguments: idea or request description
 Feature idea/request: `$ARGUMENTS`
 
 **Main Claude executes this skill body inline.** Do NOT launch a sub-agent — the interview requires turn-by-turn dialogue with the user, which sub-agents cannot do.
+
+**Invocation guard**: run this interview only when the user explicitly typed `/new-feature`, when `/sdd-new` classified the lane as `full` and routed here, or when a fast-lane intake escalated via its silent escalation guard. Never start it on your own initiative mid-conversation — if a spec seems warranted, suggest the command and let the user decide.
 
 ## What this skill does
 
@@ -168,7 +169,7 @@ Una vez validado GWT/rollback/success:
    - `## Summary` ← one-liner derivado de `$ARGUMENTS` + Block 1 (Comportamiento). Una oración técnica del feature, sin justificación de negocio.
    - `## Trigger` ← Block 1 (qué dispara el flujo nuevo).
    - `## Happy Path` ← Block 1 + Block 2 (pasos del flujo, anclados en los archivos/símbolos).
-   - `## Domains` ← Block 2 (archivos/módulos tocados).
+   - `## Domains` ← primero corré `sdd domain-vocab`: exit 0 con salida ⇒ usá ese vocabulario; exit ≠0, o el comando no disponible, ⇒ derivá de Block 2 (archivos/módulos tocados) + el scan de Step 0. Por ADR 0003 (`docs/adr/0003-cli-resolves-content-agents-read-knobs.md`): la CLI resuelve contenido (`sdd domain-vocab`), el agente lee knobs (como el knob `tdd` en `testing.md`) directamente.
    - `## API Changes` ← Block 3 (si el template no la tiene, agrega esta sección manual).
    - `## Edge Cases` ← Block 4.
    - `## Acceptance Criteria` ← bloque GWT validado.

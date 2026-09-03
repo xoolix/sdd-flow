@@ -5,10 +5,10 @@ set -euo pipefail
 # Initializes any project with the SDD workflow for Claude Code.
 
 SDD_HOME="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0")")/.." && pwd)"
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 # ─── Core SDD skills (these go to global ~/.claude/skills/) ──────
-CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto sdd-hitl init-project build-registry feature-spec diagnose-bug tdd grill-me prototype _shared"
+CORE_SKILLS="new-feature new-quick-feature new-fix plan-feature implement-task simplify-code review-feature archive-feature research-spike sdd-new sdd-next sdd-auto sdd-hitl init-project build-registry feature-spec diagnose-bug tdd grill-me prototype work-unit-commits comment-writer branch-pr chained-pr _shared"
 
 # ─── helpers ───────────────────────────────────────────────────────
 
@@ -88,7 +88,34 @@ Usage:
   sdd doctor                     Verify SDD setup is healthy
   sdd base-branch [feature-id]   Resolve the base branch for scope computations
                                  (Layer 1: sidecar, Layer 2: git.md config, Layer 3: auto-detect)
+  sdd branch <feature-id>        Idempotently switch to feature/<feature-id> (create if missing)
+  sdd commit-slice <feature-id>  Stage --files plus the derived specs/<feature-id> dir and commit;
+                                 never pushes, never 'git add -A'
+                                 (--type <t> [--task Tnnn] [--moved-from <path>] --title "<s>"
+                                 --files <p>... ; --files last)
+                                 --moved-from stages the deletion of a path guarded by
+                                 'git ls-files --error-unmatch'; never-tracked ⇒ exit 3, named
+                                 requires the current branch to be feature/<feature-id> ⇒ exit 4
+                                 otherwise, no commit
   sdd status [feature-id]        Emit JSON describing a feature's SDD phase and state
+  sdd state-write <feature-id>   Write specs/<feature-id>/.sdd-state: phase
+                                 (ready-to-review|reviewed), git-head, tree-digest
+                                 (scratch-index snapshot of the full working tree;
+                                 never touches the real index or worktree), verdict
+                                 (PASS|PASS-WITH-WARNINGS|FAIL|none, default none),
+                                 and an ISO-8601 timestamp
+                                 (--phase <p> [--verdict <v>])
+  sdd domain-vocab               Print .claude/rules/domains.md;
+                                 exit 3 (no output) if empty, comment-only, or absent
+  sdd verify-archive <feature-id> Verify HEAD actually moved both halves of the
+                                 archive: >=1 deletion under specs/<feature-id>/,
+                                 >=1 addition under specs/archive/*-<feature-id>/,
+                                 and specs/<feature-id>/ gone from HEAD's tree
+                                 (exit 0); exit 1 names the missing half; exit 3
+                                 when no archive dir exists for the id, or when
+                                 HEAD adds nothing under it (nothing to verify);
+                                 two archive dirs for the same id resolve to the
+                                 most recent, noted on stderr
   sdd help                       Show this help
 
 Options for 'init':
@@ -220,8 +247,15 @@ cmd_init() {
   fi
 
   # ── Rules (project-specific — always copy, never overwrite existing) ──
+  # Sourced from a pristine, versioned seed (.specify/templates/rules/), NOT from
+  # SDD_HOME's own .claude/rules/*.md. SDD_HOME describes itself in the latter
+  # (its own Domain rules, its own model-override rows) — copying those verbatim
+  # would leak this repo's description into every new project. See decisions.md
+  # SEED-CONTAMINATION (feature 021, T009).
   mkdir -p "$target/.claude/rules"
-  for rule_file in "$SDD_HOME/.claude/rules"/*.md; do
+  local rules_seed="$SDD_HOME/.specify/templates/rules"
+  for rule_file in "$rules_seed"/*.md; do
+    [ -f "$rule_file" ] || continue
     local rule_name
     rule_name="$(basename "$rule_file")"
     if [ -f "$target/.claude/rules/$rule_name" ]; then
@@ -676,25 +710,30 @@ cmd_doctor() {
 cmd_base_branch() {
   local feature_id="${1:-}"
 
-  # ── Layer 1: per-feature sidecar (only when feature-id supplied) ──
+  # ── Layer 1: per-feature sidecar, active dir or archived (F1) ──
   if [ -n "$feature_id" ]; then
-    local sidecar="specs/${feature_id}/.parent-branch"
-    if [ -f "$sidecar" ]; then
-      # Read first line only; strip leading/trailing whitespace
-      local ref
-      ref="$(head -n1 "$sidecar" | tr -d '[:space:]')"
-      if [ -n "$ref" ]; then
-        # Non-empty after trim — must resolve
-        if git rev-parse --verify "$ref" >/dev/null 2>&1; then
-          printf '%s\n' "$ref"
-          return 0
-        else
-          printf 'error: %s references missing branch "%s"\n' "$sidecar" "$ref" >&2
-          return 2
+    local specs_dir feature_dir
+    specs_dir="$(pwd)/specs"
+    if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+      local sidecar="$feature_dir/.parent-branch"
+      if [ -f "$sidecar" ]; then
+        # Read first line only; strip leading/trailing whitespace
+        local ref
+        ref="$(head -n1 "$sidecar" | tr -d '[:space:]')"
+        if [ -n "$ref" ]; then
+          # Non-empty after trim — must resolve
+          if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+            printf '%s\n' "$ref"
+            return 0
+          else
+            printf 'error: %s references missing branch "%s"\n' "$sidecar" "$ref" >&2
+            return 2
+          fi
         fi
+        # Empty/whitespace sidecar — fall through to Layer 2
       fi
-      # Empty/whitespace sidecar — fall through to Layer 2
     fi
+    # Unresolvable feature-id (no active or archived dir) — fall through to Layer 2, never abort.
   fi
 
   # ── Layer 2: project config in .claude/rules/git.md ──────────────
@@ -736,48 +775,807 @@ cmd_base_branch() {
   return 3
 }
 
-# ─── status ────────────────────────────────────────────────────────
+# ─── branch ────────────────────────────────────────────────────────
 
-cmd_status() {
+cmd_branch() {
   local feature_id="${1:-}"
 
-  # ── Task 2: Feature-id resolution ──────────────────────────────
   if [ -z "$feature_id" ]; then
-    local branch
-    branch="$(git branch --show-current 2>/dev/null || true)"
-    if [[ "$branch" =~ ^feature/([0-9]{3}-.+)$ ]]; then
-      feature_id="${BASH_REMATCH[1]}"
-    else
-      printf 'error: not on a feature branch\n' >&2
-      exit 1
+    printf 'error: usage: sdd branch <feature-id>\n' >&2
+    return 2
+  fi
+
+  local branch_name="feature/${feature_id}"
+  local current_branch
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+
+  if [ "$current_branch" = "$branch_name" ]; then
+    printf '%s\n' "$branch_name"
+    return 0
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/${branch_name}"; then
+    if ! git checkout "$branch_name"; then
+      return 4
+    fi
+  else
+    if ! git checkout -b "$branch_name"; then
+      return 4
     fi
   fi
 
-  # ── Task 3: Folder lookup ───────────────────────────────────────
+  # AC3 -- two independent behaviours (plan.md): (a) always record the
+  # resolved parent so cmd_base_branch Layer 1 has something correct to
+  # read later, (b) warn -- never refuse -- when that parent is itself
+  # another feature/* branch (silent stacking is V3). $current_branch is
+  # the branch we were on BEFORE the checkout above, i.e. the true parent;
+  # reading it now would just read back $branch_name.
+  case "$current_branch" in
+    feature/*)
+      printf 'warning: %s branches off %s, another feature branch -- this is not blocked, only reported; specs/%s/.parent-branch will record %s as the base\n' \
+        "$branch_name" "$current_branch" "$feature_id" "$current_branch" >&2
+      ;;
+  esac
+
+  local specs_dir sidecar
+  specs_dir="$(pwd)/specs"
+  sidecar="$specs_dir/${feature_id}/.parent-branch"
+
+  # Never clobber an existing sidecar: switching back to an already-branched
+  # feature must not rewrite its parent as "whatever branch we happened to
+  # be on just now".
+  if [ ! -f "$sidecar" ]; then
+    if [ -n "$current_branch" ]; then
+      mkdir -p "$specs_dir/${feature_id}"
+      printf '%s\n' "$current_branch" > "$sidecar"
+    else
+      # No branch to record (e.g. detached HEAD) -- an empty/whitespace
+      # sidecar would make Layer 1 fall through silently, so write nothing
+      # rather than something useless.
+      printf 'warning: could not resolve a base branch for %s (no current branch, e.g. detached HEAD) -- specs/%s/.parent-branch was not written\n' \
+        "$branch_name" "$feature_id" >&2
+    fi
+  fi
+
+  printf '%s\n' "$branch_name"
+  return 0
+}
+
+# ─── commit-slice ──────────────────────────────────────────────────
+
+# Reject a feature-id that could make "$specs_dir/$feature_id" resolve
+# outside specs/ (".." -- "specs/.." is the repo root -- or a "/" anywhere,
+# which nests or escapes the same way), or that would be misread as a flag
+# by anything it gets forwarded to (a leading "-"), or that is simply empty.
+# Prints nothing and returns 0 when the id is safe to interpolate, 1
+# otherwise -- callers decide their own error text and exit code.
+validate_feature_id() {
+  local feature_id="$1"
+
+  [ -n "$feature_id" ] || return 1
+
+  case "$feature_id" in
+    *..*|*/*|-*)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
+# Resolve a feature's directory: specs/<feature-id> if present, else the
+# archived specs/archive/*-<feature-id> match. Prints the resolved absolute
+# path on stdout and returns 0 on success; returns 1 with no output otherwise
+# (including a malformed id -- see validate_feature_id, checked first).
+# Shared by cmd_base_branch, cmd_commit_slice, and cmd_status (F2) so all
+# three stay in sync -- validating here, once, is what covers cmd_base_branch
+# and cmd_status, neither of which has a validation step of its own.
+# Must be called as an `if`/`while` condition (the guarded idiom used by all
+# three call sites), never a bare assignment -- under `set -euo pipefail` a
+# bare `feature_dir="$(resolve_feature_dir ...)"` on a miss aborts the script
+# silently, with no error text naming what failed.
+resolve_feature_dir() {
+  local feature_id="$1" specs_dir="$2"
+
+  validate_feature_id "$feature_id" || return 1
+
+  if [ -d "$specs_dir/$feature_id" ]; then
+    printf '%s\n' "$specs_dir/$feature_id"
+    return 0
+  fi
+
+  local archive_match
+  archive_match="$(find "$specs_dir/archive" -maxdepth 1 -type d -name "*-${feature_id}" 2>/dev/null | head -1)"
+  if [ -n "$archive_match" ]; then
+    printf '%s\n' "$archive_match"
+    return 0
+  fi
+
+  return 1
+}
+
+cmd_commit_slice() {
+  local usage_msg='usage: sdd commit-slice <feature-id> --type <t> [--task Tnnn] [--moved-from <path>] --title "<s>" --files <p>... (--files last)'
+
+  local feature_id="${1:-}"
+  [ $# -gt 0 ] && shift
+
+  if [ -z "$feature_id" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  # AC2: reject a malformed feature-id (path traversal via ".." or "/", or a
+  # leading "-") before a single 'git' command runs, let alone touches the
+  # index. resolve_feature_dir below also calls validate_feature_id -- that
+  # copy is what protects cmd_base_branch and cmd_status, which have no
+  # check of their own -- but commit-slice, the write path, needs its own
+  # precise exit code (2) rather than the generic "3: feature not found"
+  # this same rejection would otherwise fall into further down.
+  if ! validate_feature_id "$feature_id"; then
+    printf 'error: invalid feature-id: "%s" (must not be empty, contain "..", contain "/", or start with "-")\n' "$feature_id" >&2
+    return 2
+  fi
+
+  local type="" task="" title="" moved_from=""
+  local -a files=()
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --type)
+        [ $# -ge 2 ] || { printf 'error: --type requires a value\n' >&2; return 2; }
+        type="$2"
+        shift 2
+        ;;
+      --task)
+        [ $# -ge 2 ] || { printf 'error: --task requires a value\n' >&2; return 2; }
+        task="$2"
+        shift 2
+        ;;
+      --moved-from)
+        [ $# -ge 2 ] || { printf 'error: --moved-from requires a value\n' >&2; return 2; }
+        moved_from="$2"
+        shift 2
+        ;;
+      --title)
+        [ $# -ge 2 ] || { printf 'error: --title requires a value\n' >&2; return 2; }
+        title="$2"
+        shift 2
+        ;;
+      --files)
+        shift
+        while [ $# -gt 0 ] && [[ "$1" != --* ]]; do
+          files+=("$1")
+          shift
+        done
+        ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  if [ -z "$type" ] || [ -z "$title" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  # --files may be empty only when --moved-from is present: a move-only
+  # commit (e.g. archive with no delta-merge changes) is a legitimate shape
+  # -- the moved directory itself carries the staged content, added below
+  # unconditionally. Reject the truly-empty invocation (no --files, no
+  # --moved-from) right here rather than leaning on the "nothing staged"
+  # check further down, so a caller that simply forgot --files still gets
+  # the same early, unambiguous usage error it always got.
+  if [ "${#files[@]}" -eq 0 ] && [ -z "$moved_from" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  local specs_dir feature_dir
+  specs_dir="$(pwd)/specs"
+  if ! feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    return 3
+  fi
+
+  # AC4/V4: refuse to commit onto the wrong branch. Repro: standing on
+  # feature/AAA, `commit-slice BBB --files bbb.txt` committed BBB's work
+  # ONTO AAA, exit 0, no complaint. Checked here -- after the feature is
+  # confirmed to exist (so "999-missing" still exits 3, not 4) but before
+  # anything below touches the index (so, like validate_feature_id above,
+  # there is nothing to unwind on failure).
+  #
+  # The expected name comes from the feature/<feature-id> convention that
+  # cmd_branch itself uses -- NOT from .parent-branch, which records the
+  # *base* branch for diff scope, a different thing entirely. Only
+  # "feature/<feature-id>" is accepted, not "fix/<feature-id>": cmd_branch
+  # hard-codes the "feature/" prefix and has never produced anything
+  # else, and .claude/rules/git.md's "## Branch naming" section is an
+  # unfilled template placeholder (`<!-- e.g. feature/NNN-description,
+  # fix/NNN-description -->`), not an adopted convention -- confirmed
+  # against this repo's own history, where every branch ever created is
+  # "feature/*". Accepting a prefix the tooling can never produce would
+  # widen the gate on a guess, not a fact. Anything else that is not this
+  # exact name -- another feature/* branch (the repro above), main, a
+  # scratch branch, or detached HEAD, where 'git branch --show-current'
+  # prints empty -- fails closed the same way.
+  local expected_branch="feature/${feature_id}" current_branch
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+  if [ "$current_branch" != "$expected_branch" ]; then
+    printf 'error: refusing to commit "%s" on branch "%s" (expected "%s") -- run: sdd branch %s\n' \
+      "$feature_id" "${current_branch:-<detached HEAD>}" "$expected_branch" "$feature_id" >&2
+    return 4
+  fi
+
+  # Snapshot every already-staged path BEFORE this invocation's own 'git add'
+  # calls touch the index. The undeclared-file check below diffs against
+  # this to tell "someone else's legitimately pre-staged work" (e.g. the 13
+  # in-flight renames from an unrelated cleanup) apart from a --files
+  # omission this invocation is responsible for catching — a file the agent
+  # edited but never staged shows up as unstaged both before and after, so
+  # it survives this snapshot and still trips the check.
+  local pre_staged
+  pre_staged="$(git status --porcelain --no-renames 2>/dev/null | awk '{ st = substr($0, 1, 1); if (st != " " && st != "?") print substr($0, 4) }')"
+
+  # feature_dir is absolute (built from "$(pwd)/specs") but git-status paths
+  # are repo-root-relative (F8) -- normalize once, up front, so both the AC5
+  # warn below and the undeclared-file check further down can prefix-match
+  # against it. bin/sdd never 'cd's outside subshells, so stripping
+  # "$(pwd)/" is safe.
+  local feature_dir_rel="${feature_dir#"$(pwd)/"}"
+
+  # AC5: warn (never change what gets staged) when a file inside this
+  # feature's own dir was already staged BEFORE this invocation touched the
+  # index -- a HITL decision staged on purpose, or a stray edit riding along
+  # by accident. There is no reliable way to tell those two apart, and
+  # getting it wrong would *discard* work rather than merely mix it, so this
+  # only warns; the feature dir keeps getting swept into the commit exactly
+  # as before. Opposite polarity from the undeclared-file check below (that
+  # one is an EXCLUSION set over the whole index, checked before the commit;
+  # this is an INCLUSION set scoped to the feature dir, checked before it
+  # too) -- kept as two separate checks sharing only the one snapshot, not
+  # merged.
+  if [ -n "$pre_staged" ]; then
+    local staged_path staged_in_feature_dir=""
+    while IFS= read -r staged_path; do
+      case "$staged_path" in
+        "$feature_dir_rel"/*)
+          staged_in_feature_dir="${staged_in_feature_dir:+${staged_in_feature_dir}$'\n'}${staged_path}"
+          ;;
+      esac
+    done <<< "$pre_staged"
+    if [ -n "$staged_in_feature_dir" ]; then
+      printf 'warning: feature dir file(s) already staged before commit-slice ran:\n%s\n' "$staged_in_feature_dir" >&2
+    fi
+  fi
+
+  # Stage exactly the named files plus the derived feature dir. Never 'git add -A'.
+  if [ "${#files[@]}" -gt 0 ]; then
+    if ! git add -- "${files[@]}"; then
+      return 4
+    fi
+  fi
+  if ! git add -- "$feature_dir"; then
+    return 4
+  fi
+
+  # --moved-from: stage the deletion of a path the caller moved away from.
+  # Guard first: tracked in the INDEX ('git ls-files --error-unmatch') covers
+  # the common case and still rejects a never-tracked path — a bare 'git add'
+  # would otherwise exit 0 and stage it as a brand new addition when it still
+  # exists on disk, the opposite of what was asked, and no exit-code check on
+  # 'git add' alone catches it. But the index alone is too strict: 'git mv'
+  # (the natural way an agent stages a rename, e.g. during archive) already
+  # removes the old path from the index even though it is still tracked in
+  # HEAD and its deletion is correctly staged — so also accept a path that
+  # resolves in HEAD ('git cat-file -e'), which a never-tracked path never
+  # does, staged or not.
+  if [ -n "$moved_from" ]; then
+    local moved_from_in_index=false
+    if git ls-files --error-unmatch -- "$moved_from" >/dev/null 2>&1; then
+      moved_from_in_index=true
+    elif ! git cat-file -e "HEAD:${moved_from}" 2>/dev/null; then
+      printf 'error: --moved-from path was never tracked: %s\n' "$moved_from" >&2
+      return 3
+    fi
+    # Only stage it when it is still sitting in the index (e.g. deleted on
+    # disk but not yet added) — when it was only found via the HEAD check,
+    # the removal is already staged (a prior 'git mv') and 'git add' on a
+    # path absent from both the index and the working tree would fail with
+    # "did not match any files" for no reason: there is nothing left to add.
+    if $moved_from_in_index; then
+      if ! git add -- "$moved_from"; then
+        return 4
+      fi
+    fi
+  fi
+
+  # V1: reject undeclared new files BEFORE the commit exists (AC1) -- fixed
+  # from the old post-commit warning, which diffed the whole index AFTER
+  # 'git commit' had already run, so the only fix available was a
+  # 'git reset --soft' unwind. Checking here means there is nothing to
+  # unwind: on failure, no commit is ever created.
+  # 'dirty' starts as the full 'git status --porcelain' (no '^??' filter --
+  # dropping that filter is the actual fix; it used to be exactly what let a
+  # brand-new untracked file, the most common shape of a --files omission,
+  # survive silently). Two exclusion passes bring it down to what's really
+  # unaccounted for:
+  #   1. pre_staged (:902, snapshotted before this invocation's own 'git
+  #      add'): someone else's legitimately pre-existing staged work, not
+  #      this invocation's problem. Same awk NR==FNR set-difference as
+  #      before -- fed via process substitution, not 'awk -v', because
+  #      default macOS/BSD awk rejects a -v value with embedded newlines,
+  #      and pre_staged is exactly that.
+  #   2. This invocation's own declared paths: every git-status line is
+  #      staged content the moment 'git add' above ran, so without this
+  #      pass every clean commit-slice call would trip on its own files.
+  #      feature_dir and --moved-from both match by prefix (either can be a
+  #      directory: a directory 'git add' stages each file under it as its
+  #      own status line, and a directory 'git add' on a --moved-from path
+  #      stages each of its deletions the same way); --files entries match
+  #      exactly, since they are always concrete file paths.
+  local dirty
+  dirty="$(git status --porcelain --no-renames 2>/dev/null)"
+  if [ -n "$pre_staged" ] && [ -n "$dirty" ]; then
+    dirty="$(awk 'NR==FNR { seen[$0]=1; next } { path = substr($0, 4); if (!(path in seen)) print }' \
+      <(printf '%s\n' "$pre_staged") <(printf '%s\n' "$dirty"))"
+  fi
+  if [ -n "$dirty" ]; then
+    local dirty_line dirty_path declared_hit declared_file filtered=""
+    while IFS= read -r dirty_line; do
+      [ -z "$dirty_line" ] && continue
+      dirty_path="${dirty_line:3}"
+      case "$dirty_path" in
+        "$feature_dir_rel"/*)
+          continue
+          ;;
+      esac
+      if [ -n "$moved_from" ]; then
+        case "$dirty_path" in
+          "$moved_from"|"$moved_from"/*)
+            continue
+            ;;
+        esac
+      fi
+      declared_hit=false
+      if [ "${#files[@]}" -gt 0 ]; then
+        for declared_file in "${files[@]}"; do
+          if [ "$dirty_path" = "$declared_file" ]; then
+            declared_hit=true
+            break
+          fi
+        done
+      fi
+      $declared_hit && continue
+      filtered="${filtered:+${filtered}$'\n'}${dirty_line}"
+    done <<< "$dirty"
+    dirty="$filtered"
+  fi
+  if [ -n "$dirty" ]; then
+    printf 'error: undeclared file(s) present -- pass them to --files or remove them:\n%s\n' "$dirty" >&2
+    return 2
+  fi
+
+  # Commit pathspec: exactly what this invocation staged above — --files,
+  # the derived feature dir, and --moved-from when present. A bare 'git
+  # commit' would sweep in anything already staged by someone else before
+  # this command ran; scoping to this pathspec commits only these paths and
+  # leaves the rest of the index staged, untouched (7th defect).
+  # Built incrementally, never via a bare "${files[@]}" expansion: bash 3.2
+  # (macOS's /usr/bin/env bash) throws "unbound variable" expanding an empty
+  # array under 'set -u' -- the same reason the 'git add' call above guards
+  # it with a length check instead of expanding it directly.
+  local -a commit_paths=()
+  if [ "${#files[@]}" -gt 0 ]; then
+    commit_paths+=("${files[@]}")
+  fi
+  commit_paths+=("$feature_dir")
+  if [ -n "$moved_from" ]; then
+    commit_paths+=("$moved_from")
+  fi
+
+  if git diff --cached --quiet -- "${commit_paths[@]}"; then
+    printf 'error: nothing staged for commit\n' >&2
+    return 5
+  fi
+
+  local subject
+  if [ -n "$task" ]; then
+    subject="${type}(${feature_id}): ${task} ${title}"
+  else
+    subject="${type}(${feature_id}): ${title}"
+  fi
+
+  if ! git commit -q -m "$subject" -- "${commit_paths[@]}"; then
+    return 4
+  fi
+
+  local sha
+  sha="$(git rev-parse HEAD)"
+  printf '%s\n' "$sha"
+
+  return 0
+}
+
+# ─── state-write ─────────────────────────────────────────────────────
+
+# Digest of the working tree (tracked + untracked, respecting .gitignore)
+# via a scratch index -- never the real one, never the real worktree. Both
+# cmd_state_write (the writer) and detect_feature_phase (the reader) call
+# this same helper, so freshness can never desync over the two computing
+# "the tree changed" two different ways.
+#
+# EXCLUDES specs/** (post-T012 fix -- deadlock found by dogfooding this very
+# feature). The digest exists to catch an uncommitted CODE edit after
+# simplify/review sealed their receipt (AC6). specs/** is the pipeline's own
+# bookkeeping, not code -- and /simplify-code and /review-feature both write
+# to decisions.md in the SAME run that seals .sdd-state. Digesting specs/**
+# meant the phase that seals the receipt also invalidates its own seal:
+# simplify writes .sdd-state, appends its run notes to decisions.md, and the
+# very next `sdd status` reports the sentinel stale with HEAD unchanged --
+# `/simplify-code` would then re-run forever. Accepted trade-off (user
+# decision): an uncommitted edit to spec.md no longer invalidates the
+# receipt -- review reads the spec directly anyway.
+#
+# REJECTED, do not reopen (measured empirically for 025):
+#   - `git stash create`: a different SHA on every call for the SAME dirty
+#     tree -- the stash object is a commit and embeds a timestamp.
+#   - `git write-tree` on the real index (no GIT_INDEX_FILE): silently
+#     returns the tree from the last real `git add`, not what is on disk now.
+#
+# mktemp's file must be removed BEFORE first use: git treats an existing-
+# but-empty path as a corrupt index ("index file smaller than expected") and
+# refuses it outright, rather than treating it as "start fresh here" --
+# confirmed empirically. Removed again after, on every path, since it is
+# scratch state that must never survive the call.
+#
+# Prints the tree SHA on stdout; prints nothing on failure (caller decides
+# how to treat an empty digest).
+tree_digest() {
+  local tmp
+  tmp="$(mktemp)"
+  rm -f "$tmp"
+
+  local digest=""
+  if GIT_INDEX_FILE="$tmp" git add -A -- ':(exclude)specs' >/dev/null 2>&1; then
+    digest="$(GIT_INDEX_FILE="$tmp" git write-tree 2>/dev/null || true)"
+  fi
+
+  rm -f "$tmp"
+  printf '%s\n' "$digest"
+}
+
+# Writes specs/<feature-id>/.sdd-state -- the single durable receipt that
+# replaces .simplified. Exactly five fields, no `files:` list (025 decision:
+# nothing reads it, and the files a phase touched already live in its own
+# commit -- a source that can't lie). Called by /simplify-code (phase
+# ready-to-review) and, from T006 on, /review-feature (phase reviewed).
+cmd_state_write() {
+  local usage_msg='usage: sdd state-write <feature-id> --phase <ready-to-review|reviewed> [--verdict <PASS|PASS-WITH-WARNINGS|FAIL|none>]'
+
+  local feature_id="${1:-}"
+  [ $# -gt 0 ] && shift
+
+  if [ -z "$feature_id" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  # Same rejection as commit-slice (AC2's validator, reused here rather than
+  # re-implemented) -- checked before any git command runs.
+  if ! validate_feature_id "$feature_id"; then
+    printf 'error: invalid feature-id: "%s" (must not be empty, contain "..", contain "/", or start with "-")\n' "$feature_id" >&2
+    return 2
+  fi
+
+  local phase="" verdict="none"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --phase)
+        [ $# -ge 2 ] || { printf 'error: --phase requires a value\n' >&2; return 2; }
+        phase="$2"
+        shift 2
+        ;;
+      --verdict)
+        [ $# -ge 2 ] || { printf 'error: --verdict requires a value\n' >&2; return 2; }
+        verdict="$2"
+        shift 2
+        ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  case "$phase" in
+    ready-to-review|reviewed) ;;
+    *)
+      printf 'error: --phase must be "ready-to-review" or "reviewed", got: "%s"\n' "$phase" >&2
+      return 2
+      ;;
+  esac
+
+  case "$verdict" in
+    PASS|PASS-WITH-WARNINGS|FAIL|none) ;;
+    *)
+      printf 'error: --verdict must be one of PASS, PASS-WITH-WARNINGS, FAIL, none; got: "%s"\n' "$verdict" >&2
+      return 2
+      ;;
+  esac
+
+  local specs_dir feature_dir
+  specs_dir="$(pwd)/specs"
+  if ! feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    return 3
+  fi
+
+  local head
+  head="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$head" ]; then
+    printf 'error: no commits on the current branch -- cannot resolve HEAD\n' >&2
+    return 4
+  fi
+
+  local digest
+  digest="$(tree_digest)"
+  if [ -z "$digest" ]; then
+    printf 'error: could not compute tree digest\n' >&2
+    return 4
+  fi
+
+  local at
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  {
+    printf 'phase: %s\n' "$phase"
+    printf 'git-head: %s\n' "$head"
+    printf 'tree-digest: %s\n' "$digest"
+    printf 'verdict: %s\n' "$verdict"
+    printf 'at: %s\n' "$at"
+  } > "$feature_dir/.sdd-state"
+
+  return 0
+}
+
+# ─── verify-archive ──────────────────────────────────────────────────
+
+# Verifies the CURRENT HEAD commit actually moved both halves of an archive:
+# deletions under specs/<feature-id>/ AND additions under the matching
+# specs/archive/*-<feature-id>/ dir, with specs/<feature-id>/ gone from HEAD's
+# tree afterwards. Exists because prose alone never stopped it -- 021 and
+# 294ccfc both landed an "archive" commit that was 6 additions, 0 deletions:
+# a plain copy, not a move, with the old dir left fully tracked. Nothing read
+# the commit after it landed to catch that. `--no-renames` is load-bearing:
+# without it, a same-content delete+add collapses into a single R-line under
+# git's default rename detection, which would hide the very halves this
+# checks for (the reason the user asked for the flag in the first place).
+#
+# HEAD only, deliberately no --commit flag -- orchestrators run this
+# immediately post-phase; a later check for stray duplicate archive dirs is
+# `sdd status`'s job, not this command's (AC5/T003).
+#
+# Multi-date ambiguity (the same feature-id archived under two dates):
+# resolved locally here via a sorted glob, guard-before-expand, never
+# resolve_feature_dir -- that helper's first-match `find | head -1` stays
+# untouched; other callers depend on its current behavior. Directory names
+# are YYYY-MM-DD-prefixed, so lexicographic order is chronological order:
+# the max is the most recent. A stderr note names the choice so a stale
+# leftover dir is never silently favored.
+#
+# Shared by cmd_verify_archive and check_archive_integrity, which both need
+# the same resolution rule.
+# Args: feature_id, specs_dir
+# Sets (globals): ARCHIVE_DIR_MATCHES (array, all specs/archive/*-<feature_id>
+#                 matches, glob order), ARCHIVE_DIR_CHOSEN (the most recent
+#                 match, or "" if none)
+resolve_archive_dir() {
+  local feature_id="$1" specs_dir="$2"
+
+  ARCHIVE_DIR_MATCHES=()
+  ARCHIVE_DIR_CHOSEN=""
+
+  local candidate
+  for candidate in "$specs_dir"/archive/*-"$feature_id"; do
+    [ -d "$candidate" ] && ARCHIVE_DIR_MATCHES+=("$candidate")
+  done
+
+  [ "${#ARCHIVE_DIR_MATCHES[@]}" -eq 0 ] && return 0
+
+  if [ "${#ARCHIVE_DIR_MATCHES[@]}" -gt 1 ]; then
+    ARCHIVE_DIR_CHOSEN="$(printf '%s\n' "${ARCHIVE_DIR_MATCHES[@]}" | sort | tail -1)"
+  else
+    ARCHIVE_DIR_CHOSEN="${ARCHIVE_DIR_MATCHES[0]}"
+  fi
+}
+
+# T009 (judge finding #1): true when git history contains at least one
+# commit touching specs/<feature_id>/, even if that path is gone from HEAD
+# now -- the signal that a feature was tracked at some point, as opposed to
+# an id that was never used. `-1` stops at the first match, so this stays
+# cheap regardless of repo depth. Assumes cwd is the repo root, the same
+# convention cmd_verify_archive's own git calls already rely on.
+feature_history_exists() {
+  local feature_id="$1"
+  local hit
+  hit="$(git log --oneline -1 -- "specs/${feature_id}/" 2>/dev/null || true)"
+  [ -n "$hit" ]
+}
+
+cmd_verify_archive() {
+  local usage_msg='usage: sdd verify-archive <feature-id>'
+
+  local feature_id="${1:-}"
+  [ $# -gt 0 ] && shift
+
+  if [ -z "$feature_id" ]; then
+    printf 'error: %s\n' "$usage_msg" >&2
+    return 2
+  fi
+
+  if ! validate_feature_id "$feature_id"; then
+    printf 'error: invalid feature-id: "%s" (must not be empty, contain "..", contain "/", or start with "-")\n' "$feature_id" >&2
+    return 2
+  fi
+
+  if [ $# -gt 0 ]; then
+    printf 'error: unknown option: %s\n' "$1" >&2
+    return 2
+  fi
+
   local specs_dir
   specs_dir="$(pwd)/specs"
 
-  local feature_dir=""
-  local is_archived=false
+  resolve_archive_dir "$feature_id" "$specs_dir"
+
+  if [ "${#ARCHIVE_DIR_MATCHES[@]}" -eq 0 ]; then
+    # Three shapes collapse to exit 3 here, and only the stderr text tells
+    # them apart (T009, judge finding #1): specs/<id>/ still present is the
+    # ordinary "not yet archived" case (unchanged message, most common);
+    # specs/<id>/ gone with no git history is a typo'd/never-used id;
+    # specs/<id>/ gone WITH git history is the pure-deletion bypass -- worse
+    # than "not found", since the spec/plan/decisions are actually lost.
+    if [ ! -d "$specs_dir/$feature_id" ] && feature_history_exists "$feature_id"; then
+      printf 'error: specs/%s/ was tracked in git history but is now gone -- no archive directory exists under specs/archive/ either, so nothing under specs/%s/ can be found in any location (pure-deletion bypass)\n' \
+        "$feature_id" "$feature_id" >&2
+    elif [ ! -d "$specs_dir/$feature_id" ]; then
+      printf 'error: no archive directory found for %s under specs/archive/ (never started -- no git history under specs/%s/ either)\n' \
+        "$feature_id" "$feature_id" >&2
+    else
+      printf 'error: no archive directory found for %s under specs/archive/\n' "$feature_id" >&2
+    fi
+    return 3
+  fi
+
+  local archive_dir="$ARCHIVE_DIR_CHOSEN"
+  if [ "${#ARCHIVE_DIR_MATCHES[@]}" -gt 1 ]; then
+    printf 'note: multiple archive directories found for %s; using the most recent: %s\n' \
+      "$feature_id" "$(basename "$archive_dir")" >&2
+  fi
+
+  local archive_rel
+  archive_rel="specs/archive/$(basename "$archive_dir")"
+
+  local head
+  head="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$head" ]; then
+    printf 'error: no commits on the current branch -- cannot resolve HEAD\n' >&2
+    return 3
+  fi
+
+  local name_status
+  name_status="$(git show --no-renames --name-status --format= "$head" 2>/dev/null || true)"
+
+  local deleted_count=0 added_count=0
+  local deleted_prefix="specs/${feature_id}/"
+  local change_type change_path
+  while IFS=$'\t' read -r change_type change_path; do
+    [ -n "$change_type" ] || continue
+    case "$change_type" in
+      D)
+        case "$change_path" in
+          "$deleted_prefix"*) deleted_count=$((deleted_count + 1)) ;;
+        esac
+        ;;
+      A)
+        case "$change_path" in
+          "$archive_rel/"*) added_count=$((added_count + 1)) ;;
+        esac
+        ;;
+    esac
+  done <<EOF
+$name_status
+EOF
+
+  # Nothing added under the archive dir: HEAD is not an archive commit for
+  # this feature at all (e.g. run long after the fact, on an unrelated
+  # commit) -- unresolvable, not a verification failure. This is also what
+  # keeps documented-cli-usage's fixture (specs/<id>/ present, no archive at
+  # all) at exit 3 rather than 1 or 2.
+  if [ "$added_count" -eq 0 ]; then
+    printf 'error: HEAD (%s) adds nothing under %s -- nothing to verify\n' "$head" "$archive_rel" >&2
+    return 3
+  fi
+
+  local still_tracked
+  still_tracked="$(git ls-tree -r --name-only HEAD -- "specs/${feature_id}" 2>/dev/null || true)"
+
+  if [ "$deleted_count" -eq 0 ] || [ -n "$still_tracked" ]; then
+    printf 'error: archive commit %s is missing the deletions under specs/%s/ (found %s addition(s) under %s, %s deletion(s) under specs/%s/)\n' \
+      "$head" "$feature_id" "$added_count" "$archive_rel" "$deleted_count" "$feature_id" >&2
+    return 1
+  fi
+
+  printf 'ok: %s archived cleanly in %s (%s deletion(s), %s addition(s) under %s)\n' \
+    "$feature_id" "$head" "$deleted_count" "$added_count" "$archive_rel"
+  return 0
+}
+
+# ─── status ────────────────────────────────────────────────────────
+
+# T003/AC5: detects specs/<feature_id>/ and specs/archive/*-<feature_id>/
+# present at once -- the shape a bypassed archive run leaves behind (021,
+# 294ccfc). Runs independent of resolve_feature_dir: that helper's
+# first-match `find | head -1` picks specs/<feature_id>/ and stops, so a
+# caller relying on it alone never learns the archive half exists too. This
+# re-probes the filesystem itself so it can't inherit that blind spot.
+# resolve_feature_dir stays untouched -- its other callers depend on the
+# current first-match behavior.
+#
+# T009 (judge finding #1) extends this to a second broken shape: specs/
+# <feature_id>/ present in NEITHER location, but git history proves it was
+# tracked at some point (a pure-deletion bypass -- `git rm -r` or an
+# interrupted move, never archived). Two other "specs/<feature_id>/ absent"
+# outcomes stay unbroken on purpose: a feature already archived correctly
+# (resolve_archive_dir finds its dir) and an id that never existed (no git
+# history either) both fall through to the plain "not found" path a caller
+# already has.
+#
+# Args: feature_id, specs_dir
+# Sets (globals): ARCHIVE_INTEGRITY_BROKEN ("true"/"false", usable directly
+#                 in `if`), ARCHIVE_MATCH_RESULT ("specs/archive/<dir>" for
+#                 the duplicate-tracked shape, "" for the pure-deletion
+#                 bypass shape -- there is no archive dir to name; callers
+#                 branch on emptiness to tell the two apart)
+check_archive_integrity() {
+  local feature_id="$1" specs_dir="$2"
+
+  ARCHIVE_INTEGRITY_BROKEN=false
+  ARCHIVE_MATCH_RESULT=""
 
   if [ -d "$specs_dir/$feature_id" ]; then
-    feature_dir="$specs_dir/$feature_id"
-  else
-    # Scan specs/archive/ for *-<feature_id>
-    local archive_match
-    archive_match="$(find "$specs_dir/archive" -maxdepth 1 -type d -name "*-${feature_id}" 2>/dev/null | head -1)"
-    if [ -n "$archive_match" ]; then
-      feature_dir="$archive_match"
-      is_archived=true
-    fi
+    resolve_archive_dir "$feature_id" "$specs_dir"
+    [ -z "$ARCHIVE_DIR_CHOSEN" ] && return 0
+
+    ARCHIVE_INTEGRITY_BROKEN=true
+    ARCHIVE_MATCH_RESULT="specs/archive/$(basename "$ARCHIVE_DIR_CHOSEN")"
+    return 0
   fi
 
-  if [ -z "$feature_dir" ]; then
-    printf 'error: feature not found: %s\n' "$feature_id" >&2
-    exit 1
-  fi
+  resolve_archive_dir "$feature_id" "$specs_dir"
+  [ -n "$ARCHIVE_DIR_CHOSEN" ] && return 0
 
-  # ── Task 4: Phase detection ─────────────────────────────────────
+  feature_history_exists "$feature_id" || return 0
+
+  ARCHIVE_INTEGRITY_BROKEN=true
+}
+
+# Computes phase, task counts, sentinel freshness, and the next command for
+# one resolved feature directory. Extracted from cmd_status so both the
+# single-feature JSON and the no-arg listing (T003/F12) derive phase the same
+# way — the single-feature JSON output is unchanged by this extraction.
+#
+# Args: feature_id, feature_dir, is_archived ("true"/"false")
+# Sets (globals): PHASE_RESULT, TASKS_TOTAL_RESULT, TASKS_REMAINING_RESULT,
+#                 SENTINEL_FRESH_RESULT ("true"/"false"), NEXT_COMMAND_RESULT
+detect_feature_phase() {
+  local feature_id="$1" feature_dir="$2" is_archived="$3"
+
+  # ── Phase detection ─────────────────────────────────────────────
   local phase
 
   if $is_archived; then
@@ -796,7 +1594,7 @@ cmd_status() {
     phase=""  # determined after task counting
   fi
 
-  # ── Task 5: Task counting ───────────────────────────────────────
+  # ── Task counting ────────────────────────────────────────────────
   local tasks_done=0
   local tasks_remaining=0
   local tasks_total=0
@@ -831,14 +1629,46 @@ cmd_status() {
     fi
     tasks_total=$((tasks_done + tasks_remaining))
 
-    # ── Task 6: Sentinel freshness ────────────────────────────────
+    # ── Sentinel freshness ──────────────────────────────────────────
+    # V6: freshness must be tied to BOTH the commit (git-head) AND the
+    # working tree (tree-digest) -- an uncommitted edit to a tracked file
+    # changes tree-digest without touching git-head, and AC6 requires that
+    # to invalidate the sentinel. The old .simplified behaviour checked
+    # git-head alone and missed exactly that. tree_digest() is the same
+    # helper cmd_state_write uses to compute the value stored here, so
+    # writer and reader can never drift into two different notions of "the
+    # tree changed".
     local sentinel_fresh=false
-    local sentinel_file="$feature_dir/.simplified"
+    local sentinel_file="$feature_dir/.sdd-state"
+    local state_phase=""
+    local state_verdict=""
     if [ -f "$sentinel_file" ]; then
-      local current_head
+      local current_head state_head state_digest
       current_head="$(git rev-parse HEAD 2>/dev/null || true)"
-      if [ -n "$current_head" ] && grep -q "^git-head: ${current_head}$" "$sentinel_file" 2>/dev/null; then
-        sentinel_fresh=true
+      state_head="$(grep -m1 '^git-head: ' "$sentinel_file" 2>/dev/null | sed 's/^git-head: //')"
+      if [ -n "$current_head" ] && [ "$current_head" = "$state_head" ]; then
+        state_digest="$(grep -m1 '^tree-digest: ' "$sentinel_file" 2>/dev/null | sed 's/^tree-digest: //')"
+        local current_digest
+        current_digest="$(tree_digest)"
+        if [ -n "$current_digest" ] && [ "$current_digest" = "$state_digest" ]; then
+          sentinel_fresh=true
+          # T006: .sdd-state's own `phase:` field disambiguates WHICH fresh
+          # phase this is -- /simplify-code writes ready-to-review,
+          # /review-feature writes reviewed (on PASS/PASS-WITH-WARNINGS, or
+          # on a judge block -- see review-feature/SKILL.md Step 4/6.5). A
+          # reviewer conformance FAIL clears the sentinel entirely instead of
+          # writing "reviewed" here (review-feature Step 5), so this branch
+          # never has to tell that case apart from a plain stale sentinel.
+          state_phase="$(grep -m1 '^phase: ' "$sentinel_file" 2>/dev/null | sed 's/^phase: //')"
+          # T007: read alongside phase, not computed separately, so the two
+          # can never be read from two different sentinel snapshots. Only
+          # meaningful when state_phase="reviewed" (below) -- a judge block
+          # writes "reviewed" with verdict FAIL, and the next-command
+          # mapping needs to tell that apart from a passing review so it
+          # never points a human at a command sdd-archive-feature.md's own
+          # gate (T007) will refuse.
+          state_verdict="$(grep -m1 '^verdict: ' "$sentinel_file" 2>/dev/null | sed 's/^verdict: //')"
+        fi
       fi
     fi
 
@@ -851,7 +1681,12 @@ cmd_status() {
     elif [ "$tasks_remaining" -gt 0 ]; then
       phase="implementing"
     elif $sentinel_fresh; then
-      phase="ready-to-review"
+      # Any value other than the literal "reviewed" (missing, corrupt,
+      # unrecognised) falls back to ready-to-review rather than trusting it.
+      case "$state_phase" in
+        reviewed) phase="reviewed" ;;
+        *)        phase="ready-to-review" ;;
+      esac
     else
       phase="ready-to-simplify"
     fi
@@ -862,9 +1697,6 @@ cmd_status() {
     tasks_remaining=0
   fi
 
-  # ── Blockers array ──────────────────────────────────────────────
-  local blockers='[]'
-
   # ── Next command ────────────────────────────────────────────────
   local next_command
   case "$phase" in
@@ -874,27 +1706,216 @@ cmd_status() {
     implementing)      next_command="/implement-task ${feature_id}" ;;
     ready-to-simplify) next_command="/simplify-code ${feature_id}" ;;
     ready-to-review)   next_command="/review-feature ${feature_id}" ;;
+    reviewed)
+      # T007: verdict-aware. A judge block (`state-write --phase reviewed
+      # --verdict FAIL`) sets phase to "reviewed" the same as a passing
+      # review does (T006), but sdd-archive-feature.md's own pre-flight gate
+      # (T007/AC11) refuses to archive it. Pointing a human at
+      # /archive-feature here would be exactly the class of bug 025 exists
+      # to remove: a status oracle asserting something the pipeline's own
+      # gate then contradicts. See decisions.md for the rejected
+      # unconditional alternative.
+      case "$state_verdict" in
+        PASS|PASS-WITH-WARNINGS) next_command="/archive-feature ${feature_id}" ;;
+        *) next_command="(blocked — review verdict is ${state_verdict:-none}; a human decision is needed, see decisions.md)" ;;
+      esac
+      ;;
     archived)          next_command="(none — feature archived)" ;;
     *)                 next_command="(unknown)" ;;
   esac
 
-  # ── Task 7: JSON emission ───────────────────────────────────────
-  # Normalise sentinel_fresh to JSON boolean
+  # Normalise sentinel_fresh to a JSON boolean string
   local sentinel_json="false"
   if ${sentinel_fresh:-false}; then
     sentinel_json="true"
   fi
 
+  PHASE_RESULT="$phase"
+  TASKS_TOTAL_RESULT="$tasks_total"
+  TASKS_REMAINING_RESULT="$tasks_remaining"
+  SENTINEL_FRESH_RESULT="$sentinel_json"
+  NEXT_COMMAND_RESULT="$next_command"
+}
+
+# No-arg status: lists every active spec (specs/*/ minus specs/archive/) as a
+# JSON array of {feature_id, phase, next_command}. Archived folders are
+# excluded on purpose (F12) — a finished-but-unarchived feature left sitting
+# in specs/ is false context the model reads as active work, and that's
+# exactly what this listing surfaces; burying it among already-archived
+# folders would defeat the point.
+cmd_status_list() {
+  local specs_dir
+  specs_dir="$(pwd)/specs"
+
+  local items="" first=true
+  local dir feature_id
+
+  if [ -d "$specs_dir" ]; then
+    for dir in "$specs_dir"/*/; do
+      [ -d "$dir" ] || continue
+      feature_id="$(basename "$dir")"
+      [ "$feature_id" = "archive" ] && continue
+
+      check_archive_integrity "$feature_id" "$specs_dir"
+      if $ARCHIVE_INTEGRITY_BROKEN; then
+        PHASE_RESULT="archive-integrity-broken"
+        NEXT_COMMAND_RESULT="(blocked -- specs/${feature_id}/ and ${ARCHIVE_MATCH_RESULT}/ are both tracked; resolve manually before continuing)"
+      else
+        detect_feature_phase "$feature_id" "${dir%/}" false
+      fi
+
+      local entry
+      entry="$(printf '{"feature_id": "%s", "phase": "%s", "next_command": "%s"}' \
+        "$feature_id" "$PHASE_RESULT" "$NEXT_COMMAND_RESULT")"
+
+      if $first; then
+        items="  $entry"
+        first=false
+      else
+        items="$items,
+  $entry"
+      fi
+    done
+  fi
+
+  if [ -z "$items" ]; then
+    printf '[]\n'
+  else
+    printf '[\n%s\n]\n' "$items"
+  fi
+  exit 0
+}
+
+cmd_status() {
+  local feature_id="${1:-}"
+
+  # ── Feature-id resolution ────────────────────────────────────────
+  # An omitted feature-id ALWAYS lists (AC8) — no branch-name sniffing. AC8
+  # names no condition about the current branch, and a developer running the
+  # bare command is almost always on a feature branch, which is exactly when
+  # the listing is most useful. Explicit `sdd status <id>` is unaffected.
+  if [ -z "$feature_id" ]; then
+    cmd_status_list
+    return
+  fi
+
+  # ── Folder lookup ────────────────────────────────────────────────
+  local specs_dir
+  specs_dir="$(pwd)/specs"
+
+  local feature_dir=""
+  local is_archived=false
+
+  if feature_dir="$(resolve_feature_dir "$feature_id" "$specs_dir")"; then
+    [ "$feature_dir" = "$specs_dir/$feature_id" ] || is_archived=true
+  fi
+
+  # ── Integrity pre-check ──────────────────────────────────────────
+  # Runs even when feature_dir failed to resolve above (T009, judge finding
+  # #1): a pure-deletion bypass leaves a feature-id absent from BOTH
+  # locations, which resolve_feature_dir alone reports identically to an id
+  # that never existed. check_archive_integrity tells the two apart via git
+  # history, so this must run before the plain "not found" exit below, not
+  # after it.
+  local blockers='[]'
+
+  check_archive_integrity "$feature_id" "$specs_dir"
+  if $ARCHIVE_INTEGRITY_BROKEN; then
+    PHASE_RESULT="archive-integrity-broken"
+    TASKS_TOTAL_RESULT=0
+    TASKS_REMAINING_RESULT=0
+    SENTINEL_FRESH_RESULT="false"
+    if [ -n "$ARCHIVE_MATCH_RESULT" ]; then
+      NEXT_COMMAND_RESULT="(blocked -- specs/${feature_id}/ and ${ARCHIVE_MATCH_RESULT}/ are both tracked; resolve manually before continuing)"
+      blockers="$(printf '[{"type": "archive-integrity-broken", "message": "specs/%s/ and %s/ are both tracked"}]' \
+        "$feature_id" "$ARCHIVE_MATCH_RESULT")"
+    else
+      NEXT_COMMAND_RESULT="(blocked -- specs/${feature_id}/ has git history but is absent from both specs/${feature_id}/ and specs/archive/; resolve manually before continuing)"
+      blockers="$(printf '[{"type": "archive-integrity-broken", "message": "specs/%s/ has git history but is absent from both specs/%s/ and specs/archive/"}]' \
+        "$feature_id" "$feature_id")"
+    fi
+  elif [ -z "$feature_dir" ]; then
+    printf 'error: feature not found: %s\n' "$feature_id" >&2
+    exit 1
+  else
+    detect_feature_phase "$feature_id" "$feature_dir" "$is_archived"
+  fi
+
+  # ── JSON emission ────────────────────────────────────────────────
   printf '{\n'
   printf '  "feature_id": "%s",\n' "$feature_id"
-  printf '  "phase": "%s",\n' "$phase"
-  printf '  "tasks_total": %d,\n' "$tasks_total"
-  printf '  "tasks_remaining": %d,\n' "$tasks_remaining"
-  printf '  "sentinel_fresh": %s,\n' "$sentinel_json"
+  printf '  "phase": "%s",\n' "$PHASE_RESULT"
+  printf '  "tasks_total": %d,\n' "$TASKS_TOTAL_RESULT"
+  printf '  "tasks_remaining": %d,\n' "$TASKS_REMAINING_RESULT"
+  printf '  "sentinel_fresh": %s,\n' "$SENTINEL_FRESH_RESULT"
   printf '  "blockers": %s,\n' "$blockers"
-  printf '  "next_command": "%s"\n' "$next_command"
+  printf '  "next_command": "%s"\n' "$NEXT_COMMAND_RESULT"
   printf '}\n'
   exit 0
+}
+
+# ─── domain-vocab ───────────────────────────────────────────────────
+
+# Prints .claude/rules/domains.md whole so the four consumers that used to
+# grep the file directly can call the CLI instead (ADR 0003: the CLI
+# resolves content, the agent reads knobs directly). No heading to find and
+# no section to extract: the domain vocabulary owns its whole file now, so
+# this reads it byte-for-byte and goes straight to the emptiness check
+# below.
+#
+# A comment-only file counts as empty — domains.md ships with exactly that
+# shape ("<!-- Project-specific business logic rules -->", 46 chars) until
+# a project fills it in — so blank and comment-only lines are filtered out
+# here before deciding emptiness. "Empty" and "absent" collapse to the same
+# exit code: the spec treats them as one branch and no consumer
+# distinguishes them.
+cmd_domain_vocab() {
+  local file=".claude/rules/domains.md"
+
+  [ -f "$file" ] || return 3
+
+  local section
+  section="$(cat "$file")"
+
+  # Strip whole '<!-- ... -->' spans before testing for emptiness, however
+  # many lines they cover. A filter that only matched a comment opening and
+  # closing on the SAME line let a two-line HTML comment survive as printed
+  # "vocabulary" — contradicting the spec's "comment-only counts as empty".
+  # awk gsub has no non-greedy quantifier, so a char-class trick
+  # ('[^-]*(-[^-]+)*') was used to fake a shortest match between '<!--' and
+  # '-->'. That trick breaks under POSIX ERE's leftmost-longest semantics
+  # the moment the comment BODY itself contains '--' (an em-dash, common in
+  # this repo's own prose): it leaves the comment unstripped, so it prints
+  # as if it were real vocabulary instead of counting as empty (review fix
+  # cycle 3, judge finding). index()/substr() sidesteps greediness
+  # entirely: find the next '<!--', find the next '-->' after it, cut that
+  # span, repeat — no regex, so no shortest-vs-longest ambiguity to get
+  # wrong. An unterminated '<!--' (no matching '-->' left in buf) stops the
+  # loop and leaves the remainder untouched, so a dangling comment marker
+  # still counts as real content, not as empty.
+  local stripped
+  stripped="$(printf '%s\n' "$section" | awk '
+    { buf = buf $0 "\n" }
+    END {
+      while ((s = index(buf, "<!--")) > 0) {
+        rest = substr(buf, s + 4)
+        e = index(rest, "-->")
+        if (e == 0) break
+        buf = substr(buf, 1, s - 1) substr(rest, e + 3)
+      }
+      printf "%s", buf
+    }
+  ')"
+
+  local filtered
+  filtered="$(printf '%s\n' "$stripped" | grep -vE '^[[:space:]]*$' || true)"
+
+  if [ -z "$filtered" ]; then
+    return 3
+  fi
+
+  printf '%s\n' "$section"
+  return 0
 }
 
 # ─── main ──────────────────────────────────────────────────────────
@@ -904,7 +1925,12 @@ case "${1:-help}" in
   update)       cmd_update ;;
   doctor)       cmd_doctor ;;
   base-branch)  shift; cmd_base_branch "$@" ;;
+  branch)       shift; cmd_branch "$@" ;;
+  commit-slice) shift; cmd_commit_slice "$@" ;;
   status)       shift; cmd_status "$@" ;;
+  state-write)  shift; cmd_state_write "$@" ;;
+  verify-archive) shift; cmd_verify_archive "$@" ;;
+  domain-vocab) cmd_domain_vocab ;;
   help|--help|-h) usage ;;
   version|--version|-v) echo "sdd v${VERSION}" ;;
   *)
